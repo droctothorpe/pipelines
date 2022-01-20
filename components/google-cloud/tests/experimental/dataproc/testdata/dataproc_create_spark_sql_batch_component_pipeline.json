@@ -1,0 +1,114 @@
+{
+  "components": {
+    "comp-dataproc-create-spark-sql-batch": {
+      "executorLabel": "exec-dataproc-create-spark-sql-batch",
+      "inputDefinitions": {
+        "parameters": {
+          "batch_id": {
+            "parameterType": "STRING"
+          },
+          "labels": {
+            "parameterType": "STRUCT"
+          },
+          "location": {
+            "parameterType": "STRING"
+          },
+          "project": {
+            "parameterType": "STRING"
+          },
+          "query_file_uri": {
+            "parameterType": "STRING"
+          }
+        }
+      },
+      "outputDefinitions": {
+        "parameters": {
+          "gcp_resources": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    }
+  },
+  "deploymentSpec": {
+    "executors": {
+      "exec-dataproc-create-spark-sql-batch": {
+        "container": {
+          "args": [
+            "--type",
+            "SparkRBatch",
+            "--payload",
+            "{\"labels\": {{$.inputs.parameters['labels']}}, \"runtime_config\": {\"properties\": }, \"environment_config\": {\"execution_config\": {\"service_account\": \"\", \"service_account_scopes\": , \"network_tags\": , \"kms_key\": \"\", \"network_uri\": \"\", \"subnetwork_uri\": \"\"}, \"peripherals_config\": {\"metastore_service\": \"\", \"spark_history_server_config\": { \"dataproc_cluster\": \"\"}}}\", spark_sql_batch\": {\"query_file_uri\": \"{{$.inputs.parameters['query_file_uri']}}\", \"script_variables\": , \"jar_file_uris\": }}",
+            "--project",
+            "{{$.inputs.parameters['project']}}",
+            "--location",
+            "{{$.inputs.parameters['location']}}",
+            "--batch_id",
+            "{{$.inputs.parameters['batch_id']}}",
+            "--gcp_resources",
+            "{{$.outputs.parameters['gcp_resources'].output_file}}"
+          ],
+          "command": [
+            "python3",
+            "-u",
+            "-m",
+            "google_cloud_pipeline_components.container.experimental.gcp_launcher.launcher"
+          ],
+          "image": "gcr.io/ml-pipeline/google-cloud-pipeline-components:latest"
+        }
+      }
+    }
+  },
+  "pipelineInfo": {
+    "name": "dataproc-batch-test"
+  },
+  "root": {
+    "dag": {
+      "tasks": {
+        "dataproc-create-spark-sql-batch": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-dataproc-create-spark-sql-batch"
+          },
+          "inputs": {
+            "parameters": {
+              "batch_id": {
+                "runtimeValue": {
+                  "constant": "test-batch-id"
+                }
+              },
+              "labels": {
+                "runtimeValue": {
+                  "constant": {
+                    "fizz": "buzz",
+                    "foo": "bar"
+                  }
+                }
+              },
+              "location": {
+                "runtimeValue": {
+                  "constant": "test-location"
+                }
+              },
+              "project": {
+                "runtimeValue": {
+                  "constant": "test-project"
+                }
+              },
+              "query_file_uri": {
+                "runtimeValue": {
+                  "constant": "test-query-file"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "dataproc-create-spark-sql-batch"
+          }
+        }
+      }
+    }
+  }
+}
