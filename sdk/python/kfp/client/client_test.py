@@ -15,6 +15,8 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from absl.testing import parameterized
 from kfp.client import client
@@ -108,6 +110,31 @@ class TestOverrideCachingOptions(parameterized.TestCase):
                     ['cachingOptions']['enableCache'])
                 self.assertFalse(pipeline_obj['root']['dag']['tasks']
                                  ['to-lower']['cachingOptions']['enableCache'])
+
+
+class TestClient(unittest.TestCase):
+
+    def setUp(self):
+        self.client = client.Client(namespace='dummy_namespace')
+
+    def test__is_ipython(self):
+        # Is not ipython.
+        is_ipython = self.client._is_ipython()
+        self.assertFalse(is_ipython)
+
+        # Is ipython.
+        mock = MagicMock()
+        with patch.dict('sys.modules', IPython=mock):
+            mock.return_value.get_ipython.return_value = 'Something'
+            is_ipython = self.client._is_ipython()
+            self.assertTrue(is_ipython)
+
+        # ImportError.
+        mock = MagicMock()
+        with patch.dict('sys.modules', mock):
+            mock.side_effect = ImportError
+            is_ipython = self.client._is_ipython()
+            self.assertFalse(is_ipython)
 
 
 if __name__ == '__main__':
