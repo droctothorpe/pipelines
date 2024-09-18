@@ -1264,6 +1264,7 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 					// The only reason we're updating this is to make the downstream
 					// logging more accurate.
 					taskOutput.ProducerTask = producerOutputParametersMap["producer_subtask"]
+					taskOutput.OutputParameterKey = producerOutputParametersMap["output_parameter_key"]
 					// Grab the value of the producer output.
 					producerOutputParameterValue, ok := producerOutputParameters[taskOutput.GetOutputParameterKey()]
 					if !ok {
