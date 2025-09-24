@@ -11,10 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,7 +38,7 @@ import (
 
 const (
 	unsetProxyArgValue = "unset"
-	ROOT_DAG           = "ROOT_DAG"
+	RootDag            = "ROOT_DAG"
 	DAG                = "DAG"
 	CONTAINER          = "CONTAINER"
 )
@@ -75,13 +77,13 @@ func init() {
 	flag.Set("stderrthreshold", "WARNING")
 }
 
-func parseExecConfigJson(k8sExecConfigJson *string) (*kubernetesplatform.KubernetesExecutorConfig, error) {
+func parseExecConfigJSON(k8sExecConfigJSON *string) (*kubernetesplatform.KubernetesExecutorConfig, error) {
 	var k8sExecCfg *kubernetesplatform.KubernetesExecutorConfig
-	if *k8sExecConfigJson != "" {
-		glog.Infof("input kubernetesConfig:%s\n", prettyPrint(*k8sExecConfigJson))
+	if *k8sExecConfigJSON != "" {
+		glog.Infof("input kubernetesConfig:%s\n", prettyPrint(*k8sExecConfigJSON))
 		k8sExecCfg = &kubernetesplatform.KubernetesExecutorConfig{}
-		if err := util.UnmarshalString(*k8sExecConfigJson, k8sExecCfg); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal Kubernetes config, error: %w\nKubernetesConfig: %v", err, k8sExecConfigJson)
+		if err := util.UnmarshalString(*k8sExecConfigJSON, k8sExecCfg); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal Kubernetes config, error: %w\nKubernetesConfig: %v", err, k8sExecConfigJSON)
 		}
 	}
 	return k8sExecCfg, nil
@@ -101,7 +103,7 @@ func handleExecution(execution *driver.Execution, driverType string, executionPa
 			return fmt.Errorf("failed to write iteration count to file: %w", err)
 		}
 	} else {
-		if driverType == ROOT_DAG {
+		if driverType == RootDag {
 			if err := writeFile(executionPaths.IterationCount, []byte("0")); err != nil {
 				return fmt.Errorf("failed to write iteration count to file: %w", err)
 			}
@@ -118,7 +120,7 @@ func handleExecution(execution *driver.Execution, driverType string, executionPa
 		}
 	} else {
 		// nil is a valid value for Condition
-		if driverType == ROOT_DAG || driverType == CONTAINER {
+		if driverType == RootDag || driverType == CONTAINER {
 			if err := writeFile(executionPaths.Condition, []byte("nil")); err != nil {
 				return fmt.Errorf("failed to write condition to file: %w", err)
 			}
@@ -168,11 +170,6 @@ func writeFile(path string, data []byte) (err error) {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func newMlmdClient() (*metadata.Client, error) {
-	mlmdConfig := metadata.DefaultConfig()
-	if *mlmdServerAddress != "" && *mlmdServerPort != "" {
-		mlmdConfig.Address = *mlmdServerAddress
-		mlmdConfig.Port = *mlmdServerPort
-	}
-	return metadata.NewClient(mlmdConfig.Address, mlmdConfig.Port)
+func newMlmdClient(mlmdServerAddress string, mlmdServerPort string, tlsCfg *tls.Config) (*metadata.Client, error) {
+	return metadata.NewClient(mlmdServerAddress, mlmdServerPort, tlsCfg)
 }
