@@ -1,0 +1,44 @@
+# PIPELINE DEFINITION
+# Name: pr-14478-native-retry-e2e
+components:
+  comp-controlled-failure:
+    executorLabel: exec-controlled-failure
+deploymentSpec:
+  executors:
+    exec-controlled-failure:
+      container:
+        args:
+        - echo "VALIDATION_FAIL=$VALIDATION_FAIL"; if [ "$VALIDATION_FAIL" = true
+          ]; then echo INTENTIONAL_FAILURE_FOR_RETRY; exit 1; fi; echo RETRY_RECOVERED_SUCCESSFULLY
+        command:
+        - sh
+        - -c
+        image: kfp-pr14478/sdk-runtime:faae297e3
+pipelineInfo:
+  name: pr-14478-native-retry-e2e
+root:
+  dag:
+    tasks:
+      controlled-failure:
+        cachingOptions: {}
+        componentRef:
+          name: comp-controlled-failure
+        taskInfo:
+          name: controlled-failure
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-controlled-failure:
+          configMapAsEnv:
+          - configMapName: pr14478-e2e-retry-20260925
+            configMapNameParameter:
+              runtimeValue:
+                constant: pr14478-e2e-retry-20260925
+            keyToEnv:
+            - configMapKey: fail
+              envVar: VALIDATION_FAIL
+            optional: false

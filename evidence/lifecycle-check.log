@@ -1,0 +1,8 @@
+/Users/alex/code/pipelines/sdk/python/kfp/client/client.py:159: FutureWarning: This client only works with Kubeflow Pipeline v2.0.0-beta.2 and later versions.
+  warnings.warn(
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'SUCCEEDED', 'live': 'SUCCEEDED', 'clone': 'SUCCEEDED', 'scheduled': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'SUCCEEDED', 'live': 'SUCCEEDED', 'clone': 'SUCCEEDED', 'scheduled': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'SUCCEEDED', 'live': 'SUCCEEDED', 'clone': 'SUCCEEDED', 'scheduled': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'SUCCEEDED', 'live': 'SUCCEEDED', 'clone': 'SUCCEEDED', 'scheduled': 'SUCCEEDED'}
+CLONE TASKS [('Clone of PR14478 E2E baseline', 'CACHED'), ('echo', 'CACHED'), ('report', 'CACHED')]
+LIFECYCLE PASSED: UI retry, UI clone/cache, scheduled execution, disabled schedule, persisted IR after version deletion

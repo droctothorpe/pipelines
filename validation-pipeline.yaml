@@ -1,0 +1,124 @@
+# PIPELINE DEFINITION
+# Name: pr-14478-native-v2-e2e
+# Inputs:
+#    message: str [Default: 'September 25 validation']
+#    score: float [Default: 0.93]
+components:
+  comp-echo:
+    executorLabel: exec-echo
+    inputDefinitions:
+      parameters:
+        message:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        echoed:
+          parameterType: STRING
+  comp-report:
+    executorLabel: exec-report
+    inputDefinitions:
+      parameters:
+        message:
+          parameterType: STRING
+        score:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        html:
+          artifactType:
+            schemaTitle: system.HTML
+            schemaVersion: 0.0.1
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-echo:
+      container:
+        args:
+        - import pathlib,sys; print("V2_COMPONENT_EXPORT_LOAD_OK:",sys.argv[1],flush=True);
+          pathlib.Path(sys.argv[2]).parent.mkdir(parents=True,exist_ok=True); pathlib.Path(sys.argv[2]).write_text(sys.argv[1])
+        - '{{$.inputs.parameters[''message'']}}'
+        - '{{$.outputs.parameters[''echoed''].output_file}}'
+        command:
+        - python
+        - -c
+        image: kfp-pr14478/sdk-runtime:faae297e3
+    exec-report:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - report
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef report(message: str, score: float, metrics: dsl.Output[dsl.Metrics],\
+          \ html: dsl.Output[dsl.HTML], data: dsl.Output[dsl.Dataset]):\n    from\
+          \ pathlib import Path\n    print('NATIVE_V2_REPORT_OK:', message, flush=True)\n\
+          \    metrics.log_metric('accuracy', score)\n    metrics.log_metric('rows',\
+          \ 3)\n    Path(html.path).write_text('<html><body><h1>Native v2 E2E validation</h1><p>Exported\
+          \ and reloaded v2 component executed successfully.</p></body></html>')\n\
+          \    Path(data.path).write_text('name,value\\nalpha,1\\nbeta,2\\ngamma,3\\\
+          n')\n    print('ARTIFACT_AND_METRICS_WRITTEN', flush=True)\n\n"
+        image: kfp-pr14478/sdk-runtime:faae297e3
+pipelineInfo:
+  name: pr-14478-native-v2-e2e
+root:
+  dag:
+    tasks:
+      echo:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-echo
+        inputs:
+          parameters:
+            message:
+              componentInputParameter: message
+        taskInfo:
+          name: echo
+      report:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-report
+        dependentTasks:
+        - echo
+        inputs:
+          parameters:
+            message:
+              taskOutputParameter:
+                outputParameterKey: echoed
+                producerTask: echo
+            score:
+              componentInputParameter: score
+        taskInfo:
+          name: report
+  inputDefinitions:
+    parameters:
+      message:
+        defaultValue: September 25 validation
+        isOptional: true
+        parameterType: STRING
+      score:
+        defaultValue: 0.93
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

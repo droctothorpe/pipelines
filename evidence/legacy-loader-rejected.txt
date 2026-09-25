@@ -1,0 +1,1 @@
+Component YAML must use the PipelineSpec IR format. Legacy component definitions and Argo Workflows are not supported. Rewrite the component with the v2 SDK, or convert legacy container YAML to IR with an older KFP v2 SDK before upgrading.

@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kubeflow
+resources:
+- ../../../../manifests/kustomize/env/platform-agnostic
+images:
+- name: ghcr.io/kubeflow/kfp-api-server
+  newName: kfp-pr14478/apiserver
+  newTag: c390c597e
+- name: ghcr.io/kubeflow/kfp-persistence-agent
+  newName: kfp-pr14478/persistenceagent
+  newTag: c390c597e
+- name: ghcr.io/kubeflow/kfp-scheduled-workflow-controller
+  newName: kfp-pr14478/scheduledworkflow
+  newTag: c390c597e
+- name: ghcr.io/kubeflow/kfp-frontend
+  newName: kfp-pr14478/frontend
+  newTag: c390c597e
+- name: ghcr.io/kubeflow/kfp-viewer-crd-controller
+  newName: kfp-pr14478/viewer-crd-controller
+  newTag: c390c597e
+- name: ghcr.io/kubeflow/kfp-visualization-server
+  newName: kfp-pr14478/visualization-server
+  newTag: c390c597e
+patches:
+- target:
+    kind: Deployment
+    name: ml-pipeline.*
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/imagePullPolicy
+      value: Never
+- target:
+    kind: Deployment
+    name: ml-pipeline
+  patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: ml-pipeline
+    spec:
+      template:
+        spec:
+          containers:
+          - name: ml-pipeline-api-server
+            env:
+            - name: V2_DRIVER_IMAGE
+              value: kfp-pr14478/driver:c390c597e
+            - name: V2_LAUNCHER_IMAGE
+              value: kfp-pr14478/launcher:c390c597e

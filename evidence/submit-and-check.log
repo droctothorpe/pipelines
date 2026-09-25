@@ -1,0 +1,28 @@
+/Users/alex/code/pipelines/sdk/python/kfp/client/client.py:159: FutureWarning: This client only works with Kubeflow Pipeline v2.0.0-beta.2 and later versions.
+  warnings.warn(
+Experiment details: http://127.0.0.1:8888/#/experiments/details/564427bf-457b-413e-b87a-a21a861d67ec
+Run details: http://127.0.0.1:8888/#/runs/details/54e9b05c-73d6-4ef9-964b-851bce2429b3
+live 54e9b05c-73d6-4ef9-964b-851bce2429b3
+LIVE STREAM RECEIVED BEFORE RUN ENDED 0.10298137506470084 RUNNING
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'RUNNING'}
+{'baseline': 'SUCCEEDED', 'comparison': 'SUCCEEDED', 'retry': 'FAILED', 'live': 'SUCCEEDED'}
+INITIAL VALIDATION PASSED

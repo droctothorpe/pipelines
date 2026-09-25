@@ -1,0 +1,15 @@
+{
+  "url": "http://127.0.0.1:8888/apis/v2beta1/runs/54e9b05c-73d6-4ef9-964b-851bce2429b3/nodes/pr-14478-live-log-e2e-vqnts-system-container-impl-792293769/log?follow=true",
+  "first_line_elapsed_seconds": 0.10298137506470084,
+  "run_state_when_received": "RUNNING",
+  "pod": "pr-14478-live-log-e2e-vqnts-system-container-impl-792293769",
+  "lines": [
+    "time=2026-09-25T15:25:48.019Z level=INFO msg=\"capturing logs\" argo=true",
+    "time=2026-09-25T15:25:48.021Z level=INFO msg=\"waiting for signals\" argo=true signalPath=/var/run/argo/ctr/main/signal",
+    "I0925 15:25:48.264091      18 main.go:141] Setting log level to: '1'",
+    "I0925 15:25:48.340980      18 registry.go:68] No task-level plugins enabled, returning no-op dispatcher",
+    "I0925 15:25:48.341966      18 env.go:224] loaded launcher config from mounted path \"/etc/kfp/launcher-config\"",
+    "LIVE_STREAM_FIRST_LINE"
+  ],
+  "client_closed_after_first_line": true
+}

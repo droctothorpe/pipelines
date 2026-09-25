@@ -1,0 +1,13 @@
+{
+  "validated_source": "faae297e34c58fa54585cb4de42e048cb611a641",
+  "image_source": "c390c597e8e349dbc9b7cbfa477fb12925563b8c",
+  "image_workflow_run": 36148418108,
+  "application_source_diff": "",
+  "completed_at": "2026-09-25T15:34:51.409009+00:00",
+  "context": "orbstack",
+  "namespace": "kubeflow",
+  "auth_enabled": false,
+  "tls": false,
+  "database": "MySQL 8.4",
+  "existing_validation_database_reused": true
+}

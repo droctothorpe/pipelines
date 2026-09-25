@@ -1,0 +1,30 @@
+# PIPELINE DEFINITION
+# Name: pr-14478-live-log-e2e
+components:
+  comp-slow-log:
+    executorLabel: exec-slow-log
+deploymentSpec:
+  executors:
+    exec-slow-log:
+      container:
+        args:
+        - import time; print("LIVE_STREAM_FIRST_LINE",flush=True); time.sleep(45);
+          print("LIVE_STREAM_FINAL_LINE",flush=True); time.sleep(5)
+        command:
+        - python
+        - -u
+        - -c
+        image: kfp-pr14478/sdk-runtime:faae297e3
+pipelineInfo:
+  name: pr-14478-live-log-e2e
+root:
+  dag:
+    tasks:
+      slow-log:
+        cachingOptions: {}
+        componentRef:
+          name: comp-slow-log
+        taskInfo:
+          name: slow-log
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

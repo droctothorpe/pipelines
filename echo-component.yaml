@@ -1,0 +1,62 @@
+# PIPELINE DEFINITION
+# Name: echo
+# Inputs:
+#    message: str
+# Outputs:
+#    echoed: str
+components:
+  comp-echo:
+    executorLabel: exec-echo
+    inputDefinitions:
+      parameters:
+        message:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        echoed:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-echo:
+      container:
+        args:
+        - import pathlib,sys; print("V2_COMPONENT_EXPORT_LOAD_OK:",sys.argv[1],flush=True);
+          pathlib.Path(sys.argv[2]).parent.mkdir(parents=True,exist_ok=True); pathlib.Path(sys.argv[2]).write_text(sys.argv[1])
+        - '{{$.inputs.parameters[''message'']}}'
+        - '{{$.outputs.parameters[''echoed''].output_file}}'
+        command:
+        - python
+        - -c
+        image: kfp-pr14478/sdk-runtime:faae297e3
+pipelineInfo:
+  name: echo
+root:
+  dag:
+    outputs:
+      parameters:
+        echoed:
+          valueFromParameter:
+            outputParameterKey: echoed
+            producerSubtask: echo
+    tasks:
+      echo:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-echo
+        inputs:
+          parameters:
+            message:
+              componentInputParameter: message
+        taskInfo:
+          name: echo
+  inputDefinitions:
+    parameters:
+      message:
+        parameterType: STRING
+  outputDefinitions:
+    parameters:
+      echoed:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

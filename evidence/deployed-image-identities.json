@@ -1,0 +1,101 @@
+[
+  {
+    "pod": "ml-pipeline-78f69c7c56-7ff2f",
+    "containers": [
+      {
+        "name": "ml-pipeline-api-server",
+        "image": "kfp-pr14478/apiserver:c390c597e",
+        "imageID": "docker://sha256:13624463d421b88b04c69e45b5f833991581962844ead66643a3b124321b3309",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "ml-pipeline-persistenceagent-5798fdf548-lqmnb",
+    "containers": [
+      {
+        "name": "ml-pipeline-persistenceagent",
+        "image": "kfp-pr14478/persistenceagent:c390c597e",
+        "imageID": "docker://sha256:abfeda3ea9ac0c7f4fb741ba9a6cc1cf8bd992d25ee63c9121fef47286cda2fd",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "ml-pipeline-scheduledworkflow-59cc66954b-xf6rs",
+    "containers": [
+      {
+        "name": "ml-pipeline-scheduledworkflow",
+        "image": "kfp-pr14478/scheduledworkflow:c390c597e",
+        "imageID": "docker://sha256:2ac2510e12fd08629444bec9d1adf98e81820b48ef753ad5b112bad51dc570ee",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "ml-pipeline-ui-56fc5b5c89-vh9z8",
+    "containers": [
+      {
+        "name": "ml-pipeline-ui",
+        "image": "kfp-pr14478/frontend:c390c597e",
+        "imageID": "docker://sha256:dd7db25ce9c10d33aa14c4a77050630f2fed3ecac83897830f3605aef02fb89f",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "ml-pipeline-viewer-crd-6fdb9f7cc-krk54",
+    "containers": [
+      {
+        "name": "ml-pipeline-viewer-crd",
+        "image": "kfp-pr14478/viewer-crd-controller:c390c597e",
+        "imageID": "docker://sha256:768be37f00edbdc15a3afad357645c92021d01a7f061cb9d8e3e60c53ccde402",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "ml-pipeline-visualizationserver-664d9997f8-5jj5n",
+    "containers": [
+      {
+        "name": "ml-pipeline-visualizationserver",
+        "image": "kfp-pr14478/visualization-server:c390c597e",
+        "imageID": "docker://sha256:29acddd954efd8c1a92be58c8a05532d647a2367bb91915ed4ab7d147539badc",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "mysql-7d584d4d67-qm75g",
+    "containers": [
+      {
+        "name": "mysql",
+        "image": "mysql:8.4",
+        "imageID": "docker-pullable://mysql@sha256:0744ee5ef89ce6ccfa13de3e579fe6b9e27f93dd70da9c06d2c908b1b193fb8d",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "seaweedfs-7d4f6fcf9f-db654",
+    "containers": [
+      {
+        "name": "seaweedfs",
+        "image": "ghcr.io/chrislusf/seaweedfs:4.47",
+        "imageID": "docker-pullable://ghcr.io/chrislusf/seaweedfs@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882",
+        "ready": true
+      }
+    ]
+  },
+  {
+    "pod": "workflow-controller-5ddd5f7ff5-t5jbp",
+    "containers": [
+      {
+        "name": "workflow-controller",
+        "image": "quay.io/argoproj/workflow-controller:v4.1.2",
+        "imageID": "docker-pullable://quay.io/argoproj/workflow-controller@sha256:466192f538abfe750157c5bb5c0b883137b19f67af27c5636ab15bc853c96668",
+        "ready": true
+      }
+    ]
+  }
+]
