@@ -1,0 +1,29 @@
+[
+  {
+    "tab": "Graph",
+    "labelLeft": 256,
+    "labelWidth": 40.96875,
+    "indicatorLeft": 253.5,
+    "indicatorWidth": 45.96875,
+    "centerOffset": 0,
+    "boxSizing": "border-box"
+  },
+  {
+    "tab": "Detail",
+    "labelLeft": 338.96875,
+    "labelWidth": 38.609375,
+    "indicatorLeft": 336.46875,
+    "indicatorWidth": 43.609375,
+    "centerOffset": 0,
+    "boxSizing": "border-box"
+  },
+  {
+    "tab": "Pipeline Spec",
+    "labelLeft": 419.578125,
+    "labelWidth": 90.71875,
+    "indicatorLeft": 417.078125,
+    "indicatorWidth": 95.71875,
+    "centerOffset": 0,
+    "boxSizing": "border-box"
+  }
+]
