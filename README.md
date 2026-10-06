@@ -13,3 +13,7 @@ These are actual browser captures, not mockups or synthetic API responses. This 
 | `subdags-nested-graph.png` | Navigation to an exact task in a loop iteration, inner pipeline, and conditional sub-DAG |
 | `exit-failure-timeline.png` | Deliberately failed task and successful exit handler |
 | `cache-hit-timeline.png` | Actual cached rerun with three cached component tasks |
+| `sticky-timeline-900.png` | Bottom-row selection with the details panel still visible in a 900px-high viewport |
+| `sticky-timeline-500.png` | Height-bounded details with internal scrolling in a 500px-high viewport |
+
+The sticky-panel captures use production frontend bundle `f092cd5f828b2cd10d2bde825942132ee745c886` over the same real backend and completed 31-component run. The local frontend image is `sha256:61ef57674a96f1617de1462fcc06657341934a62c1d62c8d627d047cb02387be`.
