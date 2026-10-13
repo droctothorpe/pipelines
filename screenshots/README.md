@@ -1,6 +1,12 @@
 # PR #14751 screenshots
 
-Captured from [code commit 94e466b88a34e136b09b1999f224bf20cd895fbf](https://github.com/droctothorpe/pipelines/commit/94e466b88a34e136b09b1999f224bf20cd895fbf) using the real DagCanvas in local Storybook and Chromium. Node 24.14.0 / npm 11.17.0. These are not captures of a new Kubernetes rollout.
+Captured from [code commit 1ef688af46a31fa5fa5062dc78f83d156f66e5e0](https://github.com/droctothorpe/pipelines/commit/1ef688af46a31fa5fa5062dc78f83d156f66e5e0) using the real DagCanvas in local Storybook and Chromium. Node 24.14.0 / npm 11.17.0. These are not captures of a new Kubernetes rollout.
+
+## Navigation defaults
+
+Graphs start **locked**, shown by the closed-lock palette icon. Left dragging over the canvas, node cards, group headers, expand/collapse toggles, or edge hit areas pans the viewport. Arrow keys pan while keyboard focus is in the graph; text-entry controls and modified shortcuts are ignored.
+
+A simple node click still opens its details. Explicitly unlocking enables node dragging and arrow-key movement of a selected node. Group bodies continue to pan; headers move groups. Re-locking restores navigation mode. New mounts start locked; only expansion preferences are cached.
 
 ## Expansion persistence and defaults
 
@@ -50,8 +56,9 @@ node --test scripts/production-bundle.smoke.mjs
 
 ## Validation
 
-- **136 test files / 1,782 tests passed**.
+- **137 UI test files / 1,796 tests** and **30 server files / 1,161 tests** passed with coverage.
 - Production build, UI/server lint, typecheck, formatting, and git diff check passed.
 - **Five production-browser checks passed**, including both graph-page reloads retaining Collapse all, Expand all and individual exceptions, plus the 8px white tab-to-graph strip.
-- **Three Storybook browser regressions passed**, including group-body panning versus header/node dragging, plus the five-example gallery.
+- **Three Storybook browser regressions passed**, covering default locked pointer/arrow navigation, click-to-inspect, input exclusions, explicit unlock/relock, native node/header dragging and selected-node arrow movement, plus the five-example gallery.
+- One unchanged ExperimentDetails timing test failed on the first full run, then passed both in isolation and in the complete rerun. No snapshots or assertions were changed for it.
 - Local Kubernetes remains at previously deployed commit `854538921`; the latest follow-ups have not been redeployed.
