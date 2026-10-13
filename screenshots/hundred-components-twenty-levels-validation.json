@@ -1,0 +1,56 @@
+{
+  "story": "v2-groupeddag--hundred-components-twenty-levels",
+  "nestingDepth": 20,
+  "totalGraphNodes": 120,
+  "default": {
+    "components": 100,
+    "expanded": 20,
+    "collapsed": 0
+  },
+  "expandAll": {
+    "components": 100,
+    "expanded": 20,
+    "collapsed": 0
+  },
+  "collapseLevel10": {
+    "components": 45,
+    "expanded": 9,
+    "collapsed": 1
+  },
+  "collapseAll": {
+    "components": 0,
+    "expanded": 0,
+    "collapsed": 1
+  },
+  "reopenLevel1": {
+    "components": 5,
+    "expanded": 1,
+    "collapsed": 1
+  },
+  "deepestSelectionPath": [
+    "root",
+    "level-1",
+    "level-2",
+    "level-3",
+    "level-4",
+    "level-5",
+    "level-6",
+    "level-7",
+    "level-8",
+    "level-9",
+    "level-10",
+    "level-11",
+    "level-12",
+    "level-13",
+    "level-14",
+    "level-15",
+    "level-16",
+    "level-17",
+    "level-18",
+    "level-19",
+    "level-20"
+  ],
+  "reloadRestoresDefault": true,
+  "initialRenderAndCaptureMs": 831,
+  "browserErrors": []
+}
