@@ -1,0 +1,71 @@
+{
+  "examples": [
+    {
+      "story": "nested-artifacts",
+      "expanded": {
+        "expanded": 2,
+        "collapsed": 0,
+        "nodes": 9
+      },
+      "collapsed": {
+        "expanded": 1,
+        "collapsed": 1,
+        "nodes": 6
+      }
+    },
+    {
+      "story": "conditions",
+      "expanded": {
+        "expanded": 2,
+        "collapsed": 0,
+        "nodes": 11
+      },
+      "collapsed": {
+        "expanded": 0,
+        "collapsed": 2,
+        "nodes": 5
+      }
+    },
+    {
+      "story": "parallel-iterations",
+      "expanded": {
+        "expanded": 3,
+        "collapsed": 0,
+        "nodes": 11
+      },
+      "collapsed": {
+        "expanded": 1,
+        "collapsed": 2,
+        "nodes": 5
+      }
+    },
+    {
+      "story": "nested-loops",
+      "expanded": {
+        "expanded": 14,
+        "collapsed": 0,
+        "nodes": 27
+      },
+      "collapsed": {
+        "expanded": 1,
+        "collapsed": 2,
+        "nodes": 6
+      }
+    },
+    {
+      "story": "exit-handler",
+      "expanded": {
+        "expanded": 3,
+        "collapsed": 0,
+        "nodes": 7
+      },
+      "collapsed": {
+        "expanded": 1,
+        "collapsed": 2,
+        "nodes": 4
+      }
+    }
+  ],
+  "lockAndSelectionPassed": true,
+  "browserErrors": []
+}

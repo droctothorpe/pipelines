@@ -1,0 +1,21 @@
+{
+  "story": "v2-groupeddag--twenty-five-sub-dags",
+  "default": {
+    "expanded": 20,
+    "collapsed": 5
+  },
+  "expandAll": {
+    "expanded": 25,
+    "collapsed": 0
+  },
+  "collapseAll": {
+    "expanded": 0,
+    "collapsed": 25
+  },
+  "individualExpansion": {
+    "expanded": 1,
+    "collapsed": 24
+  },
+  "reloadRestoresDefault": true,
+  "browserErrors": []
+}
