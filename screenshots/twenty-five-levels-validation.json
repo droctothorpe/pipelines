@@ -4,8 +4,8 @@
   "componentsPerLevel": 2,
   "totalGraphNodes": 75,
   "default": {
-    "components": 40,
-    "expanded": 20,
+    "components": 20,
+    "expanded": 10,
     "collapsed": 1
   },
   "expandAll": {
@@ -14,6 +14,16 @@
     "collapsed": 0
   },
   "defaultHiddenLevels": [
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
     22,
     23,
     24,

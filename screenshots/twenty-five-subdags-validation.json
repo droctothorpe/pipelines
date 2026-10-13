@@ -1,8 +1,8 @@
 {
   "story": "v2-groupeddag--twenty-five-sub-dags",
   "default": {
-    "expanded": 20,
-    "collapsed": 5
+    "expanded": 10,
+    "collapsed": 15
   },
   "expandAll": {
     "expanded": 25,
