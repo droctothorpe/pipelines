@@ -1,19 +1,26 @@
 {
-  "story": "v2-groupeddag--hundred-components-twenty-levels",
-  "nestingDepth": 20,
-  "totalGraphNodes": 120,
+  "story": "v2-groupeddag--twenty-five-nested-sub-dags",
+  "nestingDepth": 25,
+  "componentsPerLevel": 2,
+  "totalGraphNodes": 75,
   "default": {
-    "components": 100,
+    "components": 40,
     "expanded": 20,
-    "collapsed": 0
+    "collapsed": 1
   },
   "expandAll": {
-    "components": 100,
-    "expanded": 20,
+    "components": 50,
+    "expanded": 25,
     "collapsed": 0
   },
+  "defaultHiddenLevels": [
+    22,
+    23,
+    24,
+    25
+  ],
   "collapseLevel10": {
-    "components": 45,
+    "components": 18,
     "expanded": 9,
     "collapsed": 1
   },
@@ -23,7 +30,7 @@
     "collapsed": 1
   },
   "reopenLevel1": {
-    "components": 5,
+    "components": 2,
     "expanded": 1,
     "collapsed": 1
   },
@@ -48,9 +55,13 @@
     "level-17",
     "level-18",
     "level-19",
-    "level-20"
+    "level-20",
+    "level-21",
+    "level-22",
+    "level-23",
+    "level-24",
+    "level-25"
   ],
   "reloadRestoresDefault": true,
-  "initialRenderAndCaptureMs": 831,
   "browserErrors": []
 }
