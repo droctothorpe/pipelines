@@ -61,4 +61,4 @@ node --test scripts/production-bundle.smoke.mjs
 - **Five production-browser checks passed**, including both graph-page reloads retaining Collapse all, Expand all and individual exceptions, plus the 8px white tab-to-graph strip.
 - **Three Storybook browser regressions passed**, covering default locked pointer/arrow navigation, click-to-inspect, input exclusions, explicit unlock/relock, native node/header dragging and selected-node arrow movement, plus the five-example gallery.
 - One unchanged ExperimentDetails timing test failed on the first full run, then passed both in isolation and in the complete rerun. No snapshots or assertions were changed for it.
-- Local Kubernetes remains at previously deployed commit `854538921`; the latest follow-ups have not been redeployed.
+- The same frontend commit, `1ef688af4`, is now deployed on local OrbStack. Live checks passed for default-10 expansion, saved expansion after reload, default locking, pointer/arrow panning, click-to-inspect, and explicitly unlocked node movement. The backend remains at `263e3437b`; no runs were started. Images here remain the original Storybook captures, not Kubernetes screenshots.
