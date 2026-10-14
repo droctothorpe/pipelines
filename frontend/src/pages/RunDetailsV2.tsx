@@ -39,6 +39,7 @@ import {
   V2beta1RunStorageState,
 } from 'src/apisv2beta1/run';
 import MD2Tabs from 'src/atoms/MD2Tabs';
+import GraphBoundaryPrototype from 'src/components/GraphBoundaryPrototype';
 import Banner from 'src/components/Banner';
 import DetailsTable from 'src/components/DetailsTable';
 import { PipelineSpecTabContent } from 'src/components/PipelineSpecTabContent';
@@ -555,12 +556,16 @@ export function RunDetailsV2(props: RunDetailsV2Props) {
           mode='warning'
         />
       )}
-      <div className={classes(commonCss.page, padding(20, 't'))}>
+      <GraphBoundaryPrototype
+        className={classes(commonCss.page, padding(20, 't'))}
+        graphActive={activeTab === 0}
+      >
         <MD2Tabs selectedTab={activeTab} tabs={TAB_NAMES} onSwitch={switchTab} />
         {/* DAG tab */}
         {activeTab === 0 && (
           <div
             className={commonCss.page}
+            data-prototype-canvas
             style={{
               position: 'relative',
               overflow: 'hidden',
@@ -640,7 +645,7 @@ export function RunDetailsV2(props: RunDetailsV2Props) {
             <PipelineSpecTabContent templateString={pipelineJobStr || ''} />
           </div>
         )}
-      </div>
+      </GraphBoundaryPrototype>
     </>
   );
 }

@@ -79,6 +79,7 @@
     "start:proxy-and-server": "./scripts/start-proxy-and-server.sh",
     "start:proxy-and-server-inspect": "./scripts/start-proxy-and-server.sh --inspect",
     "start": "vite",
+    "prototype:graph": "npm run build:tailwind && node scripts/graph-boundary-prototype.mjs",
     "sync-backend-sample-config": "node scripts/sync-backend-sample-config.js",
     "pretest": "npm run build:tailwind",
     "pretest:ui": "npm run build:tailwind",

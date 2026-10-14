@@ -16,6 +16,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { V2beta1Pipeline, V2beta1PipelineVersion } from 'src/apisv2beta1/pipeline';
 import MD2Tabs from 'src/atoms/MD2Tabs';
+import GraphBoundaryPrototype from 'src/components/GraphBoundaryPrototype';
 import { PipelineVersionCard } from 'src/components/navigators/PipelineVersionCard';
 import { PipelineSpecTabContent } from 'src/components/PipelineSpecTabContent';
 import SidePanel from 'src/components/SidePanel';
@@ -64,11 +65,16 @@ function PipelineDetailsV2({
   );
 
   return (
-    <div className={commonCss.page} data-testid={'pipeline-detail-v2'}>
+    <GraphBoundaryPrototype
+      className={commonCss.page}
+      data-testid={'pipeline-detail-v2'}
+      graphActive={selectedTab === 0}
+    >
       <MD2Tabs selectedTab={selectedTab} onSwitch={setSelectedTab} tabs={TAB_NAMES} />
       {selectedTab === 0 && (
         <div
           className={commonCss.page}
+          data-prototype-canvas
           style={{
             position: 'relative',
             overflow: 'hidden',
@@ -119,7 +125,7 @@ function PipelineDetailsV2({
           <PipelineSpecTabContent templateString={templateString || ''} />
         </div>
       )}
-    </div>
+    </GraphBoundaryPrototype>
   );
 }
 

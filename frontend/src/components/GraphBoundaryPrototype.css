@@ -1,0 +1,133 @@
+/* THROWAWAY: scoped to GraphBoundaryPrototype; no styling without ?variant=. */
+.graph-boundary-prototype {
+  position: relative;
+  min-height: 0;
+}
+
+.graph-boundary-prototype[data-graph-variant='flush'] > [data-prototype-canvas] {
+  border-top: 0 !important;
+}
+
+.graph-boundary-prototype[data-graph-variant='inset'] > [data-prototype-canvas] {
+  border: 1px solid #dce0e5 !important;
+  border-radius: 12px;
+  margin: 12px;
+}
+
+.graph-boundary-prototype[data-graph-variant='floating'] > [data-prototype-canvas] {
+  border-top: 0 !important;
+}
+
+.graph-boundary-prototype[data-graph-variant='floating'] > :first-child {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  height: 42px;
+  padding: 4px;
+  border: 1px solid #dce0e5;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 8px #20212412;
+}
+
+/* MD2Tabs' underline and leading spacer give way to a segmented selected state. */
+.graph-boundary-prototype[data-graph-variant='floating'] > :first-child > div,
+.graph-boundary-prototype[data-graph-variant='floating'] > :first-child > span {
+  display: none !important;
+}
+
+.graph-boundary-prototype[data-graph-variant='floating'] > :first-child > button {
+  border: 0;
+  border-radius: 6px;
+}
+
+.graph-boundary-prototype[data-graph-variant='floating'] > :first-child > button:first-of-type {
+  background: #e8f0fe;
+}
+
+.graph-prototype-switcher {
+  position: fixed;
+  z-index: 1500;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(420px, calc(100vw - 24px));
+  padding: 10px;
+  color: #fff;
+  background: #202d40;
+  border: 1px solid #475569;
+  border-radius: 16px;
+  box-shadow: 0 8px 28px #17203330;
+}
+
+.graph-prototype-switcher button {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #617188;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.graph-prototype-switcher button:hover {
+  background: #3b4b63;
+}
+
+.graph-prototype-switcher button:focus-visible {
+  outline: 2px solid #9ec5ff;
+  outline-offset: 3px;
+}
+
+.graph-prototype-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  text-align: center;
+}
+
+.graph-prototype-label small {
+  color: #afc0d6;
+  font-size: 9px;
+  letter-spacing: 1.2px;
+}
+
+.graph-prototype-label strong {
+  font-size: 14px;
+}
+
+.graph-prototype-label span {
+  color: #d8e2ef;
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  /* Reserve room for the comparison bar so graph controls remain usable. */
+  .graph-boundary-prototype {
+    padding-bottom: 100px;
+  }
+
+  .graph-boundary-prototype[data-graph-variant='floating'] > :first-child {
+    position: relative;
+    top: auto;
+    left: auto;
+    align-self: flex-start;
+    margin: 8px;
+    max-width: calc(100% - 16px);
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+
+  .graph-boundary-prototype[data-graph-variant='floating'] {
+    background: #eee;
+  }
+}
