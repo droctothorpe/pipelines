@@ -42,7 +42,6 @@ const (
 	urlSchemeData       = "data:"
 	urlSchemeVBScript   = "vbscript:"
 
-	pluginErrInvalidLimitsConfig      = "invalid plugin limits configuration"
 	pluginErrPluginsInputTooManyKeys  = "number of plugins_input entries"
 	pluginErrPluginsInputNilEntry     = "plugins_input[%q] must not be nil"
 	pluginErrPluginsInputInvalidValue = "plugins_input[%q] contains invalid nested value"
@@ -52,6 +51,7 @@ const (
 	pluginErrPluginsInputMarshalEntry = "marshal plugins_input[%q]: %w"
 	pluginErrPluginsInputMarshalMap   = "marshal plugins_input map: %w"
 
+	pluginErrInvalidLimitsConfig       = "invalid plugin limits configuration"
 	pluginErrPluginsOutputTooManyKeys  = "number of plugins_output entries"
 	pluginErrPluginsOutputEntrySize    = "plugins_output[%q] size"
 	pluginErrPluginsOutputTotalSize    = "plugins_output total size"
@@ -572,22 +572,6 @@ func toAPIRuntimeConfig(modelRuntime model.RuntimeConfig) *apiv2.RuntimeConfig {
 	return &apiRuntimeConfig
 }
 
-// Converts internal runtime config representation to PipelineSpec's runtime config.
-// Note: returns nil if a parsing error occurs.
-func toPipelineSpecRuntimeConfig(cfg *model.RuntimeConfig) *pipelinespec.PipelineJob_RuntimeConfig {
-	if cfg == nil {
-		return &pipelinespec.PipelineJob_RuntimeConfig{}
-	}
-	runtimeParams := toMapProtoStructParameters(string(cfg.Parameters))
-	if runtimeParams == nil {
-		return nil
-	}
-	return &pipelinespec.PipelineJob_RuntimeConfig{
-		ParameterValues:    runtimeParams,
-		GcsOutputDirectory: string(cfg.PipelineRoot),
-	}
-}
-
 // Converts API run to its internal representation.
 func toModelRun(apiRunV2 *apiv2.Run) (*model.Run, error) {
 	var namespace, experimentId, pipelineName, pipelineId, pipelineVersionId string
@@ -702,10 +686,11 @@ func toModelRun(apiRunV2 *apiv2.Run) (*model.Run, error) {
 		pipelineName = fmt.Sprintf("pipelines/%v", pipelineVersionId)
 	}
 	modelRun := model.Run{
-		UUID:           runId,
-		DisplayName:    runName,
-		Description:    runDesc,
-		Namespace:      namespace,
+		UUID:        runId,
+		DisplayName: runName,
+		Description: runDesc,
+		// Optional; resolves the default experiment when experiment_id is omitted.
+		Namespace:      apiRunV2.GetNamespace(),
 		ExperimentId:   experimentId,
 		RecurringRunId: recRunId,
 		StorageState:   model.StorageState(storageState),
@@ -800,6 +785,7 @@ func toAPIRunWithPipelineSourcePreference(r *model.Run, preferEmbeddedPipelineSp
 	apiRunV2 := &apiv2.Run{
 		RunId:          r.UUID,
 		ExperimentId:   r.ExperimentId,
+		Namespace:      r.Namespace,
 		RecurringRunId: r.RecurringRunId,
 		DisplayName:    r.DisplayName,
 		Description:    r.Description,

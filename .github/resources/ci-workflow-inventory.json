@@ -10,7 +10,7 @@
     {
       "path": ".github/workflows/api-server-tests.yml",
       "name": "API Server Tests",
-      "header_sha256": "1739618bc730618ab184693260f16f4638832825e667ef20341e3995d7f553c0",
+      "header_sha256": "d34af02c14292366d5464618afc1e931569eb95a506d2e101be05fe5a9f0ea68",
       "pull_request": {
         "paths": [
           "**/pyproject.toml",
@@ -27,6 +27,7 @@
           "backend/api/v2beta1/**",
           "backend/src/**",
           "backend/test/v2/api/**",
+          "backend/test/constants/**",
           "manifests/kustomize/**",
           "test_data/sdk_compiled_pipelines/**",
           "!**/*.md",
@@ -86,17 +87,19 @@
     },
     {
       "path": ".github/workflows/check-requirements-txt.yml",
-      "name": "Check uv.lock and requirements.txt sync",
-      "header_sha256": "22469e681d0ea84338eb6a7f8ab4a2ad40abd68a77e1c98fe64f9d6727c2367d",
+      "name": "Check Python dependency artifacts",
+      "header_sha256": "31db3938578e41cb044bf3aa75c96f9ffcf3d7389e38912ea17e6aa129c12da2",
       "pull_request": {
         "paths": [
           "pyproject.toml",
           "uv.lock",
           "requirements.txt",
           "**/pyproject.toml",
+          "sdk/python/**",
           "**/requirements.txt",
           ".github/workflows/check-requirements-txt.yml",
-          "release/kfpr/steps.py"
+          "release/kfpr/steps.py",
+          ".github/resources/scripts/export_python_requirements.sh"
         ]
       }
     },
@@ -115,7 +118,7 @@
     {
       "path": ".github/workflows/ci-checks.yml",
       "name": "CI Check",
-      "header_sha256": "55518d8ecf1b26ffc5858b7442a5a7000f6b4f3ed0da9686a7cddd062d2d1f56",
+      "header_sha256": "154fb1fa1f854e7be7ba13c783e53deb887e22df9415e9744a1fb018e4a48e4d",
       "pull_request": null
     },
     {
@@ -125,9 +128,15 @@
       "pull_request": null
     },
     {
+      "path": ".github/workflows/ci-passed-stale-revoke.yml",
+      "name": "Revoke Stale CI Passed",
+      "header_sha256": "a981787ec7e3690d4eeba7bd799fb7e49cd76adeff0f8066495d97ed919a5cd2",
+      "pull_request": null
+    },
+    {
       "path": ".github/workflows/ci-scripts-tests.yml",
       "name": "CI Scripts Tests",
-      "header_sha256": "f49f115717a2015c46b14fdba16c0502933422fd4687170631a91aba22df6b0e",
+      "header_sha256": "1dbb2cd530518f51b4c021be5847078210e6a3def9b5d1db0c44a86bbba08230",
       "pull_request": {
         "paths": [
           ".github/dependabot.yml",
@@ -149,6 +158,8 @@
           ".github/resources/scripts/*.py",
           ".github/resources/scripts/*.js",
           ".github/resources/ci-workflow-inventory.json",
+          "test/presubmit-backend-test.sh",
+          "hack/update-all-requirements.sh",
           ".github/workflows/**",
           ".github/scripts/*.py",
           ".github/resources/scripts/*.sh",
@@ -184,6 +195,7 @@
           "frontend/src/apisv2/visualization/**",
           "docs/_static/kfp_api_single_file.swagger.json",
           "Makefile",
+          "api/Makefile",
           "backend/src/v2/Makefile",
           "release/kfpr/core.py",
           "test_data/sdk_compiled_pipelines/valid/**",
@@ -226,13 +238,15 @@
     {
       "path": ".github/workflows/compiler-tests.yml",
       "name": "Workflow Compiler Tests",
-      "header_sha256": "2c822d62bca4caf454449991a451a07b7f6c329dcdd2169ae5822edb69ab6d19",
+      "header_sha256": "4bc98b63cea6c9a5189a38cf540570447244f955764535c21147149e3cbf6a9e",
       "pull_request": {
         "paths": [
           "**/pyproject.toml",
           "uv.lock",
           ".github/workflows/compiler-tests.yml",
           ".github/actions/test-and-report/**",
+          ".github/resources/scripts/download-go-modules.sh",
+          ".github/resources/scripts/helper-functions.sh",
           "backend/src/v2/compiler/**",
           "test_data/**",
           "!**/*.md",
@@ -589,11 +603,13 @@
     {
       "path": ".github/workflows/presubmit-backend.yml",
       "name": "KFP Backend Tests",
-      "header_sha256": "80eebdb054c5dbf5430feb4870891cc361c99677c26db49334c95b08a2753ed4",
+      "header_sha256": "388a9398f2d9580d3641b5a989edff8af18c0beb9b1b517ccf27e58d36d4e023",
       "pull_request": {
         "paths": [
           ".github/workflows/presubmit-backend.yml",
           ".github/actions/setup-go/**",
+          ".github/resources/scripts/download-go-modules.sh",
+          ".github/resources/scripts/helper-functions.sh",
           "go.mod",
           "go.sum",
           "backend/**",

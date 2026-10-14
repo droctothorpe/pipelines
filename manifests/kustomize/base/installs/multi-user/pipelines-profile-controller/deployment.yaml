@@ -26,7 +26,7 @@ spec:
           seccompProfile:
             type: RuntimeDefault
         # We just need an image with the python botocore library installed
-        image: docker.io/alpine/k8s:1.36.2
+        image: docker.io/alpine/k8s:1.37.1
         command: ["python", "/hooks/sync.py"]
         envFrom:
         - configMapRef:
@@ -95,6 +95,20 @@ spec:
           mountPath: /hooks
         ports:
         - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          timeoutSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          timeoutSeconds: 2
       volumes:
       - name: hooks
         configMap:

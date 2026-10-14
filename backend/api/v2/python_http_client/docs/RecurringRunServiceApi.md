@@ -13,7 +13,7 @@ Method | HTTP request | Description
 
 
 # **recurring_run_service_create_recurring_run**
-> V2RecurringRun recurring_run_service_create_recurring_run(recurring_run)
+> V2RecurringRun recurring_run_service_create_recurring_run(recurring_run, namespace=namespace)
 
 Creates a new recurring run in an experiment, given the experiment ID.
 
@@ -52,10 +52,11 @@ with kfp.server_api.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = kfp.server_api.RecurringRunServiceApi(api_client)
     recurring_run = kfp.server_api.V2RecurringRun() # V2RecurringRun | The recurring run to be created.
+namespace = 'namespace_example' # str | Optional input field. Namespace for the recurring run. Ignored when recurring_run.namespace is set. (optional)
 
     try:
         # Creates a new recurring run in an experiment, given the experiment ID.
-        api_response = api_instance.recurring_run_service_create_recurring_run(recurring_run)
+        api_response = api_instance.recurring_run_service_create_recurring_run(recurring_run, namespace=namespace)
         pprint(api_response)
     except ApiException as e:
         print("Exception when calling RecurringRunServiceApi->recurring_run_service_create_recurring_run: %s\n" % e)
@@ -65,7 +66,8 @@ with kfp.server_api.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **recurring_run** | [**V2RecurringRun**](V2RecurringRun.md)| The recurring run to be created. | 
+ **recurring_run** | [**V2RecurringRun**](V2RecurringRun.md)| The recurring run to be created. |
+ **namespace** | **str**| Optional input field. Namespace for the recurring run. Ignored when recurring_run.namespace is set. | [optional]
 
 ### Return type
 
@@ -142,7 +144,7 @@ propagation_policy = 'DELETE_PROPAGATION_POLICY_UNSPECIFIED' # str | Optional in
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **recurring_run_id** | **str**| The ID of the recurring run to be deleted. | 
+ **recurring_run_id** | **str**| The ID of the recurring run to be deleted. |
  **propagation_policy** | **str**| Optional input field. Set the propagation policy when deleting the recurring run. | [optional] [default to &#39;DELETE_PROPAGATION_POLICY_UNSPECIFIED&#39;]
 
 ### Return type
@@ -219,7 +221,7 @@ with kfp.server_api.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **recurring_run_id** | **str**| The ID of the recurring runs to be disabled. | 
+ **recurring_run_id** | **str**| The ID of the recurring runs to be disabled. |
 
 ### Return type
 
@@ -295,7 +297,7 @@ with kfp.server_api.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **recurring_run_id** | **str**| The ID of the recurring runs to be enabled. | 
+ **recurring_run_id** | **str**| The ID of the recurring runs to be enabled. |
 
 ### Return type
 
@@ -371,7 +373,7 @@ with kfp.server_api.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **recurring_run_id** | **str**| The ID of the recurring run to be retrieved. | 
+ **recurring_run_id** | **str**| The ID of the recurring run to be retrieved. |
 
 ### Return type
 
@@ -452,12 +454,12 @@ experiment_id = 'experiment_id_example' # str | The ID of the experiment to be r
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **page_token** | **str**| A page token to request the next page of results. The token is acquired from the nextPageToken field of the response from the previous ListRecurringRuns call or can be omitted when fetching the first page. | [optional] 
- **page_size** | **int**| The number of recurring runs to be listed per page. If there are more recurring runs than this number, the response message will contain a nextPageToken field you can use to fetch the next page. | [optional] 
- **sort_by** | **str**| Can be formatted as \&quot;field_name\&quot;, \&quot;field_name asc\&quot; or \&quot;field_name desc\&quot;. Ascending by default. | [optional] 
- **namespace** | **str**| Optional input. The namespace the recurring runs belong to. | [optional] 
- **filter** | **str**| A url-encoded, JSON-serialized Filter protocol buffer (see [filter.proto](https://github.com/kubeflow/pipelines/blob/master/backend/api/filter.proto)). | [optional] 
- **experiment_id** | **str**| The ID of the experiment to be retrieved. If empty, list recurring runs across all experiments. | [optional] 
+ **page_token** | **str**| A page token to request the next page of results. The token is acquired from the nextPageToken field of the response from the previous ListRecurringRuns call or can be omitted when fetching the first page. | [optional]
+ **page_size** | **int**| The number of recurring runs to be listed per page. If there are more recurring runs than this number, the response message will contain a nextPageToken field you can use to fetch the next page. | [optional]
+ **sort_by** | **str**| Can be formatted as \&quot;field_name\&quot;, \&quot;field_name asc\&quot; or \&quot;field_name desc\&quot;. Ascending by default. | [optional]
+ **namespace** | **str**| Optional input. The namespace the recurring runs belong to. | [optional]
+ **filter** | **str**| A url-encoded, JSON-serialized Filter protocol buffer (see [filter.proto](https://github.com/kubeflow/pipelines/blob/master/backend/api/filter.proto)). | [optional]
+ **experiment_id** | **str**| The ID of the experiment to be retrieved. If empty, list recurring runs across all experiments. | [optional]
 
 ### Return type
 
