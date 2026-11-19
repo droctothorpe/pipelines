@@ -9,12 +9,22 @@ export interface ArgoNode {
   id: string;
   displayName: string;
   type: string;
+  name?: string;
+  templateName?: string;
+  boundaryID?: string;
+  outboundNodes?: string[];
+  startedAt?: string;
+  finishedAt?: string;
+  inputs?: {
+    artifacts?: Array<{ name: string; s3?: { bucket?: string; key?: string } }>;
+    parameters?: Array<{ name: string; value?: string }>;
+  };
   phase?: string;
   message?: string;
   children?: string[];
   memoizationStatus?: { hit: boolean };
   outputs?: {
-    artifacts?: Array<{ name: string }>;
+    artifacts?: Array<{ name: string; s3?: { bucket?: string; key?: string } }>;
     parameters?: Array<{ name: string; value?: string }>;
   };
 }
@@ -27,11 +37,21 @@ export interface ArgoWorkflow {
     uid: string;
     creationTimestamp?: string;
     labels?: Record<string, string>;
+    annotations?: Record<string, string>;
   };
-  spec: { arguments?: { parameters?: Array<{ name: string; value?: string }> } };
+  spec: {
+    arguments?: { parameters?: Array<{ name: string; value?: string }> };
+    workflowTemplateRef?: { name: string };
+    serviceAccountName?: string;
+    shutdown?: string;
+    [key: string]: unknown;
+  };
   status?: {
     phase?: string;
     message?: string;
+    startedAt?: string;
+    finishedAt?: string;
+    storedWorkflowTemplateSpec?: Record<string, unknown>;
     nodes?: Record<string, ArgoNode>;
     compressedNodes?: string;
     offloadNodeStatusVersion?: string;
@@ -95,6 +115,27 @@ export async function argoRequest(
       `Argo request failed (${response.status}). Check your namespace and access permissions.`,
     );
   return response;
+}
+
+/** Follow native list continuations without silently truncating the UI inventory. */
+export async function listNativeItems<T>(
+  path: string,
+  query: URLSearchParams,
+  tokenKey: string,
+  signal?: AbortSignal,
+): Promise<T[]> {
+  const items: T[] = [],
+    seen = new Set<string>();
+  while (true) {
+    const result = await (await argoRequest(`${path}?${query}`, signal)).json();
+    items.push(...(result.items || []));
+    const next = result.metadata?.continue || '';
+    if (!next) return items;
+    if (seen.has(next))
+      throw new Error('The server repeated a pagination token. Refresh to try again.');
+    seen.add(next);
+    query.set(tokenKey, next);
+  }
 }
 
 export async function listArgoWorkflows(
