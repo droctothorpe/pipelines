@@ -21,10 +21,10 @@ A separate section lists behavior not yet demonstrated end to end.
 | PipelineSpec execution IR and KFP Pipeline/PipelineVersion CRD output | No pipeline IR compiler or KFP CRDs. Compile original Python to WorkflowTemplate/Workflow/CronWorkflow. Portable **container definitions** still use shared schema messages, without an execution DAG builder. |
 | Loading compiled KFP pipeline graphs for reuse or migration | Not supported. Historical graph IR and old backend runs are not imported. Existing container definitions remain loadable. |
 | KFP pipeline/version/experiment/run ID conventions and server-side CRUD contracts | Replaced by resource names/labels and Workflow UIDs. The native UI creates content-named versions; it does not expose all old pipeline/version editing and sharing operations. |
-| ZIP/tar pipeline upload and legacy upload forms | Native UI accepts WorkflowTemplate YAML/JSON text, not KFP package archives or old upload endpoints. |
+| ZIP/tar pipeline packages and old upload endpoints | The stock upload form is restored, but accepts native WorkflowTemplate `.yaml`/`.yml` files, including JSON encoded as YAML. URL imports require browser CORS access. ZIP/tar packages and KFP IR are rejected explicitly. |
 | KFP ScheduledWorkflow controller and recurring-run API | Removed. Recurrence exists through native CronWorkflows, not the old controller/model. The UI exposes cron expressions and suspension, not all old periodic-interval, start/end, catch-up or concurrency controls. Operators can configure native CronWorkflow fields separately. |
-| Manual KFP archive/unarchive and experiment archive workflows | Not ported. Argo archives completed workflows; deleting the experiment ConfigMap does not delete runs. The old archive state/CRUD interfaces are not emulated. |
-| Full legacy dashboard actions, routes and bookmarks | Replaced by native versions/experiments/runs/schedules pages. Legacy detail URLs, clone-run flows, separate execution pages and the old feature/settings pages are not maintained. Argo CLI/server capabilities are available independently of UI buttons. |
+| KFP archive/unarchive and experiment archive semantics | The stock Archive action verifies a durable Argo archive, then deletes the completed live Workflow with a UID precondition. Active means a live CR exists; Archived means only the SQL record remains. Restore and experiment archival are disabled with explanations. Experiment ConfigMaps can still be deleted through Kubernetes without deleting runs; the stock UI has no Delete experiment button. |
+| Every legacy dashboard action and historical bookmark | The stock sidebar, tables, forms, selectors, run graph, inspector and timeline are restored. Routes use native resource names and Workflow UIDs, not historical KFP IDs. Clone run/recurring run, failed-live-run retry and termination use native operations. Cloning requires the referenced WorkflowTemplate to remain available. Separate execution/settings pages and backend-only actions are not restored. |
 | KFP backend plugin inputs/outputs | No `plugins_input` dispatch or KFP plugin lifecycle. Component code/native Argo facilities must provide any replacement. |
 | Bundled legacy component/sample catalogue | The old `components/` catalogue and backend-oriented samples were removed. Authoring custom Python/container components remains supported; vendor packages and old catalogue entries are not shipped or qualified here. |
 | KFP release/upgrade tooling, service image builds and migration jobs | Retired with the backend. Native CI builds/tests the SDK, UI and an isolated Argo stack. It does not migrate or operate a stock KFP installation. |
@@ -60,12 +60,12 @@ execution support.
 | Every stock artifact-store/pipeline-root scheme | The compiler currently requires an S3-compatible `artifact_repository`. Other Argo artifact drivers are not exposed through this compiler. |
 | KFP cache store/API semantics | Replaced by native ConfigMap memoization. There is no KFP cache service or cache API, and SQL memoization is not implemented here. |
 | Caching mutable image tags, runtime-installed dependencies, secret/config-map/PVC-backed state without explicit version identity | The compiler conservatively rejects these cache configurations. Pin/snapshot the image and use versioned declared inputs, bake dependencies into it, or disable caching. |
-| Scalable global artifact discovery/indexing and cross-run metadata queries | No indexing service or global metadata database. Discovery is bounded to live/archive workflows; producer/input references provide within-run lineage and cached origin identity. |
-| Full artifact comparison and visualization dashboard | Only selected-run scalar metrics, typed artifact metadata/downloads and input lineage are exposed. ROC/confusion-matrix plots, embedded HTML/Markdown/table viewers, richer artifact comparison and other stock visualization panels are not ported. |
+| Scalable global artifact discovery/indexing and cross-run metadata queries | No indexing service or global metadata database. The artifact list scans the 50 most recent runs and displays a notice when truncated; older artifacts remain accessible from their run. Producer/input references preserve lineage and cached origin identity. |
+| Full artifact comparison and visualization dashboard | Selected-run scalar metrics, typed metadata/downloads and input lineage are exposed. Artifact previews are bounded to 1 MiB; HTML uses a script-disabled, network-disabled sandbox and other payloads have a text preview. ROC/confusion-matrix plots, Markdown/table renderers and richer artifact comparisons are not ported. |
 | Automatic Dataset/Model previews in the native execution path | The bridge currently disables automatic preview generation. Existing metadata and payloads are preserved; stock automatic preview production/viewing is not reproduced. |
 | Managed TensorBoard viewers | Viewer controller, TensorBoard proxy and associated UI are removed. Run TensorBoard independently if required. |
 | Namespace export/import and historical metadata transfer | Removed. There is no migration/export service for stock KFP runs, artifacts or experiments. Native resource/SQL/object-store backup is an operator responsibility. |
-| Full list/search/pagination/comparison UX | Native discovery is capped at 100 results per live/archive source, and comparison at five selected runs. No stock global search or large-selection comparison equivalent is provided. |
+| Server-indexed list/search/comparison behavior | The stock table filters, sorting, page sizes and selection are restored. Native collection continuations are followed, then namespace inventory is filtered/sorted/paged in the browser. Comparison is limited to five selected runs. This is not a scalable replacement for server-indexed global queries. |
 | Full legacy logging UX | The current UI fetches the last 200 lines per task pod and offers refresh. Argo archive logs remain readable, but the old logging/proxy interfaces and all their options are not reproduced. |
 
 ## Authentication and operations
@@ -80,6 +80,11 @@ execution support.
   custom controllers, backend health endpoints and backend-specific telemetry are
   gone. Argo owns workflow status, archive/offloading, TTL and scheduling instead;
   its operational settings and semantics are not the KFP contracts.
+- Argo 4.1.6 was observed retaining a closed SQL session after PostgreSQL restarted.
+  Restarting Argo Server and the workflow controller recovered the same archived
+  run and artifact bytes. The persistence acceptance test explicitly restarts these
+  stateless services after storage; it does not demonstrate automatic database
+  reconnection or high availability.
 - Stock release/merge-queue workflows were intentionally retired with user approval.
   Security scanning and basic issue/contributor automation remain. External branch
   protection or repository settings are not changed by this commit.
@@ -100,8 +105,10 @@ execution support.
 Confirmed native behavior is exercised by `argo_compiler_test.py`,
 `native_cli_test.py`, the retained SDK/widget tests, `verify_compatibility.py` and
 `argo-deployment.smoke.mjs`. Compiler rejection paths are in `argo_compiler.py`
-and `argo_groups.py`; UI capabilities are in `ArgoWorkspace.tsx`,
-`ArgoRunDetails.tsx`, `Argo.ts` and `ArgoResources.ts`.
+and `argo_groups.py`; UI presentation is in `components/Router.tsx` and the
+`Native*` pages. Native transport/identity boundaries are in `Argo.ts`,
+`ArgoResources.ts`, `NativeUi.ts`, `NativeImport.ts` and `ArgoRunGraph.ts`.
+`native-bundle.smoke.mjs` covers the built stock presentation without KFP endpoints.
 
 Stock capabilities were checked against the baseline paths below. They are now
 removed where obsolete; inspect them with `git show BASE:path` using the commit

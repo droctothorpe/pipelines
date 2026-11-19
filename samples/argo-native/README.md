@@ -6,8 +6,9 @@ their own container; Argo schedules tasks, transfers artifacts, memoizes outputs
 and records status. There are no KFP API, driver, scheduler or metadata services in
 the deployment.
 
-The native UI uses KFP's graph, artifact cards, inspector and log widgets. Its
-browser adapters talk to Argo Server and Kubernetes, not recreated KFP endpoints.
+The UI retains KFP's sidebar, toolbars, tables, upload/run forms, selectors, graph,
+artifact cards, inspector, timeline and log widgets. Its browser adapters talk to
+Argo Server and Kubernetes, not recreated KFP endpoints.
 It supports pipeline versions, experiments, submissions, schedules, live/archived
 run details, typed artifacts, input lineage, selected-run metrics and run actions.
 
@@ -89,10 +90,19 @@ an existing version's image. For registry images, use an actual immutable digest
 in `base_image`. Kubernetes does not itself enforce tag or WorkflowTemplate
 immutability; do not mutate content-named resources outside this convention.
 
-Use the UI's **Pipelines and versions** page to upload a version, select parameters
-and an experiment, and start a run or create a suspended CronWorkflow. Versions
-are create-only in the UI; the editor role cannot update them. Experiments are
-ConfigMaps, and membership is a label rather than an owner reference.
+Use **Pipelines → Upload pipeline** to upload a compiled WorkflowTemplate YAML
+file. Expand a pipeline row or use its graph's **Show Summary** card to select a
+version. **Create run** opens the normal run form with parameters, an experiment
+selector and one-off/recurring choices. Recurring runs create suspended
+CronWorkflows; enable them from their details page. Versions are create-only;
+the editor role cannot update them. Experiments are ConfigMaps, and membership is
+a label rather than an owner reference.
+
+**Runs → Active / Archived** separates live Workflow CRs from archive-only records.
+**Archive** verifies SQL persistence before deleting a completed live Workflow and
+its pods. Its artifacts and logs remain accessible by UID. **Restore**, experiment
+archival and namespace metadata transfer are explicitly unavailable. Experiment
+ConfigMap deletion remains a Kubernetes operation, not a custom UI button.
 
 The CLI also supports native output:
 
@@ -188,8 +198,22 @@ This uses a fresh headless Chrome context and real APIs. It verifies UI upload a
 submission, image identity, three task pods followed by two on cache reuse, both
 scores, artifact download, logs, offloaded status, a native approval gate, denied
 Kubernetes/Argo mutations, CronWorkflow persistence and CLI changes, archive access
-after live deletion, non-cascading experiment deletion, and SQL/object-store data
-after deployment restarts. It leaves its named test resources for inspection.
+after the UI's Archive action, non-cascading experiment deletion through Kubernetes,
+and SQL/object-store data after a full stack restart. It leaves its named test
+resources for inspection.
+
+Argo 4.1.6 can retain a closed SQL session after PostgreSQL restarts. If archive
+requests report `session proxy is closed`, recover the stateless services:
+
+```sh
+kubectl --context orbstack -n kfp-argo rollout restart deployment/argo-server deployment/workflow-controller
+kubectl --context orbstack -n kfp-argo rollout status deployment/argo-server
+kubectl --context orbstack -n kfp-argo rollout status deployment/workflow-controller
+```
+
+This does not delete Workflows, SQL rows, artifacts or PVCs. The persistence test
+performs this recovery explicitly; automatic database reconnection and HA are
+not established.
 
 Evidence is written to `/tmp/kfp-argo-deployment-evidence.json` and screenshots to
 `/tmp/kfp-argo-{deployed-runs,denied,archived}.png`. Do not publish tokens or raw
@@ -208,16 +232,19 @@ verification covers success and failure, not every legacy cancellation/error-cod
 semantic. Component images must contain this checkout's runtime or install its
 wheel, not an unmodified upstream KFP runtime.
 
-The KFP backend, REST clients, old pipeline IR compiler, old UI/server and their
-integration/serialization tests have been retired. The full retained SDK and native
+The KFP backend, REST clients, old pipeline IR compiler, Node server and their
+integration/serialization tests have been retired. Stock presentation components
+are retained with native data adapters; the stripped-down prototype pages are removed. The full retained SDK and native
 UI suites are the validation target; retired APIs are not silently emulated. A small
 container-definition serializer and shared authoring/configuration schemas remain
 for SDK loading and image building. The Docker Python dependency is used for image
 building. See [the stock-KFP feature gap inventory](../../docs/compatibility.md).
 
-Discovery is bounded to 100 live/archive list results per source and five explicitly
-selected runs for comparison. Lineage is derived from declared task inputs/outputs
-and producer metadata. There is no global artifact index, migration service, new
+Resource discovery follows native continuation tokens; table search, sorting and
+pagination operate on the namespace inventory in the browser. The global artifact
+list covers the 50 most recent runs, with an explicit truncation notice, and
+comparison is limited to five selected runs. Lineage is derived from declared task
+inputs/outputs and producer metadata. There is no global artifact index, migration service, new
 application backend or custom controller. The handwritten workflow remains a
 runtime-contract fixture. The obsolete Stage A installer is removed; `deploy.py`
 is the only deployment generator, and unused upstream demo services are filtered out.

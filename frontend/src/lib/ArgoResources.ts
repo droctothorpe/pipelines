@@ -1,7 +1,7 @@
 // Copyright 2026 The Kubeflow Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { argoRequest, getArgoWorkflow, type ArgoWorkflow } from './Argo';
+import { argoRequest, getArgoWorkflow, listNativeItems, type ArgoWorkflow } from './Argo';
 
 export interface NativeResource {
   apiVersion: string;
@@ -11,6 +11,7 @@ export interface NativeResource {
     uid?: string;
     namespace?: string;
     resourceVersion?: string;
+    creationTimestamp?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
   };
@@ -41,10 +42,23 @@ export async function listResources(
           'listOptions.limit': '100',
         },
   );
-  const data = await (
-    await argoRequest(`${resourcePath(namespace, kind)}?${query}`, signal)
-  ).json();
-  return data.items || [];
+  const items = await listNativeItems<NativeResource>(
+    resourcePath(namespace, kind),
+    query,
+    kind === 'experiments' ? 'continue' : 'listOptions.continue',
+    signal,
+  );
+  // Argo Server's protobuf JSON omits TypeMeta; the endpoint determines the kind.
+  return items.map((item) => ({
+    ...item,
+    apiVersion: kind === 'experiments' ? 'v1' : 'argoproj.io/v1alpha1',
+    kind:
+      kind === 'experiments'
+        ? 'ConfigMap'
+        : kind === 'workflow-templates'
+          ? 'WorkflowTemplate'
+          : 'CronWorkflow',
+  }));
 }
 
 export async function createResource(
@@ -100,6 +114,9 @@ export async function submitRun(
   version: NativeResource,
   parameters: Record<string, string>,
   experiment: string,
+  name?: string,
+  description?: string,
+  serviceAccountName?: string,
 ) {
   const labels = {
     ...version.metadata.labels,
@@ -108,9 +125,22 @@ export async function submitRun(
   const workflow = {
     apiVersion: 'argoproj.io/v1alpha1',
     kind: 'Workflow',
-    metadata: { generateName: version.metadata.name.slice(0, 48) + '-', namespace, labels },
+    metadata: {
+      generateName: version.metadata.name.slice(0, 48) + '-',
+      namespace,
+      labels,
+      ...(name || description
+        ? {
+            annotations: {
+              ...(name ? { 'pipelines.kubeflow.org/display-name': name } : {}),
+              ...(description ? { 'pipelines.kubeflow.org/description': description } : {}),
+            },
+          }
+        : {}),
+    },
     spec: {
       workflowTemplateRef: { name: version.metadata.name },
+      ...(serviceAccountName ? { serviceAccountName } : {}),
       arguments: {
         parameters: Object.entries(parameters).map(([name, value]) => ({ name, value })),
       },

@@ -260,6 +260,55 @@ That tests the two hardest assumptions immediately: whether KFP components can r
 
 ### Validation status
 
+### Stock UI restoration checkpoint — 2026-11-19
+
+The user rejected the stripped-down prototype screen: retaining graph widgets was
+not enough to preserve KFP's UI. The stock sidebar, toolbar, table, selector,
+upload/run form, graph inspector and timeline presentation are now restored over
+native resource adapters. The prototype `ArgoWorkspace` and `ArgoRunDetails` pages
+are removed. No KFP backend, generated REST client or Node server was restored.
+
+- Deployed the Kind-verified restoration, then `kfp-argo-ui:stock-no-driver`
+  (`sha256:2dfd84b84816…`) on `orbstack/kfp-argo` after removing the obsolete System
+  Logs tab and driver placeholder. The final change passes frontend CI and an
+  authenticated deployed inspector check. Access remains
+  `http://127.0.0.1:3003/argo.html?namespace=kfp-argo` with an in-memory token.
+- Five list pages compared against the actual baseline frontend bundle at 1280×720
+  and 390×844: all ten comparisons pass with zero pixels above the stated 20-level
+  RGB tolerance. Reference source maps match baseline `7780f12ac`. See
+  `frontend/scripts/stock-ui-parity.smoke.mjs`; this does not assert every data state
+  or backend capability has parity.
+- Regression: `stock-ui.smoke.mjs` failed against the old deployed UI because
+  `#sideNav` was absent, and passes after restoration. Additional red/green tests
+  cover refreshing table pagination, native resource continuation/TypeMeta, and
+  artifact-column sorting. Selection, cached provenance, denied requests, nested
+  runtime graphs and immutable imports are covered by retained unit tests.
+- Validation: 185 frontend unit tests; production and offline browser suites;
+  981 retained Python tests on both 3.11 and 3.13; nine fresh-Kind compatibility
+  cases; full authenticated lifecycle/RBAC/persistence tests on Kind and the final
+  OrbStack deployment. All 73 pre-validation native resource UIDs remain intact.
+- Argo 4.1.6 retained a closed SQL session after a PostgreSQL restart. Restarting
+  Argo Server/controller recovered the same archived UID and artifact bytes.
+  Persistence acceptance explicitly performs that stateless recovery; automatic
+  reconnection/HA is not claimed. Recovery and remaining feature limits are in
+  `samples/argo-native/README.md` and `docs/compatibility.md`.
+- Published as a follow-up UI-restoration commit for draft PR #15784, as requested.
+  The prior implementation/cleanup commits remain unchanged. The retained task
+  inspector regression failed while System Logs was present and passes with only
+  Input/Output, Task Details and Logs; the built-browser test also checks its absence.
+
+```mermaid
+flowchart LR
+  subgraph Before[Before: presentation regression]
+    Demo[Prototype tabs and cards] --> Native1[Native adapters]
+  end
+  subgraph After[After: stock KFP presentation]
+    Stock[Sidebar, pages, tables, forms and inspectors] --> Native2[Native adapters]
+  end
+  Native1 --> Argo[Argo Server and Kubernetes]
+  Native2 --> Argo
+```
+
 ### Backend cleanup checkpoint — 2026-11-19
 
 The user approved two commits: implementation checkpoint `2a1c1439a`, followed by
