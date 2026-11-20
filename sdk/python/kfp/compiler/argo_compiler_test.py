@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -114,6 +115,89 @@ def test_conditions_loops_and_collection(tmp_path):
         )
         == 2
     )
+
+
+def test_loop_item_fields_decode_object_and_json_string_items(tmp_path):
+    """Regression: `fromJSON(item)` fails Argo's type check when the loop item
+    is already a decoded object (samples/core loop_parallelism, loop_parameter).
+    The projection must serialize before decoding so both shapes evaluate."""
+
+    @dsl.component(base_image='python:3.11', install_kfp_package=False)
+    def show(value: int):
+        print(value)
+
+    @dsl.pipeline(name='native-loop-items')
+    def pipeline():
+        with dsl.ParallelFor([{'a': 1, 'b': 2}, {'a': 10, 'b': 20}]) as item:
+            show(value=item.a)
+            show(value=item.b)
+
+    path = tmp_path / 'loop.yaml'
+    compiler.Compiler().compile(pipeline, str(path), resource_kind='Workflow')
+    values = [
+        parameter['value']
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        for task in t.get('dag', {}).get('tasks', [])
+        for parameter in task.get('arguments', {}).get('parameters', [])
+        if '{{=' in parameter['value']
+    ]
+    assert len(values) == 2, values
+    for value in values:
+        assert 'fromJSON(item)' not in value, value
+        assert (
+            "fromJSON(type(item) == 'string' ? item : toJson(item))" in value
+        ), value
+
+
+def test_pvc_tasks_keep_static_commands_despite_nullable_inputs(tmp_path):
+    """Regression: CreatePVC/DeletePVC inputs are nullable, which routed the
+    synthetic Python stub through the dynamic argv patch; Argo then failed with
+    "Error applying PodSpecPatch" (samples/core/kubernetes_pvc). The stub reads
+    the whole parameter map, so it needs no presence-dependent argv."""
+    from kfp import kubernetes
+
+    @dsl.component(base_image='python:3.11', install_kfp_package=False)
+    def touch():
+        pass
+
+    @dsl.pipeline(name='native-pvc')
+    def pipeline():
+        claim = kubernetes.CreatePVC(
+            pvc_name_suffix='-data', access_modes=['ReadWriteOnce'], size='1Mi'
+        )
+        task = touch()
+        kubernetes.mount_pvc(
+            task, pvc_name=claim.outputs['name'], mount_path='/data'
+        )
+        kubernetes.DeletePVC(pvc_name=claim.outputs['name']).after(task)
+
+    path = tmp_path / 'pvc.yaml'
+    compiler.Compiler().compile(pipeline, str(path), resource_kind='Workflow')
+    stubs = [
+        t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if t.get('container', {}).get('args', [])[:1]
+        in (['create'], ['delete'])
+    ]
+    assert len(stubs) == 2, [t['name'] for t in stubs]
+    encoded = {}
+    for template in stubs:
+        assert 'podSpecPatch' not in template, template['name']
+        args = template['container']['args']
+        assert args[1:3] == ['{{inputs.parameters}}', '{{workflow.namespace}}']
+        encoded[args[0]] = json.loads(args[3])
+    # The stub decodes exactly the parameters the compiler JSON-encodes: lists,
+    # dictionaries and nullable inputs. DeletePVC's required name stays raw.
+    assert encoded['create'] == [
+        'access_modes',
+        'annotations',
+        'data_source',
+        'pvc_name',
+        'pvc_name_suffix',
+        'storage_class_name',
+        'volume_name',
+    ]
+    assert encoded['delete'] == []
 
 
 def test_caching_accepts_tags_and_honors_optional_image_identity(tmp_path):

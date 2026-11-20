@@ -124,9 +124,11 @@ validation notebook has missing imports/stale names, and the parallel-join sampl
 uses an unsupported empty container decorator call.
 
 `test/sdk_compatibility/run_samples.py` separately records execution and semantic
-checks. During this work, 25 of the 27 baseline-compilable definitions have passed
-on OrbStack, including all four preview/list samples, directory/file data passing,
-control flow, retries and PVC lifecycle. GPU and credentialed-cloud execution are
+checks. The per-sample results of the latest complete `samples/core` pass are in
+[core samples](core-samples.md): 25 of the 27 baseline-compilable definitions pass
+on OrbStack (three after fixes made during that pass), including all four
+preview/list samples, directory/file data passing, control flow, retries and PVC
+lifecycle. GPU and credentialed-cloud execution are
 not verified. Caching/memory sample runs use explicitly recorded smaller inputs;
 this is not a claim that every original notebook timing/submission cell ran.
 

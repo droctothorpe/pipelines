@@ -11,6 +11,12 @@ from kfp.compiler.argo_compiler import _json, _ref
 from kfp.dsl import for_loop, pipeline_channel, structures, tasks_group
 from kfp.dsl.types import type_utils
 
+# Loop items arrive either as JSON text (string list items) or as decoded
+# objects (object list items). Argo's expression checker types `item` from the
+# concrete value, so `fromJSON(item)` is rejected whenever the item is already an
+# object, even in an untaken branch. Serialize first so both shapes decode.
+_LOOP_ITEM = "fromJSON(type(item) == 'string' ? item : toJson(item))"
+
 
 def _expression_reference(reference):
     if reference.startswith('{{='):
@@ -552,7 +558,7 @@ class _Scope:
                                 },
                                 {
                                     'name': 'kfp-uri-' + name,
-                                    'value': "{{=(type(item) == 'string' ? fromJSON(item) : item).uri}}",
+                                    'value': '{{=' + _LOOP_ITEM + '.uri}}',
                                 },
                             ]
                         )
@@ -560,9 +566,7 @@ class _Scope:
                     item = '{{item}}'
                     if isinstance(channel, for_loop.LoopArgumentVariable):
                         selected = (
-                            "(type(item) == 'string' ? fromJSON(item) : item)["
-                            + _json(channel.subvar_name)
-                            + ']'
+                            _LOOP_ITEM + '[' + _json(channel.subvar_name) + ']'
                         )
                         item = (
                             '{{=type('

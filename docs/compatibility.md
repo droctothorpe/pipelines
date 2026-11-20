@@ -133,7 +133,7 @@ are established. Do not call all validation errors regressions.
 |---|---|---|---|
 | U01 | Artifact-list iteration | Latest single-item staging and nested list iteration have not run live. | Compiler/stager/runtime tests and native lint pass; `artifact_lists.py:verify_iteration` remains unrun. |
 | U02 | Nullable raw-container argv | None/empty/literal-null handling, nested Concat and staged-list IfPresent need actual execution. | BusyBox fixture `container_optional_inputs.py`; 25 temporary pinned Expr/Sprig evaluations are only expression-level evidence. |
-| U03 | Literal native-template text | Strings such as `{{inputs.parameters.value}}` or `{{workflow.uid}}` must remain data where stock does. Argo performs multiple substitution passes. | Compare stock and native end-to-end; do not infer safety/equivalence from single-expression evaluation. |
+| U03 | Literal native-template text | Strings such as `{{inputs.parameters.value}}` or `{{workflow.uid}}` must remain data where stock does. Argo performs multiple substitution passes. | Confirmed live 2026-11-20: Argo resolves a recognizable tag inside a `{{=...}}` expression string literal before evaluation, breaking the dynamic argv patch for raw containers with nullable inputs; brace escaping alone does not protect it. The compiler-generated PVC stub is now exempt ([core samples](core-samples.md)); user-authored raw containers that embed Argo tag text and declare nullable inputs remain an open boundary. |
 | U04 | Nullable Kubernetes settings | Nullable source channels in resource quantities, env, resource names and structured settings have not been fully lowered/verified. | Non-null dynamic settings and Python nullable parameters passed separately. |
 | U05 | Whole control-flow combination space | Nested loops/conditions/OneOf, zero iterations, conditional/skipped producers, collection returns, explicit dependencies and their combinations are not exhaustive. | Many retained cases pass; remaining guards are C04/C05/L03, not proof that every other combination works. |
 | U06 | Retry/failure combinations | Retries with validation wrappers, cleanup, caching, lists, workspaces, nested graphs and cancellation need broader live coverage. | Default/integral retry samples and targeted failure cleanup passed; latest nested task/pod projection is unit-tested. |
@@ -186,9 +186,9 @@ are established. Do not call all validation errors regressions.
 | U43 | Scale/performance | Namespace inventory still gathers all summary pages; SDK listings, artifact scans, ConfigMap cache/registry growth, controller throughput and large templates require load testing. | A 256-artifact cached-source case is not a production-scale benchmark. Reduced polling payloads are not established as the outage fix. |
 | U44 | Persistence/GC/retention | Full retention, cancellation/failure cleanup, TTL/archive interaction, deleted-version references, backup/restore and recovery across all services remain unverified. | Earlier resource/artifact persistence checks passed a bounded scenario, not every lifecycle. |
 | U45 | Packaging/distribution breadth | All supported installation environments, clean offline installs, optional extras, provider dependencies, documentation examples and external consumers have not been exercised. | Wheel/sdist and isolated installed-wheel checks pass; production npm audit reported zero known vulnerabilities at the check time, not a security proof. |
-| U46 | Latest full live corpus | A fresh complete execution pass is still missing. Cache hits alone cannot establish that the newest runtime code ran. | Retain existing caches; use an explicit cold-execution test pass and separate default-on cache verification. |
-| U47 | Preview-formats timeout | Run `625f941b-4d33-4bbd-a4ec-cec7e4458c8c` timed out before subsequent cases passed and before the API outage. Its cause is unresolved. | Do not classify it as purely environmental or claim the newest preview-formats implementation passes. |
-| U48 | Interrupted nested-condition run | Run `619f7789-6563-4c50-b410-3f262b21a291` and remaining transport-failed corpus cases need inspection/rerun. | A client timeout/reset is not a pipeline correctness verdict. |
+| U46 | Latest full live corpus | The `samples/core` corpus ran cold (caching disabled) plus a default-cache verification on 2026-11-20; see [core samples](core-samples.md). The other live programs under `test/sdk_compatibility/` have not been rerun since. | That pass found and fixed three regressions from `4518f59ad` (object loop items, PVC stub argv patch, PVC nullable decoding); rerun the remaining programs before claiming the full corpus. |
+| U47 | Preview-formats timeout | Resolved: `artifact_preview_formats_pipeline` runs 11 pods strictly sequentially, each pip-installing polars/torch/transformers, and completed `Succeeded` in 15 m 44 s on 2026-11-20. | The runner's 900 s timeout is the limit, not the native stack; raise the timeout or slim the sample's dependencies. |
+| U48 | Interrupted nested-condition run | Resolved: `nested_condition.py` passed in the 2026-11-20 cold pass, as did every other previously transport-failed core case. | None. |
 
 ### Field-level response uncertainty
 
@@ -227,6 +227,8 @@ with `server_api/models/*`. See U25 for behavioral comparison still required.
 | B02 | `samples/core/kfp_env_validation/kfp_env_validation.ipynb` has missing/stale definitions/imports | Fails the captured stock compilation too; retained as a known xfail. |
 | B03 | TFX notebook and excluded notebook cells | TFX uses an external legacy runner rather than a captured local DSL definition. Install/submission/timing cells are excluded from the 29-definition corpus. Their compatibility is unverified, not counted as passed. |
 | B04 | Root artifact submission, direct Collected iteration and fractional retry semantics | Authoring/API signatures alone do not establish stock end-to-end support. RootDAG parameter-only evidence, the authoring-time direct-Collected failure, and the integer runtime retry factor must be checked before calling these migration regressions. See L01–L03. |
+| B05 | `samples/core/resource_spec/runtime_resource_request_gpu.py` sets accelerator type `NVIDIA_TESLA_K80` | Kubernetes rejects the pod: the value is not a standard or fully qualified resource name. Stock's driver also uses the accelerator type verbatim as the resource name, so this is a sample defect, not a native regression; GPU hardware is separately P01. |
+| B06 | `samples/core/secret/secret.py` component on `python:3.7` | The SDK runtime (`kfp==2.17.0`) requires Python >= 3.9, so the runtime install fails in that image on stock as well. Credentials remain P02. |
 
 ## Evidence and reproduction map
 
@@ -246,7 +248,7 @@ No passing CI URL exists for this unpushed checkpoint.
 | Workspace/settings | `workspace.py`, `task_config.py`, `kubernetes_settings.py` | Workspace passthrough, structured staging and dynamic claim logs; no hardware allocation proof |
 | Archive/inventory | `experiment_archive.py`, read-only `inventory.py`, `native_client_test.py`, `NativeUi.test.ts` | Offline cascade/projection red-green logs; both live programs remain unrun |
 | Task DTOs | `test/native_task_details_test.py` | `/tmp/kfp-compressed-status-red.log`, `/tmp/kfp-retry-task-projection-red.log`; later full suites pass |
-| Interrupted corpus | `test/sdk_compatibility/run_samples.py` | `/tmp/kfp-current-stock-corpus/execution.json`; separate PVC report `/tmp/kfp-current-stock-pvc/execution.json` |
+| `samples/core` corpus | `test/sdk_compatibility/run_samples.py`; per-sample results in [core samples](core-samples.md) | `/tmp/kfp-core-samples-20261120/` (cold, prerequisite, cache and post-fix reports plus Argo reproducers) |
 
 All live programs in the table are under `test/sdk_compatibility/` unless another
 path is given. Live browser programs are under `frontend/scripts/`.

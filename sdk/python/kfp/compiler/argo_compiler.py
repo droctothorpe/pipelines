@@ -503,7 +503,13 @@ class _Compiler:
             not isinstance(task.inputs.get('pvc_name'), str)
             or not task.inputs.get('pvc_name')
         )
-        if container.image in ('argostub/createpvc', 'argostub/deletepvc'):
+        # The PVC stubs read the whole parameter map as JSON, so their argv never
+        # depends on which nullable inputs are present.
+        pvc_stub = container.image in (
+            'argostub/createpvc',
+            'argostub/deletepvc',
+        )
+        if pvc_stub:
             operation = (
                 'create'
                 if container.image == 'argostub/createpvc'
@@ -522,6 +528,17 @@ class _Compiler:
                     operation,
                     '{{inputs.parameters}}',
                     '{{workflow.namespace}}',
+                    # Names the stub must JSON-decode; the rest arrive raw.
+                    _json(
+                        sorted(
+                            name
+                            for name, port in (
+                                task.component_spec.inputs or {}
+                            ).items()
+                            if argo_parameters.nullable(port)
+                            or _kind(port) in ('List', 'Dict')
+                        )
+                    ),
                 ]
                 + (
                     ["{{$.outputs.parameters['name'].output_file}}"]
@@ -921,17 +938,21 @@ class _Compiler:
                 ] = resources['accelerator_count']
         template['container'] = rendered
         command_expressions = None
-        if not python and (
-            any(
-                argo_parameters.nullable(port)
-                for port in (spec.inputs or {}).values()
-            )
-            or (
+        if (
+            not python
+            and not pvc_stub
+            and (
                 any(
-                    port.is_artifact_list
+                    argo_parameters.nullable(port)
                     for port in (spec.inputs or {}).values()
                 )
-                and 'IfPresent' in _json([container.command, args])
+                or (
+                    any(
+                        port.is_artifact_list
+                        for port in (spec.inputs or {}).values()
+                    )
+                    and 'IfPresent' in _json([container.command, args])
+                )
             )
         ):
             from kfp.compiler.argo_commands import arguments

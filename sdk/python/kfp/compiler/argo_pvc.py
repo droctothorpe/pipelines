@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """The user-requested PVC task runs its Kubernetes operation in its own pod.
 
-No per-component driver or controller is introduced. This source is embedded in
-CreatePVC/DeletePVC containers so they do not require a fork-specific image.
+No per-component driver or controller is introduced. This source is
+embedded in CreatePVC/DeletePVC containers so they do not require a
+fork-specific image.
 """
 
 import json
@@ -68,13 +69,22 @@ def execute(operation, parameters, namespace, api=None):
     return name
 
 
-if __name__ == '__main__':
-    operation, raw, namespace = sys.argv[1:4]
+def decode(raw, encoded):
+    """Return the task parameters, JSON-decoding only the names the compiler
+    encoded: lists, dictionaries and nullable inputs (`null` becomes None).
+    Required strings, such as DeletePVC's name bound from an upstream output,
+    arrive raw and are never parsed."""
     parameters = {item['name']: item['value'] for item in json.loads(raw)}
-    for key in ('access_modes', 'annotations', 'data_source'):
+    for key in json.loads(encoded):
         if key in parameters:
             parameters[key] = json.loads(parameters[key])
+    return parameters
+
+
+if __name__ == '__main__':
+    operation, raw, namespace, encoded = sys.argv[1:5]
+    parameters = decode(raw, encoded)
     name = execute(operation, parameters, namespace)
     if operation == 'create':
-        Path(sys.argv[4]).write_text(name)
+        Path(sys.argv[5]).write_text(name)
     print(f'{operation} PVC {name}')
