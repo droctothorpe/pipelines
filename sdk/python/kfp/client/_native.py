@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Native resource operations behind the existing public Client facade.
 
-The method names match the facade's internal service calls, not HTTP endpoints.
-Only Kubernetes and Argo APIs are contacted.
+The method names match the facade's internal service calls, not HTTP
+endpoints. Only Kubernetes and Argo APIs are contacted.
 """
 
 import copy
@@ -142,9 +142,10 @@ class NativeBackend:
             multi_user=True, pipeline_store='kubernetes'
         )
 
-    def _experiment(self, resource):
+    def _experiment(self, resource, latest_runs=None):
         self._remember(resource)
         metadata, data = resource['metadata'], resource.get('data', {})
+        latest = latest_runs or {}
         return models.V2Experiment(
             experiment_id=metadata['uid'],
             display_name=data.get('displayName', metadata['name']),
@@ -152,7 +153,31 @@ class NativeBackend:
             namespace=metadata.get('namespace'),
             created_at=timestamp(metadata.get('creationTimestamp')),
             storage_state=data.get('storageState', 'AVAILABLE'),
+            last_run_created_at=latest.get(metadata['uid'])
+            or latest.get(metadata['name']),
         )
+
+    def _latest_runs(self, namespace):
+        """Most recent workflow creation per experiment, live and archived.
+
+        Enrichment only: an experiment stays readable when its namespace's run
+        inventory cannot be listed (for example archive access, C18).
+        """
+        latest = {}
+        try:
+            runs = self._workflow_resources(namespace).values()
+        except models.ApiException:
+            return latest
+        for run in runs:
+            experiment = run['metadata'].get('labels', {}).get(EXPERIMENT)
+            created = timestamp(run['metadata'].get('creationTimestamp'))
+            if (
+                experiment
+                and created
+                and (experiment not in latest or created > latest[experiment])
+            ):
+                latest[experiment] = created
+        return latest
 
     def experiment_service_create_experiment(self, experiment):
         namespace = self._namespace(experiment.namespace)
@@ -185,8 +210,9 @@ class NativeBackend:
         filter=None,
     ):
         namespace = self._namespace(namespace)
+        latest = self._latest_runs(namespace)
         values = [
-            self._experiment(item)
+            self._experiment(item, latest)
             for item in self._maps('experiment', namespace)
         ]
         return self._page(
@@ -201,7 +227,10 @@ class NativeBackend:
         )
 
     def experiment_service_get_experiment(self, experiment_id):
-        return self._experiment(self._find_map('experiment', experiment_id))
+        resource = self._find_map('experiment', experiment_id)
+        return self._experiment(
+            resource, self._latest_runs(resource['metadata']['namespace'])
+        )
 
     def _experiment_storage(self, experiment_id, state):
         resource = self._find_map('experiment', experiment_id)
@@ -339,10 +368,10 @@ class NativeBackend:
             ),
         )
 
-    def _run(self, resource, storage_state='AVAILABLE'):
+    def _run(self, resource, storage_state='AVAILABLE', pod_uids=None):
         from kfp.client._task_details import tasks
 
-        details = tasks(resource)
+        details = tasks(resource, pod_uids)
         self._remember(resource)
         metadata = resource['metadata']
         if (
@@ -383,6 +412,24 @@ class NativeBackend:
                 pipeline_id=labels.get(PIPELINE),
                 pipeline_version_id=labels[VERSION_ID],
             )
+        created = timestamp(metadata.get('creationTimestamp'))
+        history = []
+        if created:
+            history.append(
+                models.V2RuntimeStatus(update_time=created, state='PENDING')
+            )
+        if status.get('startedAt') and state != 'PENDING':
+            history.append(
+                models.V2RuntimeStatus(
+                    update_time=timestamp(status['startedAt']), state='RUNNING'
+                )
+            )
+        if status.get('finishedAt') and state not in ('PENDING', 'RUNNING'):
+            history.append(
+                models.V2RuntimeStatus(
+                    update_time=timestamp(status['finishedAt']), state=state
+                )
+            )
         return models.V2Run(
             tasks=details,
             task_count=len(details) if details is not None else None,
@@ -392,8 +439,15 @@ class NativeBackend:
             namespace=metadata.get('namespace'),
             experiment_id=labels.get(EXPERIMENT),
             state=state,
+            state_history=history,
             storage_state=storage_state,
-            created_at=timestamp(metadata.get('creationTimestamp')),
+            created_at=created,
+            # Argo stamps schedule-created workflows; manual runs are scheduled
+            # at creation, as in stock.
+            scheduled_at=timestamp(
+                annotations.get('workflows.argoproj.io/scheduled-time')
+            )
+            or created,
             finished_at=timestamp(status.get('finishedAt')),
             runtime_config=models.V2RuntimeConfig(
                 parameters=parameters,
@@ -563,9 +617,33 @@ class NativeBackend:
         return resource, live
 
     def run_service_get_run(self, run_id):
-        resource, _ = self._workflow(run_id)
+        resource, live = self._workflow(run_id)
         states = self._run_states(resource['metadata']['namespace'])
-        return self._run(resource, states.get(run_id, 'AVAILABLE'))
+        return self._run(
+            resource,
+            states.get(run_id, 'AVAILABLE'),
+            self._pod_uids(resource) if live else None,
+        )
+
+    def _pod_uids(self, resource):
+        """Pod UIDs by name while the pods still exist; absent after pod GC."""
+        metadata = resource['metadata']
+        try:
+            pods = self.transport.collection(
+                f'/kubernetes/api/v1/namespaces/{segment(metadata["namespace"])}/pods',
+                params={
+                    'labelSelector': 'workflows.argoproj.io/workflow='
+                    + metadata['name']
+                },
+                kubernetes=True,
+            )
+        except (models.ApiException, OSError, ValueError):
+            return {}
+        return {
+            pod['metadata']['name']: pod['metadata'].get('uid')
+            for pod in pods
+            if pod.get('metadata', {}).get('name')
+        }
 
     def _pipeline_namespace(self, namespace=None):
         if namespace is not None:
@@ -1069,6 +1147,16 @@ class NativeBackend:
             'max_concurrency',
             1 if spec.get('concurrencyPolicy') == 'Forbid' else None,
         )
+        # The API server records each manager's last write; the newest is the
+        # last time anything changed this schedule.
+        updated = max(
+            (
+                timestamp(entry['time'])
+                for entry in metadata.get('managedFields', [])
+                if entry.get('time')
+            ),
+            default=None,
+        )
         return models.V2RecurringRun(
             recurring_run_id=metadata['uid'],
             display_name=annotations.get(DISPLAY_NAME, metadata['name']),
@@ -1082,6 +1170,7 @@ class NativeBackend:
             trigger=trigger_from_config(configuration),
             service_account=workflow.get('serviceAccountName'),
             created_at=timestamp(metadata.get('creationTimestamp')),
+            updated_at=updated or timestamp(metadata.get('creationTimestamp')),
             pipeline_version_reference=reference,
             pipeline_version_id=labels.get(VERSION_ID),
             runtime_config=models.V2RuntimeConfig(

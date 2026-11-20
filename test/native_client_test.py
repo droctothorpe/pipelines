@@ -1076,3 +1076,62 @@ def test_stock_cli_experiment_lifecycle_uses_native_http(native_api):
         client.get_experiment(experiment.experiment_id).storage_state
         == 'AVAILABLE'
     )
+
+
+def test_experiment_run_and_schedule_timestamps_are_derived(
+    native_api, native_store
+):
+    """last_run_created_at, run state_history/scheduled_at and recurring-run
+    updated_at come from native resources instead of staying None (U49, U50,
+    U52)."""
+    client, _, _ = native_api
+    experiment = client.create_experiment('Timestamps')
+    assert experiment.last_run_created_at is None
+    submitted = client.create_run_from_pipeline_func(
+        stock_program,
+        arguments={'value': 'hello'},
+        experiment_id=experiment.experiment_id,
+    )
+    fetched = client.get_experiment(experiment_id=experiment.experiment_id)
+    assert (
+        fetched.last_run_created_at.isoformat() == '2026-01-01T00:00:00+00:00'
+    )
+    assert (
+        client.list_experiments().experiments[0].last_run_created_at
+        == fetched.last_run_created_at
+    )
+    run = client.get_run(submitted.run_id)
+    assert [s.state for s in run.state_history] == ['PENDING']
+    assert run.scheduled_at == run.created_at
+    native_store['workflows'][submitted.run_id]['status'].update(
+        phase='Succeeded',
+        startedAt='2026-01-01T00:00:03Z',
+        finishedAt='2026-01-01T00:00:09Z',
+    )
+    run = client.get_run(submitted.run_id)
+    assert [(s.state, s.update_time.second) for s in run.state_history] == [
+        ('PENDING', 0),
+        ('RUNNING', 3),
+        ('SUCCEEDED', 9),
+    ]
+    pipeline = client.upload_pipeline_from_pipeline_func(
+        stock_program, namespace='team'
+    )
+    schedule = client.create_recurring_run(
+        experiment.experiment_id,
+        'Scheduled run',
+        pipeline_id=pipeline.pipeline_id,
+        cron_expression='0 * * * *',
+    )
+    assert schedule.updated_at == schedule.created_at
+    raw = next(iter(native_store['schedules'].values()))
+    raw['metadata']['managedFields'] = [
+        {'manager': 'kfp', 'time': '2026-01-01T00:00:00Z'},
+        {'manager': 'kubectl-edit', 'time': '2026-01-02T12:00:00Z'},
+    ]
+    assert (
+        client.get_recurring_run(
+            schedule.recurring_run_id
+        ).updated_at.isoformat()
+        == '2026-01-02T12:00:00+00:00'
+    )
