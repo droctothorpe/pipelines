@@ -46,7 +46,11 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
 fi
 export ARGO_SERVER="127.0.0.1:$port" ARGO_UI_URL="http://127.0.0.1:$port" ARGO_BASE_HREF=/argo ARGO_HTTP1=true ARGO_SECURE=false
 export ARGO_TOKEN="Bearer $ARGO_EDITOR_TOKEN"
-uv run python samples/argo-native/verify_compatibility.py --context "$context" --namespace "$namespace" --image-digest "$image_digest"
+# The smoke tier of the live suite: SDK end to end against this cluster, with the
+# content-addressed demo image so pods carry this SDK instead of installing it.
+KFP_TEST_HOST="http://127.0.0.1:$port" KFP_TEST_NAMESPACE="$namespace" KFP_TEST_TOKEN="$ARGO_EDITOR_TOKEN" \
+  KFP_TEST_IMAGE="$image" \
+  uv run python -m pytest test/e2e -m smoke -p no:randomly --e2e-output /tmp/kfp-e2e -q
 export ARGO_CONTEXT="$context" ARGO_NAMESPACE="$namespace"
 export ARGO_VERSION_NAME
 ARGO_VERSION_NAME=$(uv run python -c "import yaml; print(yaml.safe_load(open('/tmp/native-version.yaml'))['metadata']['name'])")

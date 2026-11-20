@@ -31,7 +31,7 @@ jobs:
       - run: uv run python hack/generate-python.py
       - run: git diff --exit-code -- sdk/python/kfp/pipeline_spec sdk/python/kfp/kubernetes
       - run: uv run ruff check sdk/python/kfp samples/argo-native hack/generate-python.py test
-      - run: uv run python -m pytest -q sdk/python/kfp test samples/argo-native/deploy_test.py .github/scripts
+      - run: uv run python -m pytest -q sdk/python/kfp test .github/scripts
       - run: uv build --package kfp --wheel --sdist
 
   frontend:
@@ -99,6 +99,13 @@ jobs:
         run: |
           kubectl --context kind-native-kfp -n kfp-argo get pods,workflows,events || true
           kubectl --context kind-native-kfp -n kfp-argo logs deployment/workflow-controller --tail=100 || true
+      - name: Upload end-to-end report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-report
+          path: /tmp/kfp-e2e
+          if-no-files-found: ignore
 
   ci-passed:
     if: always()

@@ -102,7 +102,7 @@ This commit is an explicit compatibility checkpoint, not a declaration of comple
 | C24 | Markdown/security rendering | Raw HTML, unsafe links, external images and active-format images are blocked. Content depending on those features will not render as in a permissive stock viewer. These restrictions must not be removed silently. | `components/viewers/MarkdownViewer.tsx` |
 | C25 | UI log breadth | **Resolved 2026-11-20.** Running tasks stream live from their pod with `follow` and no tail limit; finished tasks load the complete archived `main-logs` artifact, which also serves runs whose workflow object or pod is gone; a finished task with nothing archived falls back to the full pod log while the pod exists. Verified in the browser against the OrbStack namespace: live lines grew without refresh and ended at 365 lines, the finished task read 361 archived lines, and a deleted run read its archive. Not restored: stock's per-container selection and log search. | `frontend/src/lib/NativeUi.ts:streamTaskLogs`, `NativeRunDetails.tsx:useTaskLogs`, `NativeUi.test.ts`, `native-bundle.smoke.mjs` |
 | C26 | Migration and export/import | No migration service for existing stock run databases, metadata histories or stored pipeline catalogs, and no complete namespace export/import path, is supplied. Preserving the local native fixtures is not a stock-data migration test. | Native architecture and deployment scope |
-| C28 | Explicit ordering across group boundaries | **Resolved 2026-11-20.** A task inside a condition, loop or nested group may call `.after()` on a task outside the group. The dependency is lifted onto the group item in the scope that owns the target, as stock lifts it onto the enclosing group; a failure-tolerant depender relaxes that dependency, and its `PipelineTaskFinalStatus` input receives the target's status through a `kfp-after-<task>` flag threaded like the C04 presence flags. Verified live: an inner task started only after the outer task finished and was omitted when it failed; a tolerant reporter inside a loop inside a condition saw FAILED and SUCCEEDED correctly. Mixed tolerance is rejected (L16). | `compiler/argo_groups.py:lift_after`, `argo_continuation.py:dependencies`; `argo_compiler_test.py`; `test/sdk_compatibility/ignore_failure.py` |
+| C28 | Explicit ordering across group boundaries | **Resolved 2026-11-20.** A task inside a condition, loop or nested group may call `.after()` on a task outside the group. The dependency is lifted onto the group item in the scope that owns the target, as stock lifts it onto the enclosing group; a failure-tolerant depender relaxes that dependency, and its `PipelineTaskFinalStatus` input receives the target's status through a `kfp-after-<task>` flag threaded like the C04 presence flags. Verified live: an inner task started only after the outer task finished and was omitted when it failed; a tolerant reporter inside a loop inside a condition saw FAILED and SUCCEEDED correctly. Mixed tolerance is rejected (L16). | `compiler/argo_groups.py:lift_after`, `argo_continuation.py:dependencies`; `argo_compiler_test.py`; `test/e2e/test_ignore_failure.py` |
 | C27 | Kubeflow integration/session UX | Full profiles/central-dashboard integration and stock SSO/session UX are not restored. Native namespace/bearer-token UI access is the tested path. | `frontend/src/components/Router.tsx`, native proxy/auth adapters |
 
 ## L. Confirmed implementation limits with uncertain stock impact
@@ -135,8 +135,8 @@ are established. Do not call all validation errors regressions.
 
 | ID | Area | What remains uncertain | Existing coverage / next evidence |
 |---|---|---|---|
-| U01 | Artifact-list iteration | Latest single-item staging and nested list iteration have not run live. | Compiler/stager/runtime tests and native lint pass; `artifact_lists.py:verify_iteration` remains unrun. |
-| U02 | Nullable raw-container argv | None/empty/literal-null handling, nested Concat and staged-list IfPresent need actual execution. | BusyBox fixture `container_optional_inputs.py`; 25 temporary pinned Expr/Sprig evaluations are only expression-level evidence. |
+| U01 | Artifact-list iteration | Latest single-item staging and nested list iteration have not run live. | Compiler/stager/runtime tests and native lint pass; `test/e2e/test_artifact_lists.py` iteration cases remains unrun. |
+| U02 | Nullable raw-container argv | None/empty/literal-null handling, nested Concat and staged-list IfPresent need actual execution. | BusyBox fixture `test/e2e/test_container_optional_inputs.py`; 25 temporary pinned Expr/Sprig evaluations are only expression-level evidence. |
 | U03 | Literal native-template text | Strings such as `{{inputs.parameters.value}}` or `{{workflow.uid}}` must remain data where stock does. Argo performs multiple substitution passes. | Confirmed live 2026-11-20: Argo resolves a recognizable tag inside a `{{=...}}` expression string literal before evaluation, breaking the dynamic argv patch for raw containers with nullable inputs; brace escaping alone does not protect it. The compiler-generated PVC stub is now exempt ([core samples](core-samples.md)); user-authored raw containers that embed Argo tag text and declare nullable inputs remain an open boundary. |
 | U04 | Nullable Kubernetes settings | Nullable source channels in resource quantities, env, resource names and structured settings have not been fully lowered/verified. | Non-null dynamic settings and Python nullable parameters passed separately. |
 | U05 | Whole control-flow combination space | Nested loops/conditions/OneOf, zero iterations, conditional/skipped producers, collection returns, explicit dependencies and their combinations are not exhaustive. | Many retained cases pass; remaining guards are C04/C05/L03, not proof that every other combination works. |
@@ -161,8 +161,8 @@ are established. Do not call all validation errors regressions.
 
 | ID | Area | What remains uncertain | Existing coverage / next evidence |
 |---|---|---|---|
-| U22 | Latest experiment cascade | SDK/UI archival, partial failure/retry, late-created runs and parent-first restoration need live verification. | Unit and mocked production browser tests pass; `experiment_archive.py` is retained but unrun. |
-| U23 | Compact inventory API behavior | Latest field projection, metadata-only negotiation, count-aware paging, cache lag and identity reconciliation need live verification on the deployment. | Upstream source, unit and mocked browser tests pass; read-only `inventory.py` is unrun. |
+| U22 | Latest experiment cascade | SDK/UI archival, partial failure/retry, late-created runs and parent-first restoration need live verification. | Unit and mocked production browser tests pass; `test/e2e/test_experiment_archive.py` is retained but unrun. |
+| U23 | Compact inventory API behavior | Latest field projection, metadata-only negotiation, count-aware paging, cache lag and identity reconciliation need live verification on the deployment. | Upstream source, unit and mocked browser tests pass; read-only `test/e2e/test_inventory.py` is unrun. |
 | U24 | Latest task projection | Gzip snapshots and nested retry/validation pod ownership need live proof, especially compressed/offloaded histories and retries. | New red/green tests pass; prior typed task snapshots were checked live before these edits. |
 | U25 | Complete response/exception parity | Full DTO field availability, error codes/categories, I/O producer classification, child hierarchy, cancellation state and serialization equivalence remain incomplete. | The field parity table below records what is populated and A09 what is accepted as absent; whole-response and exception equivalence per operation is still uncompared. |
 | U26 | Filtering and pagination semantics | All filter operators/field aliases/types, empty inventories, ordering ties, paging under mutation and old cursor/error expectations lack complete baseline comparison. | `_listing.py` has retained tests; old wire tokens are not preserved. |
@@ -190,7 +190,7 @@ are established. Do not call all validation errors regressions.
 | U43 | Scale/performance | Namespace inventory still gathers all summary pages; SDK listings, artifact scans, ConfigMap cache/registry growth, controller throughput and large templates require load testing. | A 256-artifact cached-source case is not a production-scale benchmark. Reduced polling payloads are not established as the outage fix. |
 | U44 | Persistence/GC/retention | Full retention, cancellation/failure cleanup, TTL/archive interaction, deleted-version references, backup/restore and recovery across all services remain unverified. | Earlier resource/artifact persistence checks passed a bounded scenario, not every lifecycle. |
 | U45 | Packaging/distribution breadth | All supported installation environments, clean offline installs, optional extras, provider dependencies, documentation examples and external consumers have not been exercised. | Wheel/sdist and isolated installed-wheel checks pass; production npm audit reported zero known vulnerabilities at the check time, not a security proof. |
-| U46 | Latest full live corpus | The `samples/core` corpus ran cold (caching disabled) plus a default-cache verification on 2026-11-20; see [core samples](core-samples.md). The other live programs under `test/sdk_compatibility/` have not been rerun since. | That pass found and fixed three regressions from `4518f59ad` (object loop items, PVC stub argv patch, PVC nullable decoding); rerun the remaining programs before claiming the full corpus. |
+| U46 | Latest full live corpus | The `samples/core` corpus ran cold (caching disabled) plus a default-cache verification on 2026-11-20; see [core samples](core-samples.md). The remaining live coverage, now the `full` tier of `test/e2e/`, has not been rerun since. | That pass found and fixed three regressions from `4518f59ad` (object loop items, PVC stub argv patch, PVC nullable decoding); rerun the remaining programs before claiming the full corpus. |
 | U47 | Preview-formats timeout | Resolved: `artifact_preview_formats_pipeline` runs 11 pods strictly sequentially, each pip-installing polars/torch/transformers, and completed `Succeeded` in 15 m 44 s on 2026-11-20. | The runner's 900 s timeout is the limit, not the native stack; raise the timeout or slim the sample's dependencies. |
 | U48 | Interrupted nested-condition run | Resolved: `nested_condition.py` passed in the 2026-11-20 cold pass, as did every other previously transport-failed core case. | None. |
 
@@ -255,27 +255,28 @@ No passing CI URL exists for this unpushed checkpoint.
 
 | Area | Retained test/program | Latest local evidence |
 |---|---|---|
-| Stock definitions | `test/stock_samples_test.py`, `test/sdk_compatibility/sample_corpus.py`, frozen `stock_samples.json` | `/tmp/kfp-current-stock-offline/`, `/tmp/kfp-stock-native-lint-current.log` |
-| Full SDK | `sdk/python/kfp`, `test`, `samples/argo-native/deploy_test.py`, `.github/scripts` | `/tmp/kfp-inventory-projection-full311.log`, `...full313.log` |
+| Stock definitions | `test/stock_samples_test.py`, `test/e2e/corpus.py`, frozen `stock_samples.json` | `/tmp/kfp-current-stock-offline/`, `/tmp/kfp-stock-native-lint-current.log` |
+| Full SDK | `sdk/python/kfp`, `test`, `test/deploy_test.py`, `.github/scripts` | `/tmp/kfp-inventory-projection-full311.log`, `...full313.log` |
 | Full UI | `frontend` test:ci; production `native-bundle.smoke.mjs` | `/tmp/kfp-inventory-projection-ui-ci.log`; screenshots `/tmp/kfp-experiment-ui-evidence/` are API-mocked UI evidence |
-| Default runtime/cache | `default_pipeline.py`, `stock_runtime.py`, `test/sdk_authoring_compatibility_test.py` | Earlier default/cached/PyPI runtime live checks; not a latest complete rerun |
-| Lists/iteration/nullable | `artifact_lists.py`, `container_optional_inputs.py`, `optional_inputs.py`; compiler/runtime tests | Earlier list live logs; `/tmp/kfp-container-optional-full{311,313}.log`; iteration/raw-nullable latest live checks absent |
-| Failure/scalars | `ignore_failure.py`, `container_scalars.py`, compiler/runtime regressions | `/tmp/kfp-ignore-status-live.log`, `/tmp/kfp-native-scalars-live.log` |
-| Workspace/settings | `workspace.py`, `task_config.py`, `kubernetes_settings.py` | Workspace passthrough, structured staging and dynamic claim logs; no hardware allocation proof |
-| Archive/inventory | `experiment_archive.py`, read-only `inventory.py`, `native_client_test.py`, `NativeUi.test.ts` | Offline cascade/projection red-green logs; both live programs remain unrun |
+| Default runtime/cache | `test/e2e/test_default_pipeline.py`, `test/e2e/test_stock_runtime.py`, `test/sdk_authoring_compatibility_test.py` | Earlier default/cached/PyPI runtime live checks; not a latest complete rerun |
+| Lists/iteration/nullable | `test/e2e/test_artifact_lists.py`, `test/e2e/test_container_optional_inputs.py`, `test/e2e/test_optional_inputs.py`; compiler/runtime tests | Earlier list live logs; `/tmp/kfp-container-optional-full{311,313}.log`; iteration/raw-nullable latest live checks absent |
+| Failure/scalars | `test/e2e/test_ignore_failure.py`, `test/e2e/test_container_scalars.py`, compiler/runtime regressions | `/tmp/kfp-ignore-status-live.log`, `/tmp/kfp-native-scalars-live.log` |
+| Workspace/settings | `test/e2e/test_workspace.py`, `test/e2e/test_task_config.py`, `test/e2e/test_kubernetes_settings.py` | Workspace passthrough, structured staging and dynamic claim logs; no hardware allocation proof |
+| Archive/inventory | `test/e2e/test_experiment_archive.py`, read-only `test/e2e/test_inventory.py`, `native_client_test.py`, `NativeUi.test.ts` | Offline cascade/projection red-green logs; both live programs remain unrun |
 | Task DTOs | `test/native_task_details_test.py` | `/tmp/kfp-compressed-status-red.log`, `/tmp/kfp-retry-task-projection-red.log`; later full suites pass |
-| `samples/core` corpus | `test/sdk_compatibility/run_samples.py`; per-sample results in [core samples](core-samples.md) | `/tmp/kfp-core-samples-20261120/` (cold, prerequisite, cache and post-fix reports plus Argo reproducers) |
+| `samples/core` corpus | `test/e2e/test_samples.py`; per-sample results in [core samples](core-samples.md) | `/tmp/kfp-core-samples-20261120/` (cold, prerequisite, cache and post-fix reports plus Argo reproducers) |
+| Live suite, smoke tier | `test/e2e` with `-m smoke` (16 cases: control flow, failure tolerance, optional and container inputs, typed container outputs, artifact lists, OneOf, default pipeline, inventory, UI interop) | `/tmp/kfp-e2e-smoke-20261120/report.json`: 16 passed against OrbStack `kfp-argo` on 2026-11-20 with components installing KFP from PyPI; the `full` tier has not yet run as a suite |
 
-All live programs in the table are under `test/sdk_compatibility/` unless another
-path is given. Live browser programs are under `frontend/scripts/`.
+Live tests are under `test/e2e/` (one pytest suite, see [testing](agents/testing.md)).
+Live browser programs are under `frontend/scripts/`.
 
 ### Exact offline validation commands
 
 ```sh
 uv run --python 3.11 --isolated --frozen --extra test python -m pytest -q \
-  sdk/python/kfp test samples/argo-native/deploy_test.py .github/scripts
+  sdk/python/kfp test test/deploy_test.py .github/scripts
 uv run --python 3.13 --isolated --frozen --extra test python -m pytest -q \
-  sdk/python/kfp test samples/argo-native/deploy_test.py .github/scripts
+  sdk/python/kfp test test/deploy_test.py .github/scripts
 (cd frontend && PLAYWRIGHT_CHANNEL=chrome fnm exec --using=24.22.1 npm run test:ci)
 uv build --package kfp --wheel --sdist
 ```
@@ -283,22 +284,19 @@ uv build --package kfp --wheel --sdist
 For generated manifests, use `argo --context orbstack -n kfp-argo lint --offline
 <manifest>`. Offline lint is not a workflow submission.
 
-### Pending live commands (not executed as part of this inventory)
+### Live commands
 
 Supply a **non-empty**, appropriately scoped `KFP_TEST_TOKEN` without printing it,
 plus `KFP_TEST_HOST` and `KFP_TEST_NAMESPACE`. Check token creation succeeds before
-starting a client; do not fall back to another identity. Then, for example:
+starting a client; do not fall back to another identity. Then run a tier of the
+single live suite (see [testing](agents/testing.md)):
 
 ```sh
-uv run --python 3.11 --isolated --frozen --extra test python \
-  test/sdk_compatibility/container_optional_inputs.py
-uv run --python 3.11 --isolated --frozen --extra test python \
-  test/sdk_compatibility/experiment_archive.py --output /tmp/kfp-experiment-archive-live
-uv run --python 3.11 --isolated --frozen --extra test python \
-  test/sdk_compatibility/inventory.py --output /tmp/kfp-inventory-live.json
+uv run python -m pytest test/e2e -m smoke -p no:randomly --e2e-output /tmp/kfp-e2e-smoke
+uv run python -m pytest test/e2e -m full -p no:randomly --e2e-output /tmp/kfp-e2e-full
 ```
 
-`artifact_lists.py` additionally exposes `verify_iteration(client)` for the pending
+`test/e2e/test_artifact_lists.py` additionally exposes `verify_iteration(client)` for the pending
 iteration cases. The sample runner supports explicit `--disable-caching` for cold
 verification and `--parallelism` for a bounded submission copy; it does not clear
 caches or change SDK defaults. Known stock compilation failures retain a nonzero

@@ -5,12 +5,10 @@
 import json
 
 import pytest
+from e2e.corpus import ROOT, definitions, sources
 from kfp import compiler
-from sdk_compatibility.sample_corpus import ROOT, definitions, sources
 
-FIXTURE = json.loads(
-    (ROOT / 'test/sdk_compatibility/stock_samples.json').read_text()
-)
+FIXTURE = json.loads((ROOT / 'test/data/stock_samples.json').read_text())
 SOURCES = {str(path.relative_to(ROOT)): source for path, source in sources()}
 
 

@@ -5,7 +5,7 @@ plus the compiler fixes described below. Cluster: OrbStack context `orbstack`,
 namespace `kfp-argo`, Argo `v4.1.6`, UI proxy in single-user mode. Every pipeline
 definition under `samples/core` was compiled with the native compiler and, where it
 compiles, submitted through the public `kfp.Client` against the live cluster with
-`test/sdk_compatibility/run_samples.py`. Reports live in
+`test/e2e/test_samples.py`. Reports live in
 `/tmp/kfp-core-samples-20261120/` (workstation evidence, not CI artifacts).
 
 Status words: **pass** means the run reached the state the sample intends and the
@@ -77,37 +77,31 @@ a compiler regression test that fails on the previous code.
    names it JSON-encodes, and the stub decodes only those.
    `sdk/python/kfp/compiler/argo_pvc.py`.
 
-## How this was run
+## How to reproduce
+
+The results above came from the standalone sample runner that preceded the
+consolidated suite. The same corpus is now `test/e2e/test_samples.py`, one
+parametrized case per definition, with the recorded inputs and expectations in
+`test/e2e/samples.py`:
 
 ```sh
-kubectl --context orbstack -n kfp-argo port-forward svc/kfp-argo-ui 3006:80
-export KFP_TEST_HOST=http://127.0.0.1:3006 KFP_TEST_NAMESPACE=kfp-argo
+kubectl --context orbstack -n kfp-argo port-forward svc/kfp-argo-ui 3003:80 &
+export KFP_TEST_HOST=http://127.0.0.1:3003 KFP_TEST_NAMESPACE=kfp-argo
 export KFP_TEST_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=6h)"
 
 # Cold pass: every ordinary sample executes; nothing is served from cache.
-uv run python test/sdk_compatibility/run_samples.py --output /tmp/core-cold \
-  --timeout 900 --disable-caching --include samples/core/artifact_previews \
-  --include samples/core/caching --include samples/core/condition \
-  --include samples/core/execution_order --include samples/core/exit_handler \
-  --include samples/core/loop_output --include samples/core/loop_parallelism \
-  --include samples/core/loop_parameter --include samples/core/loop_static \
-  --include samples/core/multiple_outputs --include samples/core/output_a_directory \
-  --include samples/core/resource_spec/resource_spec.py \
-  --include samples/core/resource_spec/runtime_resource_request.py \
-  --include samples/core/retry
-# Prerequisite-gated samples, short timeout.
-uv run python test/sdk_compatibility/run_samples.py --output /tmp/core-prereq \
-  --timeout 300 --include samples/core/secret --include samples/core/sequential \
-  --include runtime_resource_request_gpu
-uv run python test/sdk_compatibility/run_samples.py --output /tmp/core-pvc \
-  --timeout 600 --include samples/core/kubernetes_pvc --service-account sdk-sample-pvc-ef4f9a8d
+KFP_TEST_DISABLE_CACHING=1 uv run python -m pytest test/e2e -k samples -p no:randomly \
+  --e2e-output /tmp/core-cold
+# Prerequisite-gated samples too, with the PVC-capable account.
+KFP_TEST_PREREQUISITES=1 KFP_TEST_SERVICE_ACCOUNT=sdk-sample-pvc-ef4f9a8d \
+  uv run python -m pytest test/e2e -k samples -p no:randomly --e2e-output /tmp/core-prereq
 # Default caching, run twice, to observe memoization.
-uv run python test/sdk_compatibility/run_samples.py --output /tmp/core-cache \
-  --include samples/core/caching/caching_sample.py
+uv run python -m pytest test/e2e -k 'samples and caching' -p no:randomly
 ```
 
-The runner's exit status is nonzero whenever a definition fails to compile, so the
-two baseline compile failures make every invocation exit 1; read `execution.json`.
+The two baseline compile failures are expected failures, and prerequisite cases skip
+with their reason unless asked for, so the exit status is meaningful; `report.json`
+in the output directory lists every run.
 In single-user proxy mode the browser token is ignored by the proxy, so the editor
 token above only satisfies the runner's non-empty check; requests run with the
 proxy's own editor-bound service account. Nothing was deleted from the namespace.

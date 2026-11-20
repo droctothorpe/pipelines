@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Frozen stock SDK calling conventions, independent of the backend protocol."""
+"""Frozen stock SDK calling conventions, independent of the backend
+protocol."""
 
 import ast
 import importlib
@@ -11,9 +12,7 @@ from pathlib import Path
 import pytest
 
 CONTRACT = json.loads(
-    (
-        Path(__file__).parent / 'sdk_compatibility' / 'stock_signatures.json'
-    ).read_text()
+    (Path(__file__).parent / 'data' / 'stock_signatures.json').read_text()
 )
 
 
