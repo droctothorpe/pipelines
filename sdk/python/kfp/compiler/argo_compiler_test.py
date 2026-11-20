@@ -925,6 +925,25 @@ def test_importer_download_to_workspace_needs_a_workspace(tmp_path):
         )
 
 
+def test_other_platform_settings_are_ignored_with_a_warning(tmp_path):
+    """C15: stock applies only the kubernetes platform spec and carries other
+    platforms' settings unexecuted, so they warn instead of failing."""
+
+    @dsl.component(base_image='python:3.11', install_kfp_package=False)
+    def noop() -> str:
+        return 'x'
+
+    @dsl.pipeline(name='other-platform')
+    def pipeline():
+        task = noop()
+        task.platform_config['acme'] = {'accelerator': 'quantum'}
+
+    with pytest.warns(UserWarning, match="platforms \\['acme'\\]"):
+        compiler.Compiler().compile(
+            pipeline, str(tmp_path / 'p.yaml'), resource_kind='Workflow'
+        )
+
+
 def test_ignore_upstream_failure_supplies_final_status(tmp_path):
     @dsl.component
     def cleanup(status: dsl.PipelineTaskFinalStatus):
