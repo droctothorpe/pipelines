@@ -9,7 +9,7 @@ import {
   retryRun,
   restoreRun,
   setExperimentStorage,
-  taskLogs,
+  streamTaskLogs,
 } from './NativeUi';
 import { listResources } from './ArgoResources';
 import type { ArgoWorkflow } from './Argo';
@@ -500,33 +500,166 @@ describe('native resource adapter for the stock UI', () => {
     await expect(retryRun(run)).rejects.toThrow('name was reused');
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it('reads only the selected task logs, using native pod identity annotations', async () => {
+  const collect = async (generator: AsyncGenerator<{ source: string; lines: string[] }>) => {
+    const updates = [];
+    for await (const update of generator) updates.push(update);
+    return updates;
+  };
+  const podList = () =>
+    response({
+      items: [
+        {
+          metadata: {
+            name: 'wrong-pod',
+            annotations: { 'workflows.argoproj.io/node-id': 'wrong-node' },
+          },
+        },
+        {
+          metadata: {
+            name: 'right-pod',
+            annotations: { 'workflows.argoproj.io/node-id': 'right-node' },
+          },
+        },
+      ],
+    });
+  it('streams a running task from its own pod and follows until the stream ends', async () => {
+    // Chunks split mid-line to prove incremental decoding rather than whole-body buffering.
+    const chunks = [
+      '{"result":{"content":"first"}}\n{"result":{"con',
+      'tent":"second"}}\n',
+      '{"result":{"content":"third"}}\n',
+    ];
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) =>
+        path.startsWith('/kubernetes/') ? podList() : new Response(body),
+      ),
+    );
+    const updates = await collect(
+      streamTaskLogs(run, {
+        id: 'right-node',
+        displayName: 'train',
+        type: 'Pod',
+        phase: 'Running',
+      }),
+    );
+    expect(updates.map((update) => update.lines)).toEqual([['first'], ['second'], ['third']]);
+    expect(updates.every((update) => update.source === 'live')).toBe(true);
+    const url = String(vi.mocked(fetch).mock.calls[1][0]);
+    expect(url).toContain('podName=right-pod');
+    expect(url).toContain('logOptions.follow=true');
+    expect(url).not.toContain('tailLines');
+  });
+  it('reads the complete archived main-logs artifact for finished tasks, without truncation', async () => {
+    const text = Array.from({ length: 1000 }, (_, index) => `line ${index}`).join('\n') + '\n';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(text)),
+    );
+    const updates = await collect(
+      streamTaskLogs(run, {
+        id: 'right-node',
+        displayName: 'train',
+        type: 'Pod',
+        phase: 'Succeeded',
+        outputs: { artifacts: [{ name: 'main-logs' }] },
+      }),
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0].source).toBe('archive');
+    expect(updates[0].lines).toHaveLength(1000);
+    expect(updates[0].lines[999]).toBe('line 999');
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe(
+      '/argo/artifacts/team/same-name/right-node/main-logs',
+    );
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+  it('uses the archived artifact path for runs whose workflow object is gone', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('kept\n')),
+    );
+    const updates = await collect(
+      streamTaskLogs(
+        { ...run, archived: true },
+        {
+          id: 'right-node',
+          displayName: 'train',
+          type: 'Pod',
+          phase: 'Succeeded',
+          outputs: { artifacts: [{ name: 'main-logs' }] },
+        },
+      ),
+    );
+    expect(updates).toEqual([{ source: 'archive', lines: ['kept'] }]);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe(
+      '/argo/artifact-files/team/archived-workflows/live-uid/right-node/outputs/main-logs',
+    );
+  });
+  it('falls back to the full pod log when a finished task archived nothing', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (path: string) =>
         path.startsWith('/kubernetes/')
-          ? response({
-              items: [
-                {
-                  metadata: {
-                    name: 'wrong-pod',
-                    annotations: { 'workflows.argoproj.io/node-id': 'wrong-node' },
-                  },
-                },
-                {
-                  metadata: {
-                    name: 'right-pod',
-                    annotations: { 'workflows.argoproj.io/node-id': 'right-node' },
-                  },
-                },
-              ],
-            })
-          : new Response('{"result":{"content":"selected task output"}}\n'),
+          ? podList()
+          : new Response('{"result":{"content":"only pod"}}\n'),
       ),
     );
-    expect(await taskLogs(run, { id: 'right-node', displayName: 'train', type: 'Pod' })).toEqual([
-      'selected task output',
-    ]);
-    expect(vi.mocked(fetch).mock.calls[1][0]).toContain('podName=right-pod');
+    const updates = await collect(
+      streamTaskLogs(run, { id: 'right-node', displayName: 'train', type: 'Pod', phase: 'Failed' }),
+    );
+    expect(updates).toEqual([{ source: 'live', lines: ['only pod'] }]);
+    const url = String(vi.mocked(fetch).mock.calls[1][0]);
+    expect(url).toContain('logOptions.follow=false');
+    expect(url).not.toContain('tailLines');
+  });
+  it('explains missing pods and archives instead of returning empty logs', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response({ items: [] })),
+    );
+    await expect(
+      collect(streamTaskLogs(run, { id: 'n', displayName: 't', type: 'Pod', phase: 'Running' })),
+    ).rejects.toThrow('not available yet');
+    await expect(
+      collect(streamTaskLogs(run, { id: 'n', displayName: 't', type: 'Pod', phase: 'Succeeded' })),
+    ).rejects.toThrow('not archived');
+    await expect(
+      collect(
+        streamTaskLogs(
+          { ...run, archived: true },
+          { id: 'n', displayName: 't', type: 'Pod', phase: 'Succeeded' },
+        ),
+      ),
+    ).rejects.toThrow('No archived logs');
+    expect(
+      vi.mocked(fetch).mock.calls.every(([path]) => String(path).startsWith('/kubernetes/')),
+    ).toBe(true);
+  });
+  it('surfaces Argo stream errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) =>
+        path.startsWith('/kubernetes/')
+          ? podList()
+          : new Response('{"error":{"message":"pod vanished"}}\n'),
+      ),
+    );
+    await expect(
+      collect(
+        streamTaskLogs(run, {
+          id: 'right-node',
+          displayName: 'train',
+          type: 'Pod',
+          phase: 'Running',
+        }),
+      ),
+    ).rejects.toThrow('pod vanished');
   });
 });

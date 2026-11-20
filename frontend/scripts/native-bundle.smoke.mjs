@@ -59,7 +59,8 @@ const token = 'namespace-test-token';
 async function mount(browser, entry, inventory = {}, authMode = 'token') {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const errors = [],
-    requests = [];
+    requests = [],
+    urls = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.route('**/*', async (route) => {
     const request = route.request(),
@@ -90,6 +91,7 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
         : route.fulfill({ status: 404 });
     }
     requests.push(url.pathname);
+    urls.push(url.pathname + url.search);
     assert.ok(
       /^\/(argo|kubernetes)\//.test(url.pathname),
       `Retired backend request: ${url.pathname}`,
@@ -132,6 +134,11 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
       };
     } else if (url.pathname.endsWith('/workflow-templates/team'))
       body = { items: inventory.versions || [] };
+    else if (url.pathname.endsWith('/log'))
+      return route.fulfill({
+        contentType: 'application/json',
+        body: '{"result":{"content":"epoch 1"}}\n{"result":{"content":"epoch 2"}}\n',
+      });
     else if (url.pathname.includes('/workflows/team/'))
       body =
         inventory.runs?.find(
@@ -140,6 +147,17 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
     else if (url.pathname.endsWith('/kfp-metadata')) body = inventory.metadata || {};
     else if (url.pathname.endsWith('/main-logs'))
       return route.fulfill({ contentType: 'text/plain', body: 'training complete\n' });
+    else if (url.pathname.endsWith('/pods'))
+      body = {
+        items: [
+          {
+            metadata: {
+              name: 'train-pod',
+              annotations: { 'workflows.argoproj.io/node-id': 'train' },
+            },
+          },
+        ],
+      };
     else if (url.pathname.endsWith('/dataset'))
       return route.fulfill({ contentType: 'text/plain', body: 'x,y\n1,2\n' });
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
@@ -151,7 +169,7 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
   }
-  return { page, errors, requests };
+  return { page, errors, requests, urls };
 }
 
 test('single-user proxies skip the token dialog, default the namespace and send no browser credentials', async () => {
@@ -255,9 +273,18 @@ test(
             phase: 'Succeeded',
             startedAt: '2026-01-01T00:00:00Z',
             finishedAt: '2026-01-01T00:01:00Z',
+            children: ['train'],
             outputs: {
               artifacts: [{ name: 'dataset' }, { name: 'kfp-metadata' }, { name: 'main-logs' }],
             },
+          },
+          train: {
+            id: 'train',
+            displayName: 'train',
+            type: 'Pod',
+            boundaryID: 'run-one',
+            phase: 'Running',
+            startedAt: '2026-01-01T00:01:00Z',
           },
         },
       },
@@ -280,7 +307,7 @@ test(
     };
     const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
     try {
-      const { page, errors, requests } = await mount(browser, 'argo.html', {
+      const { page, errors, requests, urls } = await mount(browser, 'argo.html', {
         runs: [run],
         metadata,
       });
@@ -297,6 +324,19 @@ test(
       assert.equal(await readFile(await (await downloading).path(), 'utf8'), 'x,y\n1,2\n');
       await page.getByRole('button', { name: 'Logs', exact: true }).click();
       await page.getByText('training complete', { exact: true }).waitFor();
+      assert.equal(await page.getByTestId('log-status').innerText(), 'Archived logs');
+      // A running task streams from its pod with follow enabled and no tail limit.
+      await page.getByRole('button', { name: 'train', exact: true }).click();
+      await page.getByRole('button', { name: 'Logs', exact: true }).click();
+      await page.getByText('epoch 2', { exact: true }).waitFor();
+      assert.equal(await page.getByTestId('log-status').innerText(), 'Live log stream ended');
+      const live = urls.find((path) => path.includes('/log?'));
+      assert.ok(
+        live.includes('podName=train-pod') && live.includes('logOptions.follow=true'),
+        live,
+      );
+      assert.ok(!live.includes('tailLines'), live);
+      await page.getByRole('button', { name: 'prepare', exact: true }).click();
       await page.getByRole('button', { name: 'dataset', exact: true }).click();
       await page.getByRole('button', { name: 'Visualization', exact: true }).waitFor();
       await page.getByText('nested', { exact: true }).waitFor();

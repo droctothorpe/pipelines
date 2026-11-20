@@ -323,13 +323,55 @@ export async function downloadArtifact(run: ArgoWorkflow, node: ArgoNode, port: 
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-export async function taskLogs(run: ArgoWorkflow, node: ArgoNode, signal?: AbortSignal) {
-  node = componentPod(run, node);
-  if (node.outputs?.artifacts?.some((artifact) => artifact.name === 'main-logs'))
-    return (await (await argoRequest(argoArtifactUrl(run, node, 'main-logs'), signal)).text())
-      .split('\n')
-      .slice(-200);
-  if (run.archived) throw new Error('No archived logs were recorded for this task.');
+export type TaskLogSource = 'live' | 'archive';
+export interface TaskLogUpdate {
+  source: TaskLogSource;
+  lines: string[];
+}
+const TERMINAL_PHASES = new Set(['Succeeded', 'Failed', 'Error', 'Skipped', 'Omitted']);
+
+function parseLogEntry(line: string): string {
+  const entry = JSON.parse(line);
+  if (entry.error) throw new Error(entry.error.message || 'Log stream failed.');
+  return entry.result.content as string;
+}
+
+/** Yield Argo Server's newline-delimited log stream as lines arrive, never buffering it whole. */
+async function* livePodLogs(
+  run: ArgoWorkflow,
+  podName: string,
+  follow: boolean,
+  signal?: AbortSignal,
+): AsyncGenerator<TaskLogUpdate> {
+  const options = new URLSearchParams({
+    podName,
+    'logOptions.container': 'main',
+    'logOptions.follow': String(follow),
+  });
+  const response = await argoRequest(
+    `/argo/api/v1/workflows/${enc(run.metadata.namespace)}/${enc(run.metadata.name)}/log?${options}`,
+    signal,
+  );
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const lines = (await response.text()).split('\n').filter(Boolean).map(parseLogEntry);
+    if (lines.length) yield { source: 'live', lines };
+    return;
+  }
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const parts = buffer.split('\n');
+    buffer = done ? '' : parts.pop() || '';
+    const lines = parts.filter(Boolean).map(parseLogEntry);
+    if (lines.length) yield { source: 'live', lines };
+    if (done) return;
+  }
+}
+
+async function findTaskPod(run: ArgoWorkflow, node: ArgoNode, signal?: AbortSignal) {
   const query = new URLSearchParams({
     labelSelector: `workflows.argoproj.io/workflow=${run.metadata.name}`,
   });
@@ -339,34 +381,43 @@ export async function taskLogs(run: ArgoWorkflow, node: ArgoNode, signal?: Abort
       signal,
     )
   ).json();
-  const pod = pods.items?.find(
+  return pods.items?.find(
     (pod: { metadata: { annotations?: Record<string, string> } }) =>
       pod.metadata.annotations?.['workflows.argoproj.io/node-id'] === node.id,
-  );
-  if (!pod)
-    throw new Error(
-      'The task pod is not available yet, or its logs were not archived before pod deletion.',
-    );
-  const options = new URLSearchParams({
-    podName: pod.metadata.name,
-    'logOptions.container': 'main',
-    'logOptions.follow': 'false',
-    'logOptions.tailLines': '200',
-  });
-  const text = await (
-    await argoRequest(
-      `/argo/api/v1/workflows/${enc(run.metadata.namespace)}/${enc(run.metadata.name)}/log?${options}`,
-      signal,
-    )
-  ).text();
-  return text
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const entry = JSON.parse(line);
-      if (entry.error) throw new Error(entry.error.message || 'Log stream failed.');
-      return entry.result.content as string;
-    });
+  ) as { metadata: { name: string } } | undefined;
+}
+
+/**
+ * Task logs in full. A running task streams live from its pod and keeps
+ * following until the pod finishes. A finished task reads the complete
+ * `main-logs` artifact that Argo archived, which also serves runs whose
+ * workflow object or pod is gone; if nothing was archived, the pod's full log
+ * is used while the pod still exists.
+ */
+export async function* streamTaskLogs(
+  run: ArgoWorkflow,
+  node: ArgoNode,
+  signal?: AbortSignal,
+): AsyncGenerator<TaskLogUpdate> {
+  node = componentPod(run, node);
+  const archived = !!node.outputs?.artifacts?.some((artifact) => artifact.name === 'main-logs');
+  const finished = TERMINAL_PHASES.has(node.phase || '');
+  if (!run.archived && (!finished || !archived)) {
+    const pod = await findTaskPod(run, node, signal);
+    if (pod) {
+      yield* livePodLogs(run, pod.metadata.name, !finished, signal);
+      return;
+    }
+    if (!archived)
+      throw new Error(
+        finished
+          ? 'The task pod is gone and its logs were not archived before deletion.'
+          : 'The task pod is not available yet.',
+      );
+  }
+  if (!archived) throw new Error('No archived logs were recorded for this task.');
+  const text = await (await argoRequest(argoArtifactUrl(run, node, 'main-logs'), signal)).text();
+  yield { source: 'archive', lines: text.replace(/\n$/, '').split('\n') };
 }
 export async function retryRun(run: ArgoWorkflow) {
   const path = `/argo/api/v1/workflows/${enc(run.metadata.namespace)}/${enc(run.metadata.name)}`;
