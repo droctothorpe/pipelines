@@ -17,9 +17,21 @@ def optional_after_failure(task, name, port):
     )
 
 
+GROUP_INPUT = re.compile(
+    r'inputs\.parameters\["(?:kfp-uri-|kfp-meta-)?(ch-[0-9a-f]+)"\]'
+)
+
+
 def arguments(task, arguments):
+    """Guard a failure-tolerant task's upstream arguments.
+
+    Returns the group input ports whose producer lives outside the
+    enclosing group; the scope threads a `kfp-present-<port>` flag down
+    for each.
+    """
+    needed = set()
     if not task._ignore_upstream_failure_tag:
-        return
+        return needed
     from kfp.compiler.argo_compiler import _json, _kind
     from kfp.compiler.argo_groups import _expression_reference
     from kfp.dsl.argo_runtime import serialize
@@ -38,11 +50,22 @@ def arguments(task, arguments):
         ]
         expression = _expression_reference(reference)
         source_task = re.search(r'(tasks\["[^"\\]+"\])\.outputs\.', expression)
-        if source_task is None:
-            raise ValueError(
-                'Failure-tolerant inputs across group boundaries need optional group input lowering.'
+        if source_task is not None:
+            present = f"{source_task[1]}.status == 'Succeeded'"
+        else:
+            group_input = GROUP_INPUT.search(expression)
+            if group_input is None:
+                raise ValueError(
+                    f'Failure-tolerant input {name!r} on {task.name!r} has no recognizable upstream source.'
+                )
+            # The producer is outside this group; the enclosing scopes supply
+            # its status as a group input.
+            needed.add(group_input[1])
+            present = (
+                'inputs.parameters['
+                + _json('kfp-present-' + group_input[1])
+                + "] == 'true'"
             )
-        present = f"{source_task[1]}.status == 'Succeeded'"
         if optional_after_failure(task, name, port):
             arguments['parameters'].append(
                 {'name': 'kfp-present-' + name, 'value': '{{=' + present + '}}'}
@@ -75,14 +98,43 @@ def arguments(task, arguments):
                     item['optional'] = True
                     # Defer missing-artifact lookup until Argo handles optional inputs.
                     item['from'] = item['from'][2:-2]
+    return needed
 
 
-def dependencies(dag, ignored):
-    """Keep every task a target so cleanup success cannot hide body failure."""
+def relax(task, deps, tolerated=None):
+    """A `depends` clause that still runs after the tolerated upstream tasks
+    fail."""
+    return ' && '.join(
+        '('
+        + ' || '.join(
+            f'{name}.{status}'
+            for status in (
+                ('Succeeded', 'Failed', 'Errored', 'Skipped', 'Omitted')
+                if tolerated is None or name in tolerated
+                else ('Succeeded', 'Skipped')
+            )
+        )
+        + ')'
+        for name in deps
+    )
+
+
+def dependencies(dag, ignored, tolerant=None):
+    """Keep every task a target so cleanup success cannot hide body failure.
+
+    `tolerant` maps a group item to the sibling producers whose failure a
+    failure-tolerant task inside that group ignores.
+    """
     from kfp.compiler.argo_compiler import _json
 
     changed = False
     for task in dag['tasks']:
+        if task['name'] in (tolerant or {}) and task['name'] not in ignored:
+            deps = task.pop('dependencies', [])
+            if deps:
+                task['depends'] = relax(task, deps, tolerant[task['name']])
+                changed = True
+            continue
         if task['name'] not in ignored:
             continue
         deps = task.get('dependencies', [])
@@ -110,21 +162,7 @@ def dependencies(dag, ignored):
             ).append({'name': name, 'value': status})
         if not deps:
             continue
-        task['depends'] = ' && '.join(
-            '('
-            + ' || '.join(
-                f'{name}.{status}'
-                for status in (
-                    'Succeeded',
-                    'Failed',
-                    'Errored',
-                    'Skipped',
-                    'Omitted',
-                )
-            )
-            + ')'
-            for name in task.pop('dependencies')
-        )
+        task['depends'] = relax(task, task.pop('dependencies'))
         changed = True
     if changed:
         dag['failFast'] = False

@@ -468,6 +468,124 @@ def test_ignore_upstream_failure_preserves_defaults_and_failed_run(
     )
 
 
+def _templates(path):
+    return {
+        t['name']: t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+    }
+
+
+@pytest.mark.parametrize('shape', ['condition', 'loop', 'nested'])
+def test_ignore_upstream_failure_across_group_boundaries(tmp_path, shape):
+    """C04: a failure-tolerant consumer inside a condition, loop or nested
+    condition whose producer sits outside the group. The group item tolerates
+    the producer's failure, guards the forwarded value, and threads a
+    presence flag the consumer uses for its fallback."""
+
+    @dsl.component
+    def produce() -> str:
+        return 'ok'
+
+    @dsl.component
+    def consume(message: str = 'fallback') -> str:
+        return message
+
+    @dsl.pipeline(name='cross-' + shape)
+    def pipeline(enabled: bool = True):
+        source = produce()
+        if shape == 'loop':
+            with dsl.ParallelFor([1, 2]):
+                consume(message=source.output).ignore_upstream_failure()
+        elif shape == 'nested':
+            with dsl.If(enabled == True):
+                with dsl.If(enabled == True):
+                    consume(message=source.output).ignore_upstream_failure()
+        else:
+            with dsl.If(enabled == True):
+                consume(message=source.output).ignore_upstream_failure()
+
+    path = tmp_path / f'{shape}.yaml'
+    compiler.Compiler().compile(pipeline, str(path), resource_kind='Workflow')
+    templates = _templates(path)
+    dags = [t for t in templates.values() if 'dag' in t]
+    root = next(
+        t
+        for t in dags
+        if any(task['name'] == 'produce' for task in t['dag']['tasks'])
+    )
+    group = next(
+        task for task in root['dag']['tasks'] if task['name'] != 'produce'
+    )
+    assert 'dependencies' not in group
+    assert (
+        'produce.Failed' in group['depends']
+        and 'produce.Errored' in group['depends']
+    )
+    assert root['dag']['failFast'] is False
+    args = {p['name']: p['value'] for p in group['arguments']['parameters']}
+    flags = [name for name in args if name.startswith('kfp-present-')]
+    assert len(flags) == 1
+    flag = flags[0]
+    status = 'tasks["produce"].status == \'Succeeded\''
+    assert args[flag] == '{{=' + status + '}}'
+    port = flag.removeprefix('kfp-present-')
+    assert ' ?? ' in args[port] and status in args[port]
+    consumer_dag = next(
+        t
+        for t in dags
+        if any(task['name'] == 'consume' for task in t['dag']['tasks'])
+    )
+    assert flag in [p['name'] for p in consumer_dag['inputs']['parameters']]
+    consumer = next(
+        task
+        for task in consumer_dag['dag']['tasks']
+        if task['name'] == 'consume'
+    )
+    message = next(
+        p['value']
+        for p in consumer['arguments']['parameters']
+        if p['name'] == 'message'
+    )
+    assert 'inputs.parameters["' + flag + "\"] == 'true'" in message
+    assert '"fallback"' in message
+    # Every template between the group item and the consumer declares and
+    # forwards the flag: a loop's fan-out wrapper, a nested condition's DAG.
+    for template in dags:
+        if template is root or template is consumer_dag:
+            continue
+        assert flag in [
+            p['name'] for p in template.get('inputs', {}).get('parameters', [])
+        ], template['name']
+        assert any(
+            p['name'] == flag
+            and p['value'] == '{{inputs.parameters.' + flag + '}}'
+            for task in template['dag']['tasks']
+            for p in task.get('arguments', {}).get('parameters', [])
+        ), template['name']
+
+
+def test_mixed_tolerance_inside_a_group_is_rejected(tmp_path):
+    @dsl.component
+    def produce() -> str:
+        return 'ok'
+
+    @dsl.component
+    def consume(message: str = 'fallback') -> str:
+        return message
+
+    @dsl.pipeline(name='mixed')
+    def pipeline(enabled: bool = True):
+        source = produce()
+        with dsl.If(enabled == True):
+            consume(message=source.output).ignore_upstream_failure()
+            consume(message=source.output)
+
+    with pytest.raises(
+        ValueError, match='both with and without ignore_upstream_failure'
+    ):
+        compiler.Compiler().compile(pipeline, str(tmp_path / 'mixed.yaml'))
+
+
 def test_ignore_upstream_failure_supplies_final_status(tmp_path):
     @dsl.component
     def cleanup(status: dsl.PipelineTaskFinalStatus):
