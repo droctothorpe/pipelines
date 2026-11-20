@@ -9,6 +9,7 @@ import graphlib
 import hashlib
 import json
 import re
+import warnings
 from pathlib import Path
 
 import kfp
@@ -35,6 +36,28 @@ def _json(value):
     return json.dumps(
         value, sort_keys=True, separators=(',', ':'), allow_nan=False
     )
+
+
+def _bound_to_parameters(value):
+    if isinstance(value, dict):
+        return any(
+            key in ('componentInputParameter', 'taskOutputParameter')
+            for key in value
+        ) or any(_bound_to_parameters(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_bound_to_parameters(item) for item in value)
+    return False
+
+
+def _merge_settings(target, source):
+    for key, value in source.items():
+        current = target.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            _merge_settings(current, value)
+        elif isinstance(value, list) and isinstance(current, list):
+            current.extend(value)
+        else:
+            target[key] = value
 
 
 def _kind(port):
@@ -85,6 +108,8 @@ class _Compiler:
         self.options = options
         self.pipeline_name = pipeline_name
         self.templates = []
+        # Enclosing nested-pipeline tasks, outermost first, while compiling a sub-pipeline.
+        self.nested_tasks = []
         self.extra_inputs = {}
         self.disable_caching = options.disable_caching
         self.artifact_previews = True
@@ -153,13 +178,14 @@ class _Compiler:
                 raise ValueError(
                     'Precompiled KFP IR graphs are not supported; compile the original Python pipeline.'
                 )
-            if task and (
-                task._task_spec.retry_policy
-                or task._task_spec.cache_key
-                or task.platform_config
-            ):
-                raise ValueError(
-                    'Nested DAG retry/custom-cache/platform settings need native DAG lowering; configure the inner tasks instead.'
+            if task and task._task_spec.retry_policy:
+                # Stock compiles the policy into the DAG task but never applies
+                # it: its Argo compiler neutralizes DAG retries because retrying
+                # a DAG re-runs the whole subgraph and nested DAGs multiply that.
+                warnings.warn(
+                    f'Retry policy on nested pipeline task {task.name!r} is ignored, as in stock KFP: '
+                    'a sub-pipeline is not retried as a whole. Set retries on its inner tasks.',
+                    stacklevel=2,
                 )
             inherited = self.disable_caching
             previous_graph = self.graph_context
@@ -178,6 +204,8 @@ class _Compiler:
             self.disable_caching = inherited or bool(
                 task and not task._task_spec.enable_caching
             )
+            if task:
+                self.nested_tasks.append(task)
             try:
                 name = self.graph(component_spec, graph)
                 target = next(
@@ -225,6 +253,8 @@ class _Compiler:
                     )['workflows.argoproj.io/display-name'] = graph_display_name
                 return name
             finally:
+                if task:
+                    self.nested_tasks.pop()
                 self.disable_caching = inherited
                 self.graph_context = previous_graph
                 self.staged_graph_inputs = previous_staged
@@ -1102,11 +1132,20 @@ class _Compiler:
             template.setdefault('metadata', {}).setdefault('annotations', {})[
                 'pipelines.kubeflow.org/validated-scalars'
             ] = _json(scalar_types)
+        # A custom cache key on an enclosing nested-pipeline task scopes every
+        # inner task's identity (stock records but ignores it). Pipelines
+        # without nested keys keep their existing fingerprints.
+        scope = [
+            outer._task_spec.cache_key
+            for outer in self.nested_tasks
+            if outer._task_spec.cache_key
+        ]
         if task._task_spec.cache_key:
             # Stock custom keys intentionally override automatic execution/input identity.
             key = hashlib.sha256(
-                (
-                    task.component_spec.name + '\0' + task._task_spec.cache_key
+                '\0'.join(
+                    [task.component_spec.name, task._task_spec.cache_key]
+                    + scope
                 ).encode()
             ).hexdigest()
         else:
@@ -1121,6 +1160,7 @@ class _Compiler:
                             for key, value in template.items()
                             if key != 'name'
                         },
+                        **({'scope': scope} if scope else {}),
                     }
                 ).encode()
             ).hexdigest()
@@ -1294,14 +1334,33 @@ class _Compiler:
                 value = value.replace(marker, replacement)
             parameter['value'] = '{{=toJson(' + value + ')}}'
 
+    def _kubernetes_config(self, task):
+        """The task's kfp-kubernetes settings beneath those of its enclosing
+        nested-pipeline tasks.
+
+        Stock records settings on a nested task but never applies them;
+        here static ones reach every inner pod, lists accumulate, and
+        the inner task wins on conflicting scalars and keys.
+        """
+        merged = {}
+        for outer in self.nested_tasks + [task]:
+            if set(outer.platform_config) - {'kubernetes'}:
+                raise ValueError(
+                    'Only kfp-kubernetes task settings have native lowering; remove unsupported platform settings.'
+                )
+            config = copy.deepcopy(outer.platform_config.get('kubernetes', {}))
+            if outer is not task and _bound_to_parameters(config):
+                raise ValueError(
+                    f'Kubernetes settings on nested pipeline task {outer.name!r} reference pipeline '
+                    'parameters or task outputs, which inner tasks cannot resolve; set them on the inner tasks.'
+                )
+            _merge_settings(merged, config)
+        return merged
+
     def platform(self, task, template):
         from kfp.compiler import argo_kubernetes
 
-        if set(task.platform_config) - {'kubernetes'}:
-            raise ValueError(
-                'Only kfp-kubernetes task settings have native lowering; remove unsupported platform settings.'
-            )
-        config = copy.deepcopy(task.platform_config.get('kubernetes', {}))
+        config = self._kubernetes_config(task)
         container = template['container']
         for source, destination in [
             ('nodeSelector', 'nodeSelector'),
