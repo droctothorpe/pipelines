@@ -44,16 +44,20 @@ workflow, pods or artifacts. Point it at a cluster and pick a tier:
 kubectl --context orbstack -n kfp-argo port-forward svc/kfp-argo-ui 3003:80 &
 export KFP_TEST_HOST=http://127.0.0.1:3003 KFP_TEST_NAMESPACE=kfp-argo
 export KFP_TEST_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=2h)"
-uv run python -m pytest test/e2e -m smoke -p no:randomly          # what CI runs, about ten minutes
-uv run python -m pytest test/e2e -m full -p no:randomly           # everything else, an hour or more
-uv run python -m pytest test/e2e -m full -p no:randomly -k samples  # the stock sample corpus only
+uv run python -m pytest test/e2e -m 'not prerequisite' -n 4 --dist loadfile -p no:randomly  # what CI runs
+uv run python -m pytest test/e2e -m smoke -p no:randomly                  # quick local check, ~10 min
+uv run python -m pytest test/e2e -p no:randomly -k samples                # the stock sample corpus only
 ```
 
-Markers: `smoke` runs on every pull request through `test/native-deployment.sh` on a
-disposable Kind cluster; `full` is the rest; `prerequisite` cases skip unless
-`KFP_TEST_PREREQUISITES=1` because they need GPUs, cloud credentials or a
-PVC-capable account (`KFP_TEST_SERVICE_ACCOUNT`); `no_cluster` marks the few tests
-that need no deployment. `KFP_TEST_IMAGE` names a prebuilt image carrying this SDK
+Every pull request runs everything but `prerequisite` cases through
+`test/native-deployment.sh` on a disposable Kind cluster, in parallel with
+pytest-xdist (`-n`, grouped by module with `--dist loadfile` so module fixtures
+keep their order; `KFP_TEST_WORKERS` sets the count). Markers: `smoke` is the quick
+representative subset for a local check; `full` is the rest; `prerequisite` cases
+skip unless `KFP_TEST_PREREQUISITES=1` because they need GPUs, cloud credentials or
+a PVC-capable account (`KFP_TEST_SERVICE_ACCOUNT`); `no_cluster` marks the few tests
+that need no deployment. Tests share one namespace, so each creates uniquely named
+resources and asserts on its own workflow; keep new cases that way. `KFP_TEST_IMAGE` names a prebuilt image carrying this SDK
 so components skip the PyPI install; CI sets it to the content-addressed demo image.
 `KFP_TEST_DISABLE_CACHING=1` forces a cold sample pass. `--e2e-output DIR` (default
 `/tmp/kfp-e2e-<timestamp>`) receives compiled manifests and `report.json`, which the

@@ -201,8 +201,8 @@ uv run --frozen --extra test python -m pytest -q sdk/python/kfp test
 ```
 
 `bash test/native-deployment.sh` performs the complete build/deploy/acceptance flow
-in a new disposable Kind cluster: it deploys, runs the `smoke` tier of the live
-suite under `test/e2e/`, then the browser acceptance test. It does not operate on
+in a new disposable Kind cluster: it deploys, runs the live suite under `test/e2e/`
+in parallel (everything but prerequisite cases), then the browser acceptance test. It does not operate on
 the existing OrbStack stack.
 
 Against this OrbStack stack, run the live suite directly through the UI port-forward

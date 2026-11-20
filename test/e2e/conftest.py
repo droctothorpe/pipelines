@@ -7,11 +7,12 @@ installation named by ``KFP_TEST_HOST``, ``KFP_TEST_NAMESPACE`` and
 ``KFP_TEST_TOKEN``. Without ``KFP_TEST_HOST`` the whole package is skipped, so
 the offline suite is unaffected.
 
-Tiers are pytest markers. ``smoke`` is the dozen cases that
-``test/native-deployment.sh`` runs on every pull request; ``full`` is the rest,
-for nightly or on-demand runs; ``prerequisite`` needs hardware or credentials a
-local cluster may lack and skips with a reason. ``no_cluster`` marks the few
-tests that need no deployment.
+Tiers are pytest markers. ``test/native-deployment.sh`` runs everything but
+``prerequisite`` on every pull request, in parallel with pytest-xdist grouped
+by module; ``smoke`` is the quick representative subset for a local check;
+``full`` is the rest; ``prerequisite`` needs hardware or credentials a local
+cluster may lack and skips with a reason. ``no_cluster`` marks the few tests
+that need no deployment.
 
 Optional settings: ``KFP_TEST_IMAGE`` (a prebuilt image carrying this SDK, used
 by components that would otherwise install KFP from PyPI), ``KFP_TEST_CONTEXT``
@@ -58,6 +59,33 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     for marker, text in TIERS.items():
         config.addinivalue_line('markers', f'{marker}: {text}')
+    # Fix the output directory once on the controller so xdist workers, which
+    # inherit the environment, share it instead of each choosing a timestamp.
+    if 'PYTEST_XDIST_WORKER' not in os.environ and not os.environ.get(
+        'KFP_TEST_OUTPUT'
+    ):
+        os.environ['KFP_TEST_OUTPUT'] = config.getoption(
+            '--e2e-output'
+        ) or '/tmp/kfp-e2e-' + datetime.now(timezone.utc).strftime(
+            '%Y%m%d-%H%M%S'
+        )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Merge per-worker reports into one report.json on the controller."""
+    if 'PYTEST_XDIST_WORKER' in os.environ:
+        return
+    output = os.environ.get('KFP_TEST_OUTPUT')
+    if not output or not Path(output).is_dir():
+        return
+    entries = []
+    for part in sorted(Path(output).glob('report-*.json')):
+        entries.extend(json.loads(part.read_text()))
+        part.unlink()
+    if entries:
+        (Path(output) / 'report.json').write_text(
+            json.dumps(entries, indent=2, default=str)
+        )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -79,14 +107,7 @@ def settings(request):
     token = os.environ.get('KFP_TEST_TOKEN', '')
     if not token:
         pytest.skip('KFP_TEST_TOKEN must be non-empty for the live suite.')
-    output = request.config.getoption('--e2e-output') or os.environ.get(
-        'KFP_TEST_OUTPUT'
-    )
-    if not output:
-        output = '/tmp/kfp-e2e-' + datetime.now(timezone.utc).strftime(
-            '%Y%m%d-%H%M%S'
-        )
-    output = Path(output)
+    output = Path(os.environ['KFP_TEST_OUTPUT'])
     output.mkdir(parents=True, exist_ok=True)
     return Settings(
         host=os.environ['KFP_TEST_HOST'],
@@ -122,7 +143,8 @@ def report(settings):
     """Entries recorded by tests, written as one JSON report per session."""
     entries = []
     yield entries
-    (settings.output / 'report.json').write_text(
+    worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
+    (settings.output / f'report-{worker}.json').write_text(
         json.dumps(entries, indent=2, default=str)
     )
 
