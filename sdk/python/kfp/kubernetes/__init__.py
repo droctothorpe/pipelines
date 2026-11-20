@@ -29,6 +29,8 @@ __all__ = [
     'add_toleration_json',
     'empty_dir_mount',
     'mount_pvc',
+    'CreatePVC',
+    'DeletePVC',
     'ResourceClaimConfig',
     'set_image_pull_policy',
     'use_field_path_as_env',
@@ -68,6 +70,8 @@ from kfp.kubernetes.security_context import set_security_context
 from kfp.kubernetes.timeout import set_timeout
 from kfp.kubernetes.toleration import add_toleration, add_toleration_json
 from kfp.kubernetes.volume import (
+    CreatePVC,
+    DeletePVC,
     add_ephemeral_volume,
     mount_pvc,
 )

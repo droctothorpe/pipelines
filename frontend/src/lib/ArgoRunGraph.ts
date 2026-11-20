@@ -1,6 +1,7 @@
 // Copyright 2026 The Kubeflow Authors
 // SPDX-License-Identifier: Apache-2.0
 import { type ArgoWorkflow, type ArgoNode } from './Argo';
+import { componentNodeViews } from './ArgoComponents';
 import { PipelineTaskTaskState } from 'src/components/graph/Constants';
 import type { PipelineFlowElement } from './v2/FlowTypes';
 import {
@@ -16,15 +17,16 @@ import {
 
 /** Group actual Argo executions, including individual loop/retry attempts, for KFP's DAG widget. */
 export function argoRunView(run: ArgoWorkflow) {
-  const nodes = Object.values(run.status?.nodes || {});
-  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const allNodes = Object.values(run.status?.nodes || {});
+  const nodes = componentNodeViews(run);
+  const byId = new Map([...allNodes, ...nodes].map((node) => [node.id, node]));
   const root = nodes.find(
     (node) => node.name === run.metadata.name || node.id === run.metadata.name,
   );
   const isGroup = (node: ArgoNode) =>
     ['DAG', 'Steps', 'StepGroup', 'TaskGroup', 'Retry'].includes(node.type);
-  const parents = new Map(nodes.map((node) => [node.id, node.boundaryID || root?.id]));
-  for (const node of nodes)
+  const parents = new Map(allNodes.map((node) => [node.id, node.boundaryID || root?.id]));
+  for (const node of allNodes)
     if (['TaskGroup', 'Retry', 'StepGroup'].includes(node.type))
       for (const child of node.children || []) if (byId.has(child)) parents.set(child, node.id);
   const phases: Record<string, PipelineTaskTaskState> = {
@@ -114,8 +116,24 @@ export function argoRunView(run: ArgoWorkflow) {
     return buildGraphLayout(elements);
   }
   return {
+    nodes,
     elements: resolve(['root']),
     resolve,
+    findTask(nodeId: string) {
+      if (!byId.has(nodeId)) return null;
+      const ancestors: string[] = [];
+      const seen = new Set<string>();
+      let parent = parents.get(nodeId);
+      while (parent && parent !== root?.id && !seen.has(parent)) {
+        seen.add(parent);
+        const node = byId.get(parent);
+        if (node && isGroup(node)) ancestors.unshift(parent);
+        parent = parents.get(parent);
+      }
+      const layers = ['root', ...ancestors];
+      const element = resolve(layers).find((element) => element.id === getTaskNodeKey(nodeId));
+      return element ? { layers, element } : null;
+    },
     describe(id: string) {
       const [nodeId, artifact] = isArtifactNode(id)
         ? getKeysFromArtifactNodeKey(id)

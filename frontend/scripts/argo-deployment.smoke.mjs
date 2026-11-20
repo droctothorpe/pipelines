@@ -266,14 +266,20 @@ test(
       await page
         .getByLabel('Recurring run config name', { exact: false })
         .fill(`Native schedule ${hash}`);
-      await page.getByLabel('Cron schedule', { exact: false }).fill('0 9 * * *');
+      await page.getByRole('combobox', { name: /Trigger type/ }).click();
+      await page.getByRole('option', { name: 'Cron', exact: true }).click();
+      await page.getByRole('checkbox', { name: /Allow editing cron expression/ }).check();
+      await page.getByLabel('cron expression', { exact: true }).fill('0 9 * * *');
       const cron = await saveResponse(page, '/cron-workflows/', () =>
         page.getByRole('button', { name: 'Start', exact: true }).click(),
       );
-      assert.equal(cron.spec.suspend, true);
+      assert.equal(Boolean(cron.spec.suspend), false);
       assert.deepEqual(cron.spec.schedules, ['0 9 * * *']);
       report.schedule = cron.metadata.name;
       await page.waitForURL(/#\/recurringrun\/details\//);
+      await page.getByRole('button', { name: 'Disable', exact: true }).click();
+      await page.getByRole('button', { name: 'Enable', exact: true }).waitFor();
+      await waitFor(async () => (await json(`/argo/api/v1/cron-workflows/${namespace}/${cron.metadata.name}`)).spec.suspend === true, 'schedule explicitly disabled after default-enabled creation');
       await page.reload();
       await connect(page, editor);
       await page.getByText('Native schedule ' + hash, { exact: true }).waitFor();
@@ -351,7 +357,7 @@ test(
       await page.getByRole('button', { name: 'Resume', exact: true }).click();
       await completed(gate.metadata.name);
 
-      // The stock Archive action verifies persistence before deleting its live CR.
+      // Stock archival is logical and reversible; engine GC is a separate event.
       const first = submitted[0],
         archivePath = `/argo/api/v1/archived-workflows/${first.metadata.uid}?namespace=${namespace}`;
       await waitFor(
@@ -361,17 +367,11 @@ test(
       await go(page, `/runs/details/${first.metadata.uid}`);
       await page.getByRole('button', { name: 'Archive', exact: true }).click();
       await page.getByRole('button', { name: 'Confirm', exact: true }).click();
-      await waitFor(
-        async () =>
-          (
-            await fetch(
-              origin +
-                `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${namespace}/workflows/${first.metadata.name}`,
-              { headers: { Authorization: `Bearer ${editor}` } },
-            )
-          ).status === 404,
-        'live CR removed by Archive',
-      );
+      await page.waitForURL(/#\/archive\/runs/);
+      assert.equal((await json(`/kubernetes/api/v1/namespaces/${namespace}/configmaps/run-${first.metadata.uid}`)).data.storageState, 'ARCHIVED');
+      assert.equal((await json(`/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${namespace}/workflows/${first.metadata.name}`)).metadata.uid, first.metadata.uid);
+      // Simulate subsequent controller TTL/GC only for this test-owned workflow.
+      kubectl(['delete', 'workflow', first.metadata.name]);
       const archived = await json(archivePath),
         prepared = Object.values(archived.status.nodes).find(
           (node) => node.displayName === 'prepare',

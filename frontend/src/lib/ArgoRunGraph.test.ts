@@ -147,6 +147,10 @@ describe('native executions in the stock graph', () => {
         .map((element) => element.id)
         .sort(),
     ).toEqual([getTaskNodeKey('iteration0'), getTaskNodeKey('iteration1')]);
+    expect(graph.findTask('task0')).toMatchObject({
+      layers: ['root', 'loop', 'iterations', 'iteration0'],
+      element: { id: getTaskNodeKey('task0') },
+    });
     expect(
       graph
         .resolve(['root', 'loop', 'iterations', 'iteration0'])

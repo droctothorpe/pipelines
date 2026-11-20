@@ -27,12 +27,14 @@ import {
 } from 'src/components/PipelinePackage';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { useInventory } from 'src/lib/NativeQueries';
-import { createResource } from 'src/lib/ArgoResources';
+import { createResource, type NativeResource } from 'src/lib/ArgoResources';
 import {
   displayName,
   description as resourceDescription,
   pipelineId,
   pipelineHref,
+  resourceId,
+  deleteNativeResource,
 } from 'src/lib/NativeUi';
 import { importTemplate } from 'src/lib/NativeImport';
 
@@ -61,12 +63,14 @@ export default function NativeUpload() {
   const groups = new Map(
     (inventory.versions.data || []).map((version) => [pipelineId(version), version]),
   );
+  for (const pipeline of inventory.pipelines.data || []) groups.set(resourceId(pipeline), pipeline);
   const existing = groups.get(existingId);
   const invalid =
     (newPipeline ? !name.trim() : !existing || !versionName.trim()) ||
     (local ? !file : !url.trim());
   async function create() {
     setBusy(true);
+    let createdPipeline: NativeResource | undefined;
     try {
       let text: string;
       if (local) {
@@ -82,29 +86,56 @@ export default function NativeUpload() {
         if (!response.ok) throw new Error(`Pipeline download failed (${response.status}).`);
         text = await response.text();
       }
-      const id = newPipeline
-        ? name
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9-]+/g, '-')
-            .replace(/^-+|-+$/g, '')
-        : existingId;
-      if (newPipeline && groups.has(id))
+      if (
+        newPipeline &&
+        [...groups.values()].some((pipeline) => displayName(pipeline) === name.trim())
+      )
         throw new Error(
           'This pipeline already exists. Choose "Create a new pipeline version under an existing pipeline".',
         );
+      // Validate the package before creating any persistent resource.
       const resource = await importTemplate(text, namespace, {
-        pipeline: id,
+        pipeline: newPipeline ? 'pending-pipeline' : existingId,
         displayName: newPipeline ? name.trim() : displayName(existing!),
         description: newPipeline ? description : resourceDescription(existing!),
         versionName: versionName || file?.name.replace(/\.ya?ml$/i, '') || name.trim(),
         versionDescription,
         codeSource,
       });
-      await createResource(namespace, 'workflow-templates', resource);
-      await client.invalidateQueries({ queryKey: ['native', namespace, 'versions'] });
-      navigate(pipelineHref(resource));
+      if (newPipeline) {
+        createdPipeline = await createResource(namespace, 'pipelines', {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: {
+            name: `pipeline-${crypto.randomUUID()}`,
+            namespace,
+            labels: { 'pipelines.kubeflow.org/resource': 'pipeline' },
+          },
+          data: { displayName: name.trim(), description, shared: 'true' },
+        });
+        resource.metadata.labels = {
+          ...resource.metadata.labels,
+          'pipelines.kubeflow.org/pipeline': resourceId(createdPipeline!),
+        };
+        resource.metadata.name = `version-${crypto.randomUUID()}`;
+      }
+      const uploaded = await createResource(namespace, 'workflow-templates', resource);
+      createdPipeline = undefined;
+      await client.invalidateQueries({ queryKey: ['native', namespace] });
+      navigate(pipelineHref(uploaded));
     } catch (error) {
+      if (createdPipeline) {
+        try {
+          await deleteNativeResource(namespace, createdPipeline);
+        } catch (cleanupError) {
+          fail(
+            new Error(
+              `${error instanceof Error ? error.message : error} The empty pipeline could not be removed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}`,
+            ),
+          );
+          return;
+        }
+      }
       fail(error);
     } finally {
       setBusy(false);

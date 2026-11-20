@@ -3,6 +3,7 @@
 """Importer declarations remain typed authoring data, never a backend fallback."""
 
 import pytest
+import yaml
 
 from kfp import compiler, dsl
 
@@ -27,13 +28,24 @@ def test_importer_captures_dynamic_metadata(shape, tmp_path):
     assert "{{$.inputs.parameters['metadata']}}" in text
     if shape != 'dict':
         assert task.inputs['metadata-2'].name == 'number'
-    with pytest.raises(
-        ValueError,
-        match='Importer components need a versioned native artifact source',
-    ):
-        compiler.Compiler(disable_caching=True).compile(
-            pipeline, str(tmp_path / 'pipeline.yaml')
-        )
+    compiler.Compiler(disable_caching=True).compile(
+        pipeline, str(tmp_path / 'pipeline.yaml')
+    )
+    manifest = yaml.safe_load((tmp_path / 'pipeline.yaml').read_text())
+    assert '{{$.inputs.parameters' not in str(manifest)
+    importer = next(
+        template
+        for template in manifest['spec']['templates']
+        if template['name'].endswith('-importer')
+    )
+    assert 'container' not in importer
+    assert any(
+        port['name'] == 'metadata' for port in importer['inputs']['parameters']
+    )
+    if shape != 'dict':
+        assert 'fromJSON' in str(
+            importer
+        ) or 'inputs.parameters["metadata-2"]' in str(importer)
 
 
 def test_importer_reuses_task_output_metadata_binding():

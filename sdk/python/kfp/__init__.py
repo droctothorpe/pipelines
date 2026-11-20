@@ -34,3 +34,4 @@ if os.environ.get('_KFP_RUNTIME', 'false') != 'true':
     # make `from kfp import components` and `from kfp import dsl` valid;
     # related to namespace packaging issue
     from kfp import components, dsl
+    from kfp.client import Client

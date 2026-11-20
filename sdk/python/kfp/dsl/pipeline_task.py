@@ -69,10 +69,15 @@ class PipelineTask:
         self,
         component_spec: structures.ComponentSpec,
         args: Dict[str, Any],
+        execute_locally: bool = False,
         execution_caching_default: bool = True,
         execution_cache_key: Optional[str] = None,
     ) -> None:
         """Initializes a PipelineTask instance."""
+        if execute_locally:
+            raise ValueError(
+                'Local execution is not supported; submit the pipeline to a cluster.'
+            )
         # import within __init__ to avoid circular import
         from kfp.dsl.tasks_group import TasksGroup
 
@@ -554,9 +559,10 @@ class PipelineTask:
                 ``'OnTransientError'`` retries either when the failure message
                 matches the controller's transient-error pattern; ``'Always'``
                 retries both.
-                Defaults to ``None``, which omits the policy so the
-                deployment's Argo configuration applies; KFP's bundled
-                manifests set ``'OnError'``.
+                Defaults to ``None``: native compilation retries both task
+                failures and engine errors. Direct component exits are Argo
+                failures rather than errors reported by a KFP driver.
+                An explicit policy restricts retries to the selected class.
 
         Returns:
             Self return to allow chained setting calls.

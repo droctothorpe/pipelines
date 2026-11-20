@@ -14,6 +14,8 @@ include = ["*.py", "*.pyi"]
 force-exclude = true
 extend-exclude = [
   "*_pb2.py",
+  # Frozen public response models; regenerate instead of formatting definitions.
+  "sdk/python/kfp/server_api/**",
 ]
 
 [tool.ruff.format]

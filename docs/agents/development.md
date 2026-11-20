@@ -10,9 +10,19 @@ artifact storage, and a static Nginx UI/proxy. See the sample README for command
 The local setup uses development storage credentials and an internal self-signed
 Argo certificate; bind port-forwards to loopback, not a public interface.
 
-`_KFP_RUNTIME=true` selects lightweight in-container imports. Runtime images must
-contain this checkout's wheel. `Compiler(image_digests=...)` emits content-named
-local references; `compile_demo.py` creates and verifies their Docker tags.
+`_KFP_RUNTIME=true` selects lightweight in-container imports. The compiler embeds
+the native bridge, preserving ordinary component images and their SDK installation
+commands; unmodified PyPI KFP executors are part of compatibility validation.
+`Compiler(image_digests=...)` emits content-named local references;
+`compile_demo.py` creates and verifies their Docker tags.
+
+Artifact-list consumers use an init-container and Argo's installed downloader.
+SDK/UI submission resolves namespace artifact-repository configuration and mounts
+Secret references only into that staging container. Keep its private executor
+volume separate from Argo's shared bootstrap volume. Large-template offload needs
+the controller's namespace-scoped ConfigMap-create Role; component service accounts
+retain only their existing task-result permissions. See the staging evidence and
+remaining limits in [SDK compatibility](../sdk-compatibility.md).
 
 Frontend development proxies `/argo/` and `/kubernetes/` to the deployed authenticated
 proxy (default `http://127.0.0.1:3003`, override `KFP_NATIVE_PROXY`). It does not run

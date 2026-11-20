@@ -6,8 +6,71 @@ import graphlib
 import hashlib
 import re
 
-from kfp.compiler.argo_compiler import _json, _kind, _ref
+from kfp.compiler import argo_continuation
+from kfp.compiler.argo_compiler import _json, _ref
 from kfp.dsl import for_loop, pipeline_channel, structures, tasks_group
+from kfp.dsl.types import type_utils
+
+
+def _expression_reference(reference):
+    if reference.startswith('{{='):
+        return reference[3:-2]
+    reference = reference[2:-2]
+    match = re.fullmatch(
+        r'tasks\.([^.]+)\.outputs\.(parameters|artifacts)\.(.+)', reference
+    )
+    if match:
+        return f'tasks[{_json(match[1])}].outputs.{match[2]}[{_json(match[3])}]'
+    field, name = reference.removeprefix('inputs.').split('.', 1)
+    return f'inputs.{field}[{_json(name)}]'
+
+
+def _parameter_source(reference):
+    if reference.startswith('{{inputs.parameters.'):
+        return {'expression': _expression_reference(reference)}
+    return (
+        {'expression': reference[3:-2]}
+        if reference.startswith('{{=')
+        else {'parameter': reference}
+    )
+
+
+def _artifact_source(reference):
+    return (
+        {'fromExpression': reference[3:-2]}
+        if reference.startswith('{{=')
+        else {'from': reference}
+    )
+
+
+def _is_artifact_list(channel):
+    # Loop parameters synthesize member channels through __getattr__.
+    return (
+        isinstance(channel, pipeline_channel.PipelineArtifactChannel)
+        and channel.is_artifact_list
+    ) or (
+        isinstance(channel, for_loop.Collected) and channel.is_artifact_channel
+    )
+
+
+def _nested_artifact_collection(channel, group):
+    if (
+        not isinstance(channel, for_loop.Collected)
+        or not channel.is_artifact_channel
+    ):
+        return False
+    source = channel.output
+    if (
+        isinstance(source, pipeline_channel.PipelineArtifactChannel)
+        and source.is_artifact_list
+    ):
+        return True
+    parent = source.task.parent_task_group if source.task else None
+    while parent is not None and not isinstance(
+        parent, tasks_group.ParallelFor
+    ):
+        parent = parent.parent_task_group
+    return parent is not None and parent is not group
 
 
 def _key(channel):
@@ -35,6 +98,7 @@ class _Scope:
         ]
         self.owners = {task.name: task for task in group.tasks}
         for child in self.children:
+            self.owners[child.group.name] = child
             self.owners.update({name: child for name in child.owners})
         self.loop = isinstance(group, tasks_group.ParallelFor)
         self.exit_handler = isinstance(group, tasks_group.ExitHandler)
@@ -62,6 +126,19 @@ class _Scope:
         return (self.wrapper or self.template)['name']
 
     def input(self, channel, field, prefix='', suffix=''):
+        if self.loop:
+            # String interpolation reconstructs a plain channel; recover its loop identity.
+            candidates = [self.group.loop_argument]
+            if isinstance(
+                self.group.loop_argument, for_loop.LoopParameterArgument
+            ):
+                candidates.extend(
+                    self.group.loop_argument._referenced_subvars.values()
+                )
+            channel = next(
+                (item for item in candidates if _key(item) == _key(channel)),
+                channel,
+            )
         name = (
             channel.name
             if self.parent is None and not channel.task_name
@@ -69,7 +146,11 @@ class _Scope:
         )
         if self.loop and isinstance(
             channel,
-            (for_loop.LoopParameterArgument, for_loop.LoopArgumentVariable),
+            (
+                for_loop.LoopParameterArgument,
+                for_loop.LoopArtifactArgument,
+                for_loop.LoopArgumentVariable,
+            ),
         ):
             argument = (
                 channel.loop_argument
@@ -83,13 +164,56 @@ class _Scope:
         return _ref('inputs.' + field, prefix + name + suffix)
 
     def resolve(
-        self, value, field='parameters', prefix='', suffix='', collected=False
+        self,
+        value,
+        field='parameters',
+        prefix='',
+        suffix='',
+        collected=False,
+        allow_conditional=False,
     ):
+        if isinstance(
+            value, pipeline_channel.OneOfMixin
+        ) and value.task_name == getattr(self.group, 'name', None):
+            references = [
+                self.resolve(
+                    channel, field, prefix, suffix, allow_conditional=True
+                )
+                for channel in value.channels
+            ]
+            nullable = self.compiler.nullable_source(value)
+            sources = [
+                'toJson(' + _expression_reference(ref) + ')'
+                if nullable
+                and not self.compiler.nullable_source(channel)
+                and type_utils.get_parameter_type(channel.channel_type)
+                == type_utils.get_parameter_type(str)
+                else _expression_reference(ref)
+                for ref, channel in zip(references, value.channels)
+            ]
+            expression = sources[-1]
+            for reference, source in reversed(
+                list(zip(references[:-1], sources[:-1]))
+            ):
+                owner = _expression_reference(reference).split('.outputs.', 1)[
+                    0
+                ]
+                expression = (
+                    f"({owner}.status == 'Succeeded' ? {source} : {expression})"
+                )
+            return '{{=' + expression + '}}'
         if isinstance(value, for_loop.Collected):
             if value.is_artifact_channel:
-                raise ValueError(
-                    'Collected artifact lists need native multi-artifact staging; use parameter collections for now.'
-                )
+                if field == 'artifacts':
+                    raise ValueError(
+                        'Collected artifact payloads need list-aware input staging.'
+                    )
+                prefix = prefix or 'kfp-meta-'
+                if (
+                    value.output.task_name not in self.owners
+                    and self.parent is not None
+                ):
+                    return self.input(value, field, prefix, suffix)
             return self.resolve(
                 value.output, field, prefix, suffix, collected=True
             )
@@ -101,8 +225,10 @@ class _Scope:
                     value
                 ):
                     value = value.replace(str(channel), self.resolve(channel))
-                return value
+                return self.compiler.workspace_value(value)
             return _json(value)
+        if _is_artifact_list(value) and field == 'parameters' and not prefix:
+            prefix = 'kfp-meta-'
         owner = self.owners.get(value.task_name)
         if owner is not None:
             if isinstance(owner, _Scope):
@@ -110,13 +236,22 @@ class _Scope:
                     raise ValueError(
                         'A loop output used outside its scope must be wrapped in dsl.Collected().'
                     )
-                if isinstance(owner.group, tasks_group._ConditionBase):
+                if (
+                    isinstance(owner.group, tasks_group._ConditionBase)
+                    and not allow_conditional
+                ):
                     raise ValueError(
                         'Conditional output escapes its branch; move its consumer inside the branch. Conditional output merges are not yet supported by this prototype.'
                     )
                 owner.exports[_key(value)] = (
                     for_loop.Collected(value)
-                    if collected and not owner.loop
+                    if collected
+                    and (
+                        not owner.loop
+                        or isinstance(
+                            value, pipeline_channel.PipelineArtifactChannel
+                        )
+                    )
                     else value
                 )
                 name = _port(value)
@@ -134,21 +269,16 @@ class _Scope:
         return self.input(value, field, prefix, suffix)
 
     def expression(self, value):
+        if value is None:
+            return 'nil'
         if not isinstance(value, pipeline_channel.PipelineChannel):
             return _json(value)
-        reference = self.resolve(value)[2:-2]
-        match = re.fullmatch(
-            r'tasks\.([^.]+)\.outputs\.parameters\.(.+)', reference
-        )
-        if match:
-            reference = f'tasks[{_json(match[1])}].outputs.parameters[{_json(match[2])}]'
-        else:
-            reference = (
-                'inputs.parameters['
-                + _json(reference.removeprefix('inputs.parameters.'))
-                + ']'
-            )
-        if _kind(structures.InputSpec(type=value.channel_type)) != 'String':
+        reference = _expression_reference(self.resolve(value))
+        if self.compiler.nullable_source(
+            value
+        ) or type_utils.get_parameter_type(
+            value.channel_type
+        ) != type_utils.get_parameter_type(str):
             reference = 'fromJSON(' + reference + ')'
         return reference
 
@@ -181,9 +311,22 @@ class _Scope:
                     )
                 raise ValueError(f'Missing input {name!r} on {task.name!r}.')
             value = task.inputs[name]
-            if structures.spec_type_is_parameter(port.type):
+            if port.is_artifact_list or self.compiler.staged_source(value):
+                arguments['parameters'].extend(
+                    {
+                        'name': prefix + name,
+                        'value': self.resolve(value, prefix=prefix),
+                    }
+                    for prefix in ('kfp-uri-', 'kfp-meta-')
+                )
+            elif structures.spec_type_is_parameter(port.type):
                 arguments['parameters'].append(
-                    {'name': name, 'value': self.resolve(value)}
+                    {
+                        'name': name,
+                        'value': self.compiler.argument_value(
+                            value, port, task, self.resolve
+                        ),
+                    }
                 )
             else:
                 arguments['artifacts'].extend(
@@ -208,6 +351,19 @@ class _Scope:
                             'value': self.resolve(value, prefix=prefix),
                         }
                     )
+        arguments['parameters'].extend(
+            {
+                'name': name,
+                'value': self.compiler.argument_value(
+                    channel,
+                    structures.InputSpec(type=channel.channel_type),
+                    task,
+                    self.resolve,
+                ),
+            }
+            for name, channel in self.compiler.extra_inputs.get(id(task), [])
+        )
+        argo_continuation.arguments(task, arguments)
         return {key: value for key, value in arguments.items() if value}
 
     def build(self):
@@ -220,10 +376,6 @@ class _Scope:
                 'template': target,
                 'arguments': self.arguments(task),
             }
-            if task._ignore_upstream_failure_tag:
-                raise ValueError(
-                    'ignore_upstream_failure requires explicit native continuation semantics; use an exit handler.'
-                )
             if task.dependent_tasks:
                 item['dependencies'] = [
                     self.owners[name].group.name
@@ -294,7 +446,17 @@ class _Scope:
                 if child.is_loop_item(channel):
                     continue
                 name = _port(channel)
-                if isinstance(
+                if _is_artifact_list(channel) or self.compiler.staged_source(
+                    channel
+                ):
+                    arguments['parameters'].extend(
+                        {
+                            'name': prefix + name,
+                            'value': self.resolve(channel, prefix=prefix),
+                        }
+                        for prefix in ('kfp-uri-', 'kfp-meta-')
+                    )
+                elif isinstance(
                     channel, pipeline_channel.PipelineArtifactChannel
                 ):
                     arguments['artifacts'].extend(
@@ -342,7 +504,14 @@ class _Scope:
                 if self.parent is None and not channel.task_name
                 else _port(channel)
             )
-            if isinstance(channel, pipeline_channel.PipelineArtifactChannel):
+            if _is_artifact_list(channel) or self.compiler.staged_source(
+                channel
+            ):
+                parameters.extend(
+                    {'name': prefix + name}
+                    for prefix in ('kfp-uri-', 'kfp-meta-')
+                )
+            elif isinstance(channel, pipeline_channel.PipelineArtifactChannel):
                 artifacts.extend(
                     [
                         {'name': name},
@@ -374,12 +543,54 @@ class _Scope:
             for channel in self.inputs.values():
                 name = _port(channel)
                 if self.is_loop_item(channel):
+                    if isinstance(channel, for_loop.LoopArtifactArgument):
+                        arguments['parameters'].extend(
+                            [
+                                {
+                                    'name': 'kfp-meta-' + name,
+                                    'value': '{{item}}',
+                                },
+                                {
+                                    'name': 'kfp-uri-' + name,
+                                    'value': "{{=(type(item) == 'string' ? fromJSON(item) : item).uri}}",
+                                },
+                            ]
+                        )
+                        continue
                     item = '{{item}}'
                     if isinstance(channel, for_loop.LoopArgumentVariable):
-                        item = '{{item.' + channel.subvar_name + '}}'
+                        selected = (
+                            "(type(item) == 'string' ? fromJSON(item) : item)["
+                            + _json(channel.subvar_name)
+                            + ']'
+                        )
+                        item = (
+                            '{{=type('
+                            + selected
+                            + ") == 'string' ? "
+                            + selected
+                            + ' : toJson('
+                            + selected
+                            + ')}}'
+                        )
                     arguments['parameters'].append(
                         {'name': name, 'value': item}
                     )
+                elif _is_artifact_list(channel) or self.compiler.staged_source(
+                    channel
+                ):
+                    for prefix in ('kfp-uri-', 'kfp-meta-'):
+                        wrapper_inputs['parameters'].append(
+                            {'name': prefix + name}
+                        )
+                        arguments['parameters'].append(
+                            {
+                                'name': prefix + name,
+                                'value': _ref(
+                                    'inputs.parameters', prefix + name
+                                ),
+                            }
+                        )
                 elif isinstance(
                     channel, pipeline_channel.PipelineArtifactChannel
                 ):
@@ -474,6 +685,14 @@ class _Scope:
             if deps:
                 item['dependencies'] = sorted(deps)
             dependencies[item['name']] = deps
+        argo_continuation.dependencies(
+            self.template['dag'],
+            {
+                task.name: task
+                for task in self.group.tasks
+                if task._ignore_upstream_failure_tag
+            },
+        )
         missing = (
             set().union(*dependencies.values()) - set(dependencies)
             if dependencies
@@ -496,7 +715,10 @@ class _Scope:
         if isinstance(channel, for_loop.LoopArgumentVariable):
             channel = channel.loop_argument
         return (
-            isinstance(channel, for_loop.LoopParameterArgument)
+            isinstance(
+                channel,
+                (for_loop.LoopParameterArgument, for_loop.LoopArtifactArgument),
+            )
             and channel.name == self.group.loop_argument.name
         )
 
@@ -504,7 +726,33 @@ class _Scope:
         parameters, artifacts = [], []
         for channel in self.exports.values():
             name = _port(channel)
-            if isinstance(channel, pipeline_channel.PipelineArtifactChannel):
+            if _is_artifact_list(channel) or self.compiler.staged_source(
+                channel
+            ):
+                for prefix in ('kfp-uri-', 'kfp-meta-'):
+                    if self.loop and template is self.wrapper:
+                        source = _ref(
+                            'tasks.iteration.outputs.parameters', prefix + name
+                        )
+                    elif self.exit_handler and template is self.wrapper:
+                        source = _ref(
+                            'tasks.body.outputs.parameters', prefix + name
+                        )
+                    else:
+                        source = self.resolve(channel, prefix=prefix)
+                    source_spec = {'parameter': source}
+                    if self.loop and template is self.wrapper:
+                        if _nested_artifact_collection(channel, self.group):
+                            source_spec = {
+                                'expression': 'toJson(flatten(map(fromJSON('
+                                + _expression_reference(source)
+                                + "), {type(#) == 'string' ? fromJSON(#) : #})))"
+                            }
+                        source_spec['default'] = '[]'
+                    parameters.append(
+                        {'name': prefix + name, 'valueFrom': source_spec}
+                    )
+            elif isinstance(channel, pipeline_channel.PipelineArtifactChannel):
                 if self.loop:
                     raise ValueError(
                         'Argo does not aggregate output artifacts; use a supported parameter collection.'
@@ -515,7 +763,7 @@ class _Scope:
                     if wrapped
                     else self.resolve(channel, 'artifacts')
                 )
-                artifacts.append({'name': name, 'from': source})
+                artifacts.append({'name': name, **_artifact_source(source)})
                 metadata_source = (
                     _ref('tasks.body.outputs.artifacts', name + '-metadata')
                     if wrapped
@@ -524,7 +772,7 @@ class _Scope:
                 artifacts.append(
                     {
                         'name': name + '-metadata',
-                        'from': metadata_source,
+                        **_artifact_source(metadata_source),
                         'optional': True,
                     }
                 )
@@ -537,14 +785,21 @@ class _Scope:
                     parameters.append(
                         {
                             'name': prefix + name,
-                            'valueFrom': {'parameter': source},
+                            'valueFrom': _parameter_source(source),
                         }
                     )
             else:
                 parameters.append(
                     {
                         'name': name,
-                        'valueFrom': {'parameter': reference(channel)},
+                        'valueFrom': {
+                            **_parameter_source(reference(channel)),
+                            **(
+                                {'default': '[]'}
+                                if self.loop and template is self.wrapper
+                                else {}
+                            ),
+                        },
                     }
                 )
         if parameters or artifacts:
@@ -582,24 +837,53 @@ def compile_graph(compiler, component_spec, graph):
     # Root parameters must keep declarations even if unused, including defaults.
     ports = {'parameters': [], 'artifacts': []}
     for name, port in (component_spec.inputs or {}).items():
-        compiler.input_port(ports, name, port)
+        compiler.input_port(
+            ports, name, port, staged=name in compiler.staged_graph_inputs
+        )
     scope.template['inputs'] = {
         key: value for key, value in ports.items() if value
     }
     if outputs:
-        parameters = []
+        parameters, artifacts = [], []
         for name, channel in outputs.items():
-            if not structures.spec_type_is_parameter(
+            if structures.spec_type_is_parameter(
                 component_spec.outputs[name].type
             ):
-                raise ValueError(
-                    'Grouped pipeline artifact outputs require explicit merge semantics.'
+                parameters.append(
+                    {
+                        'name': name,
+                        'valueFrom': _parameter_source(scope.resolve(channel)),
+                    }
                 )
-            parameters.append(
-                {
-                    'name': name,
-                    'valueFrom': {'parameter': scope.resolve(channel)},
-                }
-            )
-        scope.template['outputs'] = {'parameters': parameters}
+                continue
+            for prefix in ('kfp-uri-', 'kfp-meta-'):
+                parameters.append(
+                    {
+                        'name': prefix + name,
+                        'valueFrom': {
+                            'parameter': scope.resolve(channel, prefix=prefix)
+                        },
+                    }
+                )
+            if not _is_artifact_list(channel) and not compiler.staged_source(
+                channel
+            ):
+                for suffix in ('', '-metadata'):
+                    artifacts.append(
+                        {
+                            'name': name + suffix,
+                            'from': scope.resolve(
+                                channel, 'artifacts', suffix=suffix
+                            ),
+                            **({'optional': True} if suffix else {}),
+                        }
+                    )
+        scope.template['outputs'] = {
+            key: value
+            for key, value in [
+                ('parameters', parameters),
+                ('artifacts', artifacts),
+            ]
+            if value
+        }
     return scope.name

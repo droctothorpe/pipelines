@@ -8,6 +8,21 @@ from typing import Any, Dict, Optional
 import yaml
 
 from kfp.dsl import base_component
+from kfp.dsl.types.type_utils import TypeCheckManager
+
+
+class _ArgoDumper(yaml.SafeDumper):
+    """Also quote YAML 1.1 booleans omitted by PyYAML's implicit resolver."""
+
+
+def _string(dumper, value):
+    node = dumper.represent_str(value)
+    if value.lower() in ('y', 'n'):
+        node.style = "'"
+    return node
+
+
+_ArgoDumper.add_representer(str, _string)
 
 
 class Compiler:
@@ -62,10 +77,6 @@ class Compiler:
             raise ValueError(
                 'Expected a component or pipeline created with @dsl.component or @dsl.pipeline.'
             )
-        if not type_check:
-            raise ValueError(
-                'Native compilation requires type checking; remove type_check=False.'
-            )
         if (
             kubernetes_manifest_options is not None
             or kubernetes_manifest_format
@@ -73,17 +84,20 @@ class Compiler:
             raise ValueError(
                 'KFP PipelineVersion manifests are no longer emitted; use resource_kind="WorkflowTemplate".'
             )
-        manifest = compile_argo(
-            pipeline_func,
-            self,
-            pipeline_name,
-            pipeline_display_name,
-            pipeline_parameters or {},
-            resource_kind,
-            schedule,
-        )
+        with TypeCheckManager(enable=type_check):
+            manifest = compile_argo(
+                pipeline_func,
+                self,
+                pipeline_name,
+                pipeline_display_name,
+                pipeline_parameters or {},
+                resource_kind,
+                schedule,
+            )
         if namespace:
             manifest['metadata']['namespace'] = namespace
         target = Path(package_path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(yaml.safe_dump(manifest, sort_keys=False))
+        target.write_text(
+            yaml.dump(manifest, Dumper=_ArgoDumper, sort_keys=False)
+        )

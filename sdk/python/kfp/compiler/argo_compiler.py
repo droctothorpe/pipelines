@@ -9,8 +9,17 @@ import graphlib
 import hashlib
 import json
 import re
-from urllib.parse import urlparse
+from pathlib import Path
 
+import kfp
+from kfp.compiler import argo_continuation, argo_parameters
+from kfp.compiler.argo_artifacts import (
+    BUCKET,
+    PREFIX,
+    ROOT,
+    reference,
+    root_annotations,
+)
 from kfp.dsl import (
     for_loop,
     pipeline_channel,
@@ -44,6 +53,7 @@ def _kind(port):
         'list': 'List',
         'dict': 'Dict',
         'pipelinetaskfinalstatus': 'Dict',
+        'taskconfig': 'Dict',
     }
     if name not in kinds:
         raise ValueError(
@@ -71,26 +81,35 @@ def _name(value):
 
 
 class _Compiler:
-    def __init__(self, options):
+    def __init__(self, options, pipeline_name):
         self.options = options
+        self.pipeline_name = pipeline_name
         self.templates = []
+        self.extra_inputs = {}
         self.disable_caching = options.disable_caching
-        repository = urlparse(options.artifact_repository)
-        if (
-            repository.scheme != 's3'
-            or not repository.netloc
-            or repository.query
-            or repository.fragment
-        ):
-            raise ValueError(
-                'The native prototype requires an s3://bucket[/prefix] artifact_repository.'
-            )
-        self.bucket = repository.netloc
-        self.prefix = repository.path.strip('/')
-        self.uri = options.artifact_repository.rstrip('/')
+        self.artifact_previews = True
+        self.workspace = None
+        self.graph_context = (None, None)
+        self.staged_graph_inputs = set()
+        self.root_annotations = root_annotations(options.artifact_repository)
+        self.driver = (
+            's3' if options.artifact_repository.startswith('s3:') else 'gcs'
+        )
+        self.bucket = reference(BUCKET)
+        self.prefix = reference(PREFIX)
+        self.uri = reference(ROOT)
 
     def _template_name(self, name):
         return f't{len(self.templates)}-{_name(name)[:45]}'
+
+    def workspace_value(self, value):
+        if '{{$.workspace_path}}' in value:
+            if self.workspace is None:
+                raise ValueError(
+                    'Workspace path requires PipelineConfig(workspace=...).'
+                )
+            value = value.replace('{{$.workspace_path}}', '/kfp-workspace')
+        return value
 
     def value(self, value, field='parameters', suffix=''):
         if isinstance(value, pipeline_channel.PipelineChannel):
@@ -101,12 +120,31 @@ class _Compiler:
             )
             return _ref(scope + '.' + field, value.name + suffix)
         if isinstance(value, str):
+            value = self.workspace_value(value)
             for (
                 channel
             ) in pipeline_channel.extract_pipeline_channels_from_string(value):
                 value = value.replace(str(channel), self.value(channel))
             return value
         return _json(value)
+
+    def staged_source(self, channel):
+        from kfp.compiler.argo_artifact_lists import staged_source
+
+        return staged_source(
+            channel, self.graph_context[1], self.staged_graph_inputs
+        )
+
+    def nullable_source(self, channel):
+        return argo_parameters.source_nullable(channel, *self.graph_context)
+
+    def argument_value(self, value, port, task, resolver=None):
+        return argo_parameters.bind(
+            value,
+            port,
+            resolver or self.value,
+            self.nullable_source,
+        )
 
     def compile_component(self, component_spec, task=None):
         graph = component_spec.implementation.graph
@@ -124,29 +162,77 @@ class _Compiler:
                     'Nested DAG retry/custom-cache/platform settings need native DAG lowering; configure the inner tasks instead.'
                 )
             inherited = self.disable_caching
+            previous_graph = self.graph_context
+            previous_staged = self.staged_graph_inputs
+            staged = (
+                {
+                    name
+                    for name, value in task.inputs.items()
+                    if self.staged_source(value)
+                }
+                if task
+                else set()
+            )
+            self.graph_context = (component_spec, graph)
+            self.staged_graph_inputs = staged
             self.disable_caching = inherited or bool(
                 task and not task._task_spec.enable_caching
             )
             try:
                 name = self.graph(component_spec, graph)
+                target = next(
+                    template
+                    for template in self.templates
+                    if template['name'] == name
+                )
+                annotations = target.setdefault('metadata', {}).setdefault(
+                    'annotations', {}
+                )
+                annotations['pipelines.kubeflow.org/input-parameter-types'] = (
+                    _json(
+                        {
+                            key: argo_parameters.input_kind(port)
+                            for key, port in (
+                                component_spec.inputs or {}
+                            ).items()
+                            if structures.spec_type_is_parameter(port.type)
+                        }
+                    )
+                )
+                returned = argo_parameters.output_mapping(graph)
+                annotations['pipelines.kubeflow.org/output-parameter-types'] = (
+                    _json(
+                        {
+                            key: (
+                                'Nullable'
+                                if self.nullable_source(returned.get(key))
+                                else ''
+                            )
+                            + _kind(port)
+                            for key, port in (
+                                component_spec.outputs or {}
+                            ).items()
+                            if structures.spec_type_is_parameter(port.type)
+                        }
+                    )
+                )
                 graph_display_name = (
                     task._task_spec.display_name if task else None
                 ) or graph.display_name
                 if graph_display_name:
-                    target = next(
-                        template
-                        for template in self.templates
-                        if template['name'] == name
-                    )
                     target.setdefault('metadata', {}).setdefault(
                         'annotations', {}
                     )['workflows.argoproj.io/display-name'] = graph_display_name
                 return name
             finally:
                 self.disable_caching = inherited
+                self.graph_context = previous_graph
+                self.staged_graph_inputs = previous_staged
         if component_spec.implementation.importer is not None:
-            raise ValueError(
-                'Importer components need a versioned native artifact source; replace the importer before compiling.'
+            from kfp.compiler.argo_importer import compile_importer
+
+            return compile_importer(
+                self, task or pipeline_task.PipelineTask(component_spec, {})
             )
         if task is None:
             task = pipeline_task.PipelineTask(component_spec, {})
@@ -165,7 +251,9 @@ class _Compiler:
         self.templates.append(template)
         inputs = {'parameters': [], 'artifacts': []}
         for name, port in (component_spec.inputs or {}).items():
-            self.input_port(inputs, name, port)
+            self.input_port(
+                inputs, name, port, staged=name in self.staged_graph_inputs
+            )
         if any(inputs.values()):
             template['inputs'] = {
                 key: value for key, value in inputs.items() if value
@@ -185,15 +273,24 @@ class _Compiler:
                     raise ValueError(
                         f'Task {task.name!r} is missing input {name!r}.'
                     )
-                if structures.spec_type_is_parameter(port.type):
+                if port.is_artifact_list or self.staged_source(value):
+                    scope = (
+                        f'tasks.{value.task_name}.outputs.parameters'
+                        if value.task_name
+                        else 'inputs.parameters'
+                    )
+                    arguments['parameters'].extend(
+                        {
+                            'name': prefix + name,
+                            'value': _ref(scope, prefix + value.name),
+                        }
+                        for prefix in ('kfp-uri-', 'kfp-meta-')
+                    )
+                elif structures.spec_type_is_parameter(port.type):
                     arguments['parameters'].append(
                         {
                             'name': name,
-                            'value': self.value(value)
-                            if isinstance(
-                                value, (str, pipeline_channel.PipelineChannel)
-                            )
-                            else serialize(value, _kind(port)),
+                            'value': self.argument_value(value, port, task),
                         }
                     )
                 else:
@@ -230,7 +327,24 @@ class _Compiler:
                                 'value': _ref(scope, prefix + value.name),
                             }
                         )
+            arguments['parameters'].extend(
+                {
+                    'name': name,
+                    'value': self.argument_value(
+                        channel,
+                        structures.InputSpec(type=channel.channel_type),
+                        task,
+                    ),
+                }
+                for name, channel in self.extra_inputs.get(id(task), [])
+            )
+            argo_continuation.arguments(task, arguments)
             deps = set(task.dependent_tasks)
+            deps.update(
+                channel.task_name
+                for _, channel in self.extra_inputs.get(id(task), [])
+                if channel.task_name
+            )
             deps.update(
                 channel.task_name
                 for channel in task.channel_inputs
@@ -244,11 +358,15 @@ class _Compiler:
                 dag_task['arguments'] = {
                     key: value for key, value in arguments.items() if value
                 }
-            if task._ignore_upstream_failure_tag:
-                raise ValueError(
-                    f'Task {task.name}: ignore_upstream_failure requires native exit/continuation lowering.'
-                )
             template['dag']['tasks'].append(dag_task)
+        argo_continuation.dependencies(
+            template['dag'],
+            {
+                task.name: task
+                for task in root.tasks
+                if task._ignore_upstream_failure_tag
+            },
+        )
         missing = (
             set().union(*dependencies.values()) - set(dependencies)
             if dependencies
@@ -277,11 +395,35 @@ class _Compiler:
                     raise ValueError(
                         'Pipeline outputs must reference task output channels.'
                     )
-                if structures.spec_type_is_parameter(port.type):
+                if port.is_artifact_list or self.staged_source(value):
+                    scope = (
+                        f'tasks.{value.task_name}.outputs.parameters'
+                        if value.task_name
+                        else 'inputs.parameters'
+                    )
+                    for prefix in ('kfp-uri-', 'kfp-meta-'):
+                        reference = _ref(scope, prefix + value.name)
+                        from kfp.compiler.argo_groups import _parameter_source
+
+                        template['outputs']['parameters'].append(
+                            {
+                                'name': prefix + name,
+                                'valueFrom': _parameter_source(reference),
+                            }
+                        )
+                elif structures.spec_type_is_parameter(port.type):
                     template['outputs']['parameters'].append(
                         {
                             'name': name,
-                            'valueFrom': {'parameter': self.value(value)},
+                            'valueFrom': (
+                                {'parameter': self.value(value)}
+                                if value.task_name
+                                else {
+                                    'expression': 'inputs.parameters['
+                                    + _json(value.name)
+                                    + ']'
+                                }
+                            ),
                         }
                     )
                 else:
@@ -319,15 +461,22 @@ class _Compiler:
             }
         return template['name']
 
-    def input_port(self, inputs, name, port):
-        if port.is_artifact_list:
-            raise ValueError(
-                f'Artifact list {name!r} needs native collection lowering; use individual typed artifacts.'
+    def input_port(self, inputs, name, port, allow_nullable=True, staged=False):
+        if port.is_artifact_list or staged:
+            inputs['parameters'].extend(
+                {'name': prefix + name} for prefix in ('kfp-uri-', 'kfp-meta-')
             )
+            return
         if structures.spec_type_is_parameter(port.type):
             item = {'name': name}
+            if port.type == 'TaskConfig':
+                item['default'] = '{}'
+            elif allow_nullable and argo_parameters.nullable(port):
+                item['default'] = 'null'
             if port.optional and port.default is not None:
-                item['default'] = serialize(port.default, _kind(port))
+                item['default'] = self.value(
+                    serialize(port.default, _kind(port))
+                )
             inputs['parameters'].append(item)
         else:
             inputs['artifacts'].extend(
@@ -350,11 +499,35 @@ class _Compiler:
             raise ValueError(
                 f'Component {task.name!r} has no supported container implementation.'
             )
-        if pipeline_channel.extract_pipeline_channels_from_string(
-            container.image
-        ):
-            raise ValueError(
-                'Dynamic images need native input binding; use a fixed image for this prototype.'
+        fresh_pvc = container.image == 'argostub/createpvc' and (
+            not isinstance(task.inputs.get('pvc_name'), str)
+            or not task.inputs.get('pvc_name')
+        )
+        if container.image in ('argostub/createpvc', 'argostub/deletepvc'):
+            operation = (
+                'create'
+                if container.image == 'argostub/createpvc'
+                else 'delete'
+            )
+            container = dataclasses.replace(
+                container,
+                image='python:3.11',
+                command=[
+                    'sh',
+                    '-c',
+                    'python -m pip install --quiet "kubernetes>=37.0.2" && exec python -c "$0" "$@"',
+                    Path(__file__).with_name('argo_pvc.py').read_text(),
+                ],
+                args=[
+                    operation,
+                    '{{inputs.parameters}}',
+                    '{{workflow.namespace}}',
+                ]
+                + (
+                    ["{{$.outputs.parameters['name'].output_file}}"]
+                    if operation == 'create'
+                    else []
+                ),
             )
         if any(
             name.startswith('KFP_DEBUG_PAUSE_')
@@ -366,10 +539,13 @@ class _Compiler:
         template = {'name': self._template_name(task.name)}
         self.templates.append(template)
         spec = task.component_spec
+        args = list(container.args or [])
+        python = '--executor_input' in args and '{{$}}' in args
         inputs = {'parameters': [], 'artifacts': []}
         outputs = {'parameters': [], 'artifacts': []}
         contract = {
             'schema': SCHEMA,
+            'artifactPreviews': self.artifact_previews,
             'outputDirectory': '/tmp/kfp/outputs',
             'inputs': {},
             'outputs': {},
@@ -380,11 +556,45 @@ class _Compiler:
                 port.optional
                 and port.default is None
                 and name not in task.inputs
-                and port.type != 'PipelineTaskFinalStatus'
+                and port.type not in ('PipelineTaskFinalStatus', 'TaskConfig')
             ):
                 continue
-            self.input_port(inputs, name, port)
-            declaration = {'type': _kind(port)}
+            staged = self.staged_source(task.inputs.get(name))
+            self.input_port(inputs, name, port, staged=staged)
+            declaration = {'type': argo_parameters.input_kind(port)}
+            if port.type == 'TaskConfig':
+                declaration['taskConfig'] = True
+            if port.is_artifact_list or staged:
+                if staged:
+                    replacements[
+                        f"{{{{$.inputs.artifacts['{name}'].path}}}}"
+                    ] = '__KFP_PATH_' + name + '__'
+                    replacements[
+                        f"{{{{$.inputs.artifacts['{name}'].uri}}}}"
+                    ] = _ref('inputs.parameters', 'kfp-uri-' + name)
+                replacements[f"{{{{$.inputs.artifacts['{name}']}}}}"] = (
+                    '__KFP_LIST_' + name + '__'
+                )
+                declaration['stagedArtifact' if staged else 'artifactList'] = (
+                    True
+                )
+                declaration['manifestPath'] = (
+                    '/tmp/kfp/artifact-lists/manifest.json'
+                )
+                contract['inputs'][name] = declaration
+                continue
+            if argo_continuation.optional_after_failure(task, name, port):
+                if '--executor_input' not in (container.args or []):
+                    raise ValueError(
+                        'Failure-tolerant container inputs need an explicit non-None default.'
+                    )
+                declaration['presenceParameter'] = 'kfp-present-' + name
+                inputs['parameters'].append(
+                    {'name': declaration['presenceParameter']}
+                )
+                for artifact in inputs['artifacts']:
+                    if artifact['name'] == name:
+                        artifact['optional'] = True
             if structures.spec_type_is_parameter(port.type):
                 declaration['optional'] = port.optional
                 supplied = task.inputs.get(name)
@@ -393,7 +603,11 @@ class _Compiler:
                         raise ValueError(
                             'Collected artifact lists require native multi-artifact staging.'
                         )
-                    declaration['collectionElementType'] = _kind(
+                    declaration['collectionElementType'] = (
+                        'Nullable'
+                        if self.nullable_source(supplied.output)
+                        else ''
+                    ) + _kind(
                         structures.InputSpec(type=supplied.output.channel_type)
                     )
                     consumer_groups = set()
@@ -409,8 +623,22 @@ class _Compiler:
                         depth += isinstance(parent, tasks_group.ParallelFor)
                         parent = parent.parent_task_group
                     declaration['collectionDepth'] = depth
-                replacements[f"{{{{$.inputs.parameters['{name}']}}}}"] = _ref(
-                    'inputs.parameters', name
+                value_reference = _ref('inputs.parameters', name)
+                if (
+                    not python
+                    and argo_parameters.nullable(port)
+                    and _kind(port) == 'String'
+                ):
+                    parameter = 'inputs.parameters[' + _json(name) + ']'
+                    value_reference = (
+                        '{{='
+                        + parameter
+                        + " == 'null' ? 'null' : fromJSON("
+                        + parameter
+                        + ')}}'
+                    )
+                replacements[f"{{{{$.inputs.parameters['{name}']}}}}"] = (
+                    value_reference
                 )
             else:
                 declaration.update(
@@ -435,16 +663,17 @@ class _Compiler:
                     f"{{{{$.outputs.parameters['{name}'].output_file}}}}"
                 ] = path
             else:
-                key = '/'.join(
-                    filter(
-                        None,
-                        [self.prefix, '{{workflow.uid}}', '{{pod.name}}', name],
-                    )
+                key = self.prefix + '/'.join(
+                    ['{{workflow.uid}}', '{{pod.name}}', name]
                 )
                 uri = self.uri + '/{run}/{task}/' + name
                 declaration.update(
                     metadataPath='/tmp/kfp/metadata/' + name + '.json',
                     identityPath='/tmp/kfp/identities/' + name + '.json',
+                    metadataUri=self.uri
+                    + '/{run}/{task}/metadata/'
+                    + name
+                    + '.json',
                     uri=uri,
                 )
                 outputs['artifacts'].extend(
@@ -453,25 +682,22 @@ class _Compiler:
                             'name': name,
                             'path': path,
                             'archive': {'none': {}},
-                            's3': {'bucket': self.bucket, 'key': key},
+                            self.driver: {'bucket': self.bucket, 'key': key},
                         },
                         {
                             'name': name + '-metadata',
                             'path': declaration['metadataPath'],
                             'archive': {'none': {}},
-                            's3': {
+                            self.driver: {
                                 'bucket': self.bucket,
-                                'key': '/'.join(
-                                    filter(
-                                        None,
-                                        [
-                                            self.prefix,
-                                            '{{workflow.uid}}',
-                                            '{{pod.name}}',
-                                            'metadata',
-                                            name + '.json',
-                                        ],
-                                    )
+                                'key': self.prefix
+                                + '/'.join(
+                                    [
+                                        '{{workflow.uid}}',
+                                        '{{pod.name}}',
+                                        'metadata',
+                                        name + '.json',
+                                    ]
                                 ),
                             },
                         },
@@ -480,18 +706,18 @@ class _Compiler:
                 outputs['parameters'].append(
                     {
                         'name': 'kfp-uri-' + name,
-                        'value': 's3://' + self.bucket + '/' + key,
+                        'value': self.uri
+                        + '/{{workflow.uid}}/{{pod.name}}/'
+                        + name,
                     }
                 )
                 replacements[f"{{{{$.outputs.artifacts['{name}'].path}}}}"] = (
                     path
                 )
                 replacements[f"{{{{$.outputs.artifacts['{name}'].uri}}}}"] = (
-                    's3://' + self.bucket + '/' + key
+                    self.uri + '/{{workflow.uid}}/{{pod.name}}/' + name
                 )
             contract['outputs'][name] = declaration
-        args = list(container.args or [])
-        python = '--executor_input' in args and '{{$}}' in args
         if python:
             index = args.index('--executor_input')
             if args[index + 1] != '{{$}}':
@@ -501,32 +727,54 @@ class _Compiler:
             args[index : index + 2] = [
                 '--argo_input',
                 _json(contract),
-                '--argo_parameters',
-                '{{inputs.parameters}}' if inputs['parameters'] else '[]',
+                *(
+                    [
+                        '--argo_parameters_file',
+                        '/tmp/kfp/artifact-list-inputs.json',
+                    ]
+                    if any(
+                        port.get('artifactList') or port.get('stagedArtifact')
+                        for port in contract['inputs'].values()
+                    )
+                    else [
+                        '--argo_parameters',
+                        '{{inputs.parameters}}'
+                        if inputs['parameters']
+                        else '[]',
+                    ]
+                ),
             ]
             outputs['artifacts'].append(
                 {
                     'name': 'kfp-metadata',
                     'path': '/tmp/kfp/outputs/metadata.json',
                     'archive': {'none': {}},
-                    's3': {
+                    self.driver: {
                         'bucket': self.bucket,
-                        'key': '/'.join(
-                            filter(
-                                None,
-                                [
-                                    self.prefix,
-                                    '{{workflow.uid}}',
-                                    '{{pod.name}}',
-                                    'kfp-metadata.json',
-                                ],
-                            )
-                        ),
+                        'key': self.prefix
+                        + '{{workflow.uid}}/{{pod.name}}/kfp-metadata.json',
                     },
                 }
             )
             for name, port in contract['outputs'].items():
                 if 'metadataPath' in port:
+                    if self.artifact_previews:
+                        original = next(
+                            item
+                            for item in outputs['artifacts']
+                            if item['name'] == name
+                        )
+                        location = dict(original[self.driver])
+                        location['key'] += '.kfp-preview.json'
+                        outputs['artifacts'].append(
+                            {
+                                'name': name + '-preview',
+                                'path': port['path'] + '.kfp-preview.json',
+                                'optional': True,
+                                'archive': {'none': {}},
+                                self.driver: location,
+                            }
+                        )
                     outputs['parameters'].append(
                         {
                             'name': 'kfp-meta-' + name,
@@ -534,14 +782,6 @@ class _Compiler:
                         }
                     )
         else:
-            if any(
-                structures.spec_type_is_parameter(port.type)
-                and _kind(port) != 'String'
-                for port in (spec.outputs or {}).values()
-            ):
-                raise ValueError(
-                    'Non-Python container scalar outputs must be String; use a Python component bridge for validated numeric, boolean, list or dict returns.'
-                )
             self.native_metadata(template, contract, outputs)
             # Container images need not contain Python or a shell. Use /tmp,
             # which already exists, rather than requiring a wrapper mkdir.
@@ -560,14 +800,13 @@ class _Compiler:
                         output['path'] = new
 
         def convert(value):
-            if not isinstance(value, str):
+            if isinstance(value, pipeline_channel.PipelineChannel):
+                value = str(value)
+            elif not isinstance(value, str):
                 value = _json(value)
-            if pipeline_channel.extract_pipeline_channels_from_string(value):
-                raise ValueError(
-                    f'Task {task.name}: dynamic execution configuration needs explicit native input binding.'
-                )
             for old, new in replacements.items():
                 value = value.replace(old, new)
+            value = self.workspace_value(value)
             if '{{$.' in value or '{{$}}' in value:
                 raise ValueError(
                     f'Task {task.name!r} contains an unsupported KFP placeholder; replace it with a supported parameter/path.'
@@ -621,6 +860,17 @@ class _Compiler:
                 for value in container.command
                 for part in command_elements(value)
             ]
+        if python:
+            from kfp.compiler.argo_bootstrap import portable_command
+
+            rendered['command'] = portable_command(
+                rendered.get('command'),
+                artifact_previews=self.artifact_previews
+                and any(
+                    'metadataPath' in port
+                    for port in contract['outputs'].values()
+                ),
+            )
         if args:
             rendered['args'] = [
                 part for value in args for part in command_elements(value)
@@ -633,6 +883,10 @@ class _Compiler:
             rendered['env'].extend(
                 [
                     {'name': 'KFP_ARGO_RUN_UID', 'value': '{{workflow.uid}}'},
+                    {
+                        'name': 'KFP_ARGO_WORKFLOW_NAME',
+                        'value': '{{workflow.name}}',
+                    },
                     {'name': 'KFP_ARGO_NODE_ID', 'value': '{{pod.name}}'},
                     {
                         'name': 'KFP_ARGO_NAMESPACE',
@@ -666,18 +920,101 @@ class _Compiler:
                     resources['accelerator_type']
                 ] = resources['accelerator_count']
         template['container'] = rendered
+        command_expressions = None
+        if not python and (
+            any(
+                argo_parameters.nullable(port)
+                for port in (spec.inputs or {}).values()
+            )
+            or (
+                any(
+                    port.is_artifact_list
+                    for port in (spec.inputs or {}).values()
+                )
+                and 'IfPresent' in _json([container.command, args])
+            )
+        ):
+            from kfp.compiler.argo_commands import arguments
+
+            presence = {name: True for name in (spec.outputs or {})}
+            for name, port in (spec.inputs or {}).items():
+                if name not in contract['inputs']:
+                    presence[name] = False
+                elif port.is_artifact_list:
+                    presence[name] = (
+                        'len(fromJSON(inputs.parameters['
+                        + _json('kfp-meta-' + name)
+                        + '])) > 0'
+                    )
+                elif argo_parameters.nullable(port):
+                    presence[name] = (
+                        'inputs.parameters[' + _json(name) + "] != 'null'"
+                    )
+                else:
+                    presence[name] = True
+            bindings = dict(replacements)
+            if self.workspace is not None:
+                bindings['{{$.workspace_path}}'] = '/kfp-workspace'
+            command_expressions = {
+                'args': arguments(args or [], bindings, presence)
+            }
+            if container.command:
+                command_expressions['command'] = arguments(
+                    container.command, bindings, presence
+                )
+        if self.workspace is not None:
+            declared = {port['name'] for port in inputs['parameters']}
+            strings = [
+                name
+                for name, port in (spec.inputs or {}).items()
+                if name in declared
+                and structures.spec_type_is_parameter(port.type)
+                and _kind(port) == 'String'
+            ]
+            inputs['parameters'].append(
+                {'name': 'kfp-workspace-strings', 'default': _json(strings)}
+            )
         for key, ports in [('inputs', inputs), ('outputs', outputs)]:
             if any(ports.values()):
                 template[key] = {
                     name: values for name, values in ports.items() if values
                 }
         self.platform(task, template)
-        if pipeline_channel.extract_pipeline_channels_from_string(
-            _json(template)
-        ):
-            raise ValueError(
-                f'Task {task.name!r} has dynamic execution configuration without native input binding; use fixed values for this prototype.'
+        from kfp.compiler.argo_task_config import project
+
+        project(template, spec, workspace=self.workspace is not None)
+        self.bind_configuration(task, template)
+        lists = {
+            name: {'type': port['type'], 'single': True}
+            if port.get('stagedArtifact')
+            else port['type']
+            for name, port in contract['inputs'].items()
+            if port.get('artifactList') or port.get('stagedArtifact')
+        }
+        if lists:
+            from kfp.compiler.argo_artifact_lists import add_staging
+
+            add_staging(
+                template,
+                lists,
+                command_expressions=command_expressions,
+                metadata_location=None
+                if python
+                else {
+                    self.driver: {
+                        'bucket': self.bucket,
+                        'key': self.prefix
+                        + '{{workflow.uid}}/{{pod.name}}/kfp-metadata.json',
+                    }
+                },
             )
+        from kfp.compiler.argo_structured import finalize
+
+        finalize(
+            template,
+            spec,
+            container_expressions=None if lists else command_expressions,
+        )
         retry = task._task_spec.retry_policy
         if retry:
             count = (
@@ -705,60 +1042,158 @@ class _Compiler:
                 )
             template['retryStrategy'] = {
                 'limit': str(count),
-                'retryPolicy': retry.policy or 'OnError',
+                # Direct component exits are Failed, not KFP driver errors.
+                'retryPolicy': retry.policy or 'Always',
                 'backoff': {
                     'duration': f'{structures.convert_duration_to_seconds(retry.backoff_duration or "0s")}s',
                     'factor': str(int(factor)),
                     'maxDuration': f'{structures.convert_duration_to_seconds(retry.backoff_max_duration or "3600s")}s',
                 },
             }
-        if task._task_spec.enable_caching and not self.disable_caching:
-            external = set(task.platform_config.get('kubernetes', {})) & {
-                'secretAsEnv',
-                'configMapAsEnv',
-                'secretAsVolume',
-                'configMapAsVolume',
-                'pvcMount',
-            }
-            if external:
-                raise ValueError(
-                    f'Task {task.name!r} reads mutable external configuration {sorted(external)}; disable caching or bake versioned inputs into the image/artifact contract.'
-                )
-            if any(
-                'PIP_DISABLE_PIP_VERSION_CHECK=1' in command
-                for command in (container.command or [])
-            ):
-                raise ValueError(
-                    f'Task {task.name!r} installs packages at execution time; bake them into an immutable image or disable caching.'
-                )
-            identity = self.options.image_digests.get(
-                container.image, container.image.split('@')[-1]
+        annotations = template.setdefault('metadata', {}).setdefault(
+            'annotations', {}
+        )
+        annotations['pipelines.kubeflow.org/component-type'] = 'RUNTIME'
+        for direction, ports in [
+            ('input', spec.inputs),
+            ('output', spec.outputs),
+        ]:
+            annotations[
+                'pipelines.kubeflow.org/' + direction + '-parameter-types'
+            ] = _json(
+                {
+                    name: argo_parameters.input_kind(port)
+                    if direction == 'input'
+                    else _kind(port)
+                    for name, port in (ports or {}).items()
+                    if structures.spec_type_is_parameter(port.type)
+                }
             )
-            if not re.fullmatch(r'sha256:[0-9a-f]{64}', identity):
-                raise ValueError(
-                    f'Caching {task.name!r} requires an immutable image: pin {container.image!r} by digest, provide Compiler(image_digests=...), or call set_caching_options(False).'
-                )
+        scalar_types = {
+            name: _kind(port)
+            for name, port in (spec.outputs or {}).items()
+            if structures.spec_type_is_parameter(port.type)
+        }
+        validate_scalars = not python and any(
+            kind != 'String' for kind in scalar_types.values()
+        )
+        if validate_scalars:
+            template.setdefault('metadata', {}).setdefault('annotations', {})[
+                'pipelines.kubeflow.org/validated-scalars'
+            ] = _json(scalar_types)
+        if task._task_spec.cache_key:
+            # Stock custom keys intentionally override automatic execution/input identity.
+            key = hashlib.sha256(
+                (
+                    task.component_spec.name + '\0' + task._task_spec.cache_key
+                ).encode()
+            ).hexdigest()
+        else:
+            # Match stock opt-out caching. Version mutable dependencies or disable
+            # caching when their freshness matters; do not reject ordinary pipelines.
             fingerprint = hashlib.sha256(
                 _json(
                     {
-                        'template': template,
-                        'image': identity,
-                        'cache_key': task._task_spec.cache_key,
+                        'pipeline': self.pipeline_name,
+                        'template': {
+                            key: value
+                            for key, value in template.items()
+                            if key != 'name'
+                        },
                     }
                 ).encode()
             ).hexdigest()
-            template['memoize'] = {
-                'key': "{{=sprig.sha256sum('"
+            if self.workspace is not None:
+                from kfp.compiler.argo_workspace import (
+                    NEEDS_WORKSPACE as workspace_used,
+                )
+            key = (
+                "{{=sprig.sha256sum('"
                 + fingerprint
-                + "' + toJson(inputs.parameters))}}",
-                'maxAge': '1h',
-                'cache': {'configMap': {'name': self.options.cache_config_map}},
-            }
+                + "'"
+                + (' + workflow.uid + node.name' if fresh_pvc else '')
+                + (
+                    ' + (' + workspace_used + " ? workflow.uid : '')"
+                    if self.workspace is not None
+                    else ''
+                )
+                + ' + toJson(inputs.parameters))}}'
+            )
+        memoize = {
+            # Required by the CRD; empty retains unbounded stock caching.
+            'maxAge': '',
+            'key': key,
+            'cache': {'configMap': {'name': self.options.cache_config_map}},
+        }
+        # Submission-time overrides must also work when compilation disabled caching.
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'pipelines.kubeflow.org/cache-policy'
+        ] = _json({'component': task.component_spec.name, 'memoize': memoize})
+        if task._task_spec.enable_caching and not self.disable_caching:
+            template['memoize'] = memoize
         if task._task_spec.display_name:
             template.setdefault('metadata', {}).setdefault('annotations', {})[
                 'workflows.argoproj.io/display-name'
             ] = task._task_spec.display_name
+        if validate_scalars:
+            from kfp.compiler.argo_scalars import wrap
+
+            return wrap(self, template, scalar_types)
         return template['name']
+
+    def bind_configuration(self, task, template):
+        bindings = self.extra_inputs[id(task)] = []
+
+        def bind(value):
+            if isinstance(value, pipeline_channel.PipelineChannel):
+                value = str(value)
+            if isinstance(value, str):
+                for (
+                    channel
+                ) in pipeline_channel.extract_pipeline_channels_from_string(
+                    value
+                ):
+                    existing = next(
+                        (
+                            name
+                            for name, previous in bindings
+                            if previous.pattern == channel.pattern
+                        ),
+                        None,
+                    )
+                    name = existing or f'kfp-config-{len(bindings)}'
+                    if existing is None:
+                        bindings.append((name, channel))
+                    value = value.replace(
+                        str(channel), _ref('inputs.parameters', name)
+                    )
+                return value
+            if isinstance(value, dict):
+                return {bind(key): bind(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [bind(item) for item in value]
+            return value
+
+        updated = bind(template)
+        template.clear()
+        template.update(updated)
+        if bindings:
+            template.setdefault('inputs', {}).setdefault(
+                'parameters', []
+            ).extend({'name': name} for name, _ in bindings)
+        resources = template['container'].get('resources')
+        if resources and '{{inputs.parameters.kfp-config-' in _json(resources):
+            # Kubernetes quantities are parsed before Argo substitutes container fields.
+            patch = json.loads(template.get('podSpecPatch', '{}'))
+            containers = patch.setdefault('containers', [])
+            main = next(
+                (entry for entry in containers if entry['name'] == 'main'), None
+            )
+            if main is None:
+                main = {'name': 'main'}
+                containers.append(main)
+            main['resources'] = template['container'].pop('resources')
+            template['podSpecPatch'] = _json(patch)
 
     def native_metadata(self, template, contract, outputs):
         """Emit small static metadata as parameters; Argo stages raw
@@ -793,7 +1228,9 @@ class _Compiler:
             if 'metadataPath' not in port:
                 continue
             uri = (
-                _json(self.uri + '/')
+                "fromJSON(workflow.annotations.json)['"
+                + ROOT
+                + "'] + '/'"
                 + ' + workflow.uid + "/" + pod.name + '
                 + _json('/' + name)
             )
@@ -837,6 +1274,8 @@ class _Compiler:
             parameter['value'] = '{{=toJson(' + value + ')}}'
 
     def platform(self, task, template):
+        from kfp.compiler import argo_kubernetes
+
         if set(task.platform_config) - {'kubernetes'}:
             raise ValueError(
                 'Only kfp-kubernetes task settings have native lowering; remove unsupported platform settings.'
@@ -852,11 +1291,27 @@ class _Compiler:
             if source in config:
                 value = config.pop(source)
                 if source == 'nodeSelector':
-                    if set(value) - {'labels'}:
-                        raise ValueError(
-                            'Dynamic node selectors are not yet supported; use literal labels.'
+                    if set(value) - {'labels', 'nodeSelectorJson'}:
+                        raise ValueError('Unknown node selector setting.')
+                    value = (
+                        argo_kubernetes.structured(
+                            task, value['nodeSelectorJson']
                         )
-                    value = value.get('labels', {})
+                        if 'nodeSelectorJson' in value
+                        else value.get('labels', {})
+                    )
+                if source == 'tolerations':
+                    value = [
+                        argo_kubernetes.structured(task, item['tolerationJson'])
+                        if item.get('tolerationJson')
+                        else dict(item)
+                        for item in value
+                    ]
+                    for item in value:
+                        if 'tolerationSeconds' in item:
+                            item['tolerationSeconds'] = int(
+                                item['tolerationSeconds']
+                            )
                 if source == 'activeDeadlineSeconds':
                     value = int(value)
                 template[destination] = value
@@ -867,14 +1322,11 @@ class _Compiler:
             ('configMapAsEnv', 'configMapKeyRef', 'configMap'),
         ]:
             for declaration in config.pop(source, []):
-                dynamic = declaration.get(field + 'NameParameter', {}).get(
-                    'runtimeValue', {}
+                name = argo_kubernetes.parameter(
+                    task,
+                    declaration.get(field + 'NameParameter', {}),
+                    declaration.get(field + 'Name'),
                 )
-                if dynamic and 'constant' not in dynamic:
-                    raise ValueError(
-                        'Dynamic secret/config-map names need native parameter lowering; use a literal name.'
-                    )
-                name = dynamic.get('constant', declaration.get(field + 'Name'))
                 for entry in declaration['keyToEnv']:
                     container.setdefault('env', []).append(
                         {
@@ -891,15 +1343,39 @@ class _Compiler:
                         }
                     )
         for index, mount in enumerate(config.pop('pvcMount', [])):
-            name = (
-                mount.get('pvcNameParameter', {})
-                .get('runtimeValue', {})
-                .get('constant', mount.get('constant'))
+            parameter = mount.get('pvcNameParameter', {})
+            name = parameter.get('runtimeValue', {}).get(
+                'constant', mount.get('constant')
             )
-            if not name:
-                raise ValueError(
-                    'Dynamic PVC names are not yet supported; use a literal existing PVC name.'
+            if name is None:
+                source = parameter.get(
+                    'taskOutputParameter', mount.get('taskOutputParameter', {})
                 )
+                channel = next(
+                    (
+                        channel
+                        for channel in task.channel_inputs
+                        if (
+                            source
+                            and channel.task_name == source.get('producerTask')
+                            and channel.name == source.get('outputParameterKey')
+                        )
+                        or (
+                            not source
+                            and channel.full_name
+                            == parameter.get(
+                                'componentInputParameter',
+                                mount.get('componentInputParameter'),
+                            )
+                        )
+                    ),
+                    None,
+                )
+                if channel is None:
+                    raise ValueError(
+                        'PVC binding does not reference a registered pipeline parameter.'
+                    )
+                name = str(channel)
             volume = f'kfp-pvc-{index}'
             template.setdefault('volumes', []).append(
                 {'name': volume, 'persistentVolumeClaim': {'claimName': name}}
@@ -915,6 +1391,7 @@ class _Compiler:
                     ),
                 }
             )
+        argo_kubernetes.lower(task, template, config)
         if config:
             raise ValueError(
                 f'Kubernetes settings have no native lowering yet: {sorted(config)}. Remove them or add an explicit mapping.'
@@ -932,7 +1409,14 @@ def compile_argo(
         raise ValueError(
             'Specify schedule only when resource_kind="CronWorkflow".'
         )
-    builder = _Compiler(options)
+    graph = component.component_spec.implementation.graph
+    if isinstance(graph, structures.CapturedGraph) and graph.pipeline_root:
+        options = copy.copy(options)
+        options.artifact_repository = graph.pipeline_root
+    builder = _Compiler(options, pipeline_name or component.name)
+    if isinstance(graph, structures.CapturedGraph) and graph.config:
+        builder.artifact_previews = graph.config.artifact_previews
+        builder.workspace = graph.config.workspace
     entrypoint = builder.compile_component(component.component_spec)
     arguments = []
     unknown = set(parameters) - set(component.component_spec.inputs or {})
@@ -945,8 +1429,18 @@ def compile_argo(
             )
         declaration = {'name': name}
         value = parameters.get(name, port.default)
-        if value is not None:
-            declaration['value'] = serialize(value, _kind(port))
+        if value is not None or argo_parameters.nullable(port):
+            declaration['value'] = (
+                serialize(value, argo_parameters.input_kind(port))
+                if kfp.TYPE_CHECK
+                else _json(value)
+                if argo_parameters.nullable(port)
+                else value
+                if _kind(port) == 'String' and isinstance(value, str)
+                else _json(value)
+            )
+        if isinstance(declaration.get('value'), str):
+            declaration['value'] = builder.value(declaration['value'])
         arguments.append(declaration)
     spec = {
         'entrypoint': entrypoint,
@@ -956,17 +1450,11 @@ def compile_argo(
     }
     graph = component.component_spec.implementation.graph
     if isinstance(graph, structures.CapturedGraph):
-        if graph.pipeline_root and graph.pipeline_root.rstrip(
-            '/'
-        ) != options.artifact_repository.rstrip('/'):
-            raise ValueError(
-                'pipeline_root must match Compiler(artifact_repository=...) so recorded artifact URIs match storage.'
-            )
         if graph.config:
             if graph.config.workspace:
-                raise ValueError(
-                    'Pipeline workspaces need native volumeClaimTemplates; use explicit PVC mounts until this mapping is implemented.'
-                )
+                from kfp.compiler.argo_workspace import configure
+
+                configure(spec, graph.config.workspace)
             for source, destination in [
                 ('ttl_seconds_after_finished', 'secondsAfterCompletion'),
                 ('ttl_seconds_after_success', 'secondsAfterSuccess'),
@@ -996,6 +1484,17 @@ def compile_argo(
             or component.name,
             'pipelines.kubeflow.org/description': component.description or '',
             'pipelines.kubeflow.org/contract': SCHEMA,
+            'pipelines.kubeflow.org/storage-state': 'AVAILABLE',
+            'pipelines.kubeflow.org/parameter-types': _json(
+                {
+                    name: argo_parameters.input_kind(port)
+                    for name, port in (
+                        component.component_spec.inputs or {}
+                    ).items()
+                    if structures.spec_type_is_parameter(port.type)
+                }
+            ),
+            **builder.root_annotations,
         },
     }
     if kind == 'Workflow':
@@ -1003,13 +1502,25 @@ def compile_argo(
     else:
         metadata['name'] = name + '-' + version
     if kind == 'WorkflowTemplate':
-        spec['workflowMetadata'] = {'labels': dict(metadata['labels'])}
+        spec['workflowMetadata'] = {
+            'labels': dict(metadata['labels']),
+            'annotations': {
+                'pipelines.kubeflow.org/storage-state': 'AVAILABLE',
+                **builder.root_annotations,
+            },
+        }
     if kind == 'CronWorkflow':
         spec = {
             'schedules': [schedule],
             'suspend': True,
             'workflowSpec': spec,
-            'workflowMetadata': {'labels': metadata['labels']},
+            'workflowMetadata': {
+                'labels': metadata['labels'],
+                'annotations': {
+                    'pipelines.kubeflow.org/storage-state': 'AVAILABLE',
+                    **builder.root_annotations,
+                },
+            },
         }
     return {
         'apiVersion': 'argoproj.io/v1alpha1',

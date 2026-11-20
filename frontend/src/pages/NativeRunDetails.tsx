@@ -20,9 +20,12 @@ import { NativeArtifactContent } from './NativeInspectors';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { getArgoMetadata, hasArgoMetadata, type ArgoWorkflow, type ArgoNode } from 'src/lib/Argo';
 import { argoRunView } from 'src/lib/ArgoRunGraph';
+import { displayParameters } from 'src/lib/ArgoComponents';
 import { workflowAction } from 'src/lib/ArgoResources';
 import {
   archiveRun,
+  restoreRun,
+  isRunArchived,
   getUiRun,
   displayName,
   runState,
@@ -51,16 +54,7 @@ export default function NativeRunDetails() {
   });
   const run = workflow.data;
   const graph = useMemo(() => (run ? argoRunView(run) : undefined), [run]);
-  const selected =
-    selection ||
-    (search.get('task')
-      ? {
-          layers: ['root'],
-          element: graph?.elements.find(
-            (element) => element.id === getTaskNodeKey(search.get('task')!),
-          )!,
-        }
-      : null);
+  const selected = selection || (search.get('task') ? graph?.findTask(search.get('task')!) : null);
   const details = selected?.element && graph?.describe(selected.element.id);
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ['native', namespace] });
@@ -74,7 +68,7 @@ export default function NativeRunDetails() {
     }
   };
   const terminal = !!run && hasFinishedV2(runState(run));
-  const tasks: TaskTimingView[] = Object.values(run?.status?.nodes || {}).map((node) => ({
+  const tasks: TaskTimingView[] = (graph?.nodes || []).map((node) => ({
     task_id: node.id,
     name: node.name,
     display_name: node.displayName,
@@ -115,20 +109,21 @@ export default function NativeRunDetails() {
           { id: 'terminateRunBtn', disabled: !run?.live || terminal },
         ),
         archive: action(
-          'Archive',
+          run && isRunArchived(run) ? 'Restore' : 'Archive',
           () =>
             run &&
             confirm({
-              title: 'Archive this run?',
+              title: isRunArchived(run) ? 'Restore this run?' : 'Archive this run?',
               content:
-                'Remove the live workflow and its pods after verifying the durable Argo archive. Artifacts remain available.',
+                'Change where this run appears in the run list. Its workflow, logs and artifacts are preserved.',
               action: async () => {
-                await archiveRun(run);
+                if (isRunArchived(run)) await restoreRun(run);
+                else await archiveRun(run);
                 await refresh();
-                navigate('/archive/runs');
+                navigate(isRunArchived(run) ? '/runs' : '/archive/runs');
               },
             }),
-          { id: 'archiveRunsBtn', disabled: !terminal || !run?.live },
+          { id: 'archiveRunsBtn', disabled: !terminal },
         ),
         refresh: action('Refresh', () => refresh().catch(fail), { id: 'refreshBtn' }),
       }}
@@ -275,7 +270,7 @@ function Task({
   const logs = useQuery({
     queryKey: ['native', run.metadata.namespace, run.metadata.uid, node.id, 'logs'],
     queryFn: ({ signal }) => taskLogs(run, node, signal),
-    enabled: !artifactPort && tab === 2 && !node.memoizationStatus?.hit,
+    enabled: !artifactPort && tab === 2 && !node.memoizationStatus?.hit && node.type !== 'Importer',
     retry: false,
   });
   if (artifactPort) return <NativeArtifactContent run={run} node={node} port={artifactPort} />;
@@ -315,17 +310,10 @@ function Task({
       {tab === 0 && (
         <div className={classes(commonCss.scrollContainer, padding(20))}>
           {metadata.error && <Alert severity='error'>{metadata.error.message}</Alert>}
-          <DetailsTable
-            title='Input parameters'
-            fields={(node.inputs?.parameters || [])
-              .filter((parameter) => !/^(kfp-meta-|kfp-uri-|kfp-metadata$)/.test(parameter.name))
-              .map((parameter) => [parameter.name, parameter.value || ''])}
-          />
+          <DetailsTable title='Input parameters' fields={displayParameters(run, node, 'inputs')} />
           <DetailsTable
             title='Output parameters'
-            fields={(node.outputs?.parameters || [])
-              .filter((parameter) => !/^(kfp-meta-|kfp-uri-|kfp-metadata$)/.test(parameter.name))
-              .map((parameter) => [parameter.name, parameter.value || ''])}
+            fields={displayParameters(run, node, 'outputs')}
           />
           <DetailsTable
             title='Input artifacts'
@@ -385,7 +373,11 @@ function Task({
       )}
       {tab === 2 && (
         <div className={commonCss.page}>
-          {node.memoizationStatus?.hit ? (
+          {node.type === 'Importer' ? (
+            <Alert severity='info'>
+              This importer resolves an artifact reference without an execution pod.
+            </Alert>
+          ) : node.memoizationStatus?.hit ? (
             <Alert severity='info'>
               This task reused cached outputs and did not create a new pod. Its artifact lineage
               links to the original producer.

@@ -1,4 +1,28 @@
-### Direction
+### Inventory and commit checkpoint — 2026-11-20
+
+The user requested a comprehensive inventory of confirmed incompatibilities and
+uncertain compatibility, followed by a commit of all current project changes.
+Implementation is paused. `docs/compatibility.md` is the authoritative inventory;
+`docs/sdk-compatibility.md` retains the contract and historical evidence. The
+checkpoint includes unverified and incomplete work explicitly; it is not a full
+compatibility or deployment-completion claim. No push or new deployment is part
+of this closeout.
+
+### Earlier compatibility requirement — 2026-11-19
+
+Preserve the stock SDK and UI user-facing contract while changing compiled output
+to native Argo manifests. Keep `kfp.Client`, decorators, defaults (including caching
+on), return objects and user workflows. Server wire compatibility is not required.
+Local execution remains explicitly excluded. See `docs/sdk-compatibility.md` for
+the target and verification standard; this supersedes the earlier bounded-scope
+choices below. The feature-gap inventory is a work list, not acceptance of removals.
+
+Work is in progress. Frozen baseline calling-convention checks initially expose
+missing Client interfaces and a shifted PipelineTask constructor argument. New
+unchanged-authoring regressions expose the prototype's cache opt-in restrictions.
+Do not treat the retained native test count as full SDK compatibility evidence.
+
+### Earlier direction
 
 Keep **KFP’s Python authoring experience and UI**, but make Argo the execution model and source of truth.
 
@@ -42,7 +66,7 @@ Separate three promises:
 |---|---|
 | Pipeline Python source | Existing decorators, components, typed artifacts, and task configuration work wherever their semantics can be preserved. |
 | Compiled output | Intentionally changes: native Argo YAML rather than KFP IR. |
-| KFP client/server interfaces | Not a compatibility goal initially. Use Kubernetes and Argo clients for submission and management. |
+| KFP SDK client / server wire interfaces | Preserve the SDK client facade; use native Kubernetes/Argo APIs behind it. The old server wire protocol is not required. |
 
 Keep the familiar entrypoint:
 

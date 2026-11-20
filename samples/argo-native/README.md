@@ -138,9 +138,11 @@ this boundary.
 ## Runtime and cache contract
 
 `--argo_input` is static `kfp-argo/v1` port configuration. Argo supplies parameter
-values separately with `--argo_parameters '{{inputs.parameters}}'`; user strings
-cannot alter that JSON contract. The bridge invokes KFP's Python `Executor` against
-staged paths and writes scalar outputs and metadata files for Argo to capture.
+values separately with `--argo_parameters '{{inputs.parameters}}'`; artifact-list
+consumers use a native raw input file to avoid process-argument size limits. User
+strings cannot alter the static contract. The embedded bridge invokes KFP's Python
+`Executor` against staged paths, including ordinary upstream SDK installations, and
+writes scalar outputs and metadata files for Argo to capture.
 
 Artifact payloads have actual S3 identities containing the workflow UID and pod
 name. Full Python metadata and task summaries are Argo artifacts, with distinct
@@ -150,12 +152,21 @@ whole metadata object without putting it in workflow parameters. Native containe
 components can supply a small static metadata companion inline; missing required
 Python metadata fails instead of inventing empty metadata.
 
-Cache keys include the component/template implementation, immutable image identity,
-execution configuration, resolved parameter strings and input artifact identities.
-Cached metadata retains the original producer. Mutable secret/config-map/PVC inputs
-and runtime package installation require caching to be disabled. The prototype
-uses a one-hour ConfigMap cache; retained artifact data must outlive it. Do not
-reuse a cache after deleting its object-store data.
+Automatic cache keys include pipeline/component identity, execution configuration,
+resolved parameter strings and artifact identities. Caching is enabled by default;
+ordinary image tags, runtime installations and external Kubernetes settings are
+accepted. Version mutable dependencies or explicitly disable caching when freshness
+matters. Custom keys intentionally override automatic input identity. There is no
+arbitrary one-hour expiry; cached metadata retains its original producer, and cached
+artifact data must remain available.
+
+Python artifact-list consumers add a staging init-container, not another pod. It
+uses Argo's installed downloader and receives repository Secret mounts separately
+from the user container. SDK/UI submission binds namespace repository configuration
+without reading Secret values or altering stored versions. Large-template offload
+requires the controller's ConfigMap-create Role; component service accounts remain
+unchanged. See [SDK compatibility](../../docs/sdk-compatibility.md) for staging
+coverage and remaining provider/runtime limits.
 
 ## Verification
 
@@ -221,16 +232,19 @@ browser traces containing authorization headers.
 
 ## Scope and remaining compatibility limits
 
-This is a tested prototype, not full upstream SDK compatibility. Unsupported
-constructs fail compilation instead of emitting KFP IR or invoking an in-process
-runner. Current limits include importers/root artifact arguments, artifact-list
-fan-in, some nested collection/conditional merge patterns, workspaces, dynamic
-execution configuration, task-config passthroughs and unmapped Kubernetes/cloud
-extensions. Non-Python container scalar outputs currently require `String`; use
-the Python bridge for validated numeric/boolean/list/dict returns. Task-final-status
-verification covers success and failure, not every legacy cancellation/error-code
-semantic. Component images must contain this checkout's runtime or install its
-wheel, not an unmodified upstream KFP runtime.
+Compatibility implementation is still in progress. Native importers, scalar/artifact
+OneOf, Python and explicit-command container artifact-list consumers, typed container
+outputs, nullable parameters, explicit-spec workspaces, TaskConfig projection and
+native Kubernetes settings now have execution evidence. Remaining gaps include root
+artifact arguments, workspace deployment defaults/importer downloads, entrypoint-only
+list consumers, artifact-list iteration, some continuation/nested-setting combinations
+and unverified Kubernetes/cloud extensions. Task-final-status verification covers success and failure, not every
+legacy cancellation/error-code semantic. The embedded bridge preserves ordinary
+component images and has been tested with unmodified PyPI KFP 2.17.0.
+
+The [working inventory](../../docs/compatibility.md) distinguishes accepted changes,
+implemented behavior, unfinished adapters and unverified deployment prerequisites;
+none of those test results establish complete upstream SDK/UI compatibility.
 
 The KFP backend, REST clients, old pipeline IR compiler, Node server and their
 integration/serialization tests have been retired. Stock presentation components

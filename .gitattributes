@@ -1,5 +1,6 @@
 sdk/python/kfp/cli/viewer_assets/** linguist-generated -whitespace
 sdk/python/kfp/pipeline_spec/*_pb2.py linguist-generated
+sdk/python/kfp/server_api/** linguist-generated
 sdk/python/kfp/kubernetes/*_pb2.py linguist-generated
 frontend/package-lock.json linguist-generated
 uv.lock linguist-generated

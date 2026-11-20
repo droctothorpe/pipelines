@@ -1,6 +1,8 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -8,10 +10,38 @@ import yaml
 from click.testing import CliRunner
 
 from kfp.cli import visualization
-from kfp.cli.compile_ import compile_
+from kfp.cli.compile_ import collect_pipeline_or_component_func, compile_
 from kfp.dsl.pipeline_context import Pipeline
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.mark.parametrize('function_name', [None, 'step'])
+def test_cli_loads_exact_file_without_module_name_collisions(
+    tmp_path, monkeypatch, function_name
+):
+    cached = types.ModuleType('components')
+    monkeypatch.setitem(sys.modules, 'components', cached)
+    before = list(sys.path)
+    for directory, image in [('one', 'image-one'), ('two', 'image-two')]:
+        path = tmp_path / directory / 'components.py'
+        path.parent.mkdir()
+        path.write_text(
+            'from kfp import dsl\n@dsl.container_component\ndef step():\n    return dsl.ContainerSpec(image='
+            + repr(image)
+            + ', command=["true"])\n'
+        )
+        loaded = collect_pipeline_or_component_func(str(path), function_name)
+        assert loaded.component_spec.implementation.container.image == image
+    path.write_text(path.read_text().replace('image-two', 'image-new'))
+    assert (
+        collect_pipeline_or_component_func(
+            str(path), function_name
+        ).component_spec.implementation.container.image
+        == 'image-new'
+    )
+    assert sys.modules['components'] is cached
+    assert sys.path == before
 
 
 def test_cli_native_resource_options(tmp_path):

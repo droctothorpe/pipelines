@@ -67,6 +67,46 @@ it('submits native workflows with version and experiment labels', async () => {
   expect(body.workflow.metadata.labels['pipelines.kubeflow.org/experiment']).toBe('experiment-a');
 });
 
+it.each(['s3://new-bucket/a/b', 'gs://new-bucket/a/b'])(
+  'applies a custom pipeline root without changing the version: %s',
+  async (root) => {
+    mock();
+    const compiled = structuredClone(version);
+    compiled.metadata.annotations = {
+      'pipelines.kubeflow.org/artifact-root-binding': 'v1',
+      'pipelines.kubeflow.org/artifact-repository': 's3://old-bucket',
+    };
+    compiled.spec = {
+      entrypoint: 'root',
+      templates: [
+        {
+          name: 'root',
+          outputs: {
+            artifacts: [
+              {
+                name: 'data',
+                s3: {
+                  bucket: '{{workflow.annotations.pipelines.kubeflow.org/artifact-bucket}}',
+                  key: '{{workflow.annotations.pipelines.kubeflow.org/artifact-key-prefix}}data',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const before = JSON.stringify(compiled);
+    await submitRun('team', compiled, {}, '', 'Custom root', '', '', root);
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string).workflow;
+    expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-repository']).toBe(root);
+    expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-bucket']).toBe('new-bucket');
+    expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-key-prefix']).toBe('a/b/');
+    if (root.startsWith('gs:'))
+      expect(body.spec.templates[0].outputs.artifacts[0].gcs).toBeDefined();
+    expect(JSON.stringify(compiled)).toBe(before);
+  },
+);
+
 it('deletes only the experiment ConfigMap, using its UID precondition', async () => {
   mock();
   await expect(
