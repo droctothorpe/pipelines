@@ -578,6 +578,129 @@ def test_metadata_port_paths_and_storage_keys_do_not_collide(tmp_path):
     assert identity['valueFrom']['path'] == '/tmp/kfp/identities/metadata.json'
 
 
+def _pods(path):
+    return {
+        t['name']: t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'container' in t
+    }
+
+
+def test_nested_pipeline_retry_is_accepted_and_ignored_like_stock(tmp_path):
+    """C01: stock compiles a retry policy on a nested pipeline task but never
+    applies it (its compiler neutralizes DAG retries). The native compiler
+    used to reject it; it now warns and compiles, leaving inner retries alone."""
+
+    @dsl.pipeline(name='retry-inner')
+    def inner(value: int) -> int:
+        return identity(value=value).set_retry(1).output
+
+    @dsl.pipeline(name='retry-outer')
+    def outer(value: int = 1):
+        inner(value=value).set_retry(3)
+
+    path = tmp_path / 'retry.yaml'
+    with pytest.warns(
+        UserWarning, match='Retry policy on nested pipeline task'
+    ):
+        compiler.Compiler().compile(outer, str(path), resource_kind='Workflow')
+    manifest = yaml.safe_load(path.read_text())
+    dags = [t for t in manifest['spec']['templates'] if 'dag' in t]
+    assert dags and all('retryStrategy' not in t for t in dags)
+    (pod,) = _pods(path).values()
+    assert pod['retryStrategy']['limit'] == '1'
+
+
+def test_nested_pipeline_cache_key_scopes_inner_task_identity(tmp_path):
+    """C02: a custom cache key on the nested task scopes every inner task's
+    fingerprint; without one, inner fingerprints are unchanged."""
+
+    @dsl.pipeline(name='cache-inner')
+    def inner(value: int) -> int:
+        return identity(value=value).output
+
+    def outer_with(cache_key):
+        @dsl.pipeline(name='cache-outer')
+        def outer(value: int = 1):
+            task = inner(value=value)
+            if cache_key:
+                task.set_caching_options(True, cache_key=cache_key)
+
+        return outer
+
+    keys = {}
+    for label in (None, 'v1', 'v2'):
+        path = tmp_path / f'{label}.yaml'
+        compiler.Compiler().compile(
+            outer_with(label), str(path), resource_kind='Workflow'
+        )
+        (pod,) = _pods(path).values()
+        keys[label] = pod['memoize']['key']
+    assert len(set(keys.values())) == 3
+    # Compiling the plain pipeline twice is stable, so the None key is the
+    # pre-existing fingerprint and existing caches keep hitting.
+    path = tmp_path / 'again.yaml'
+    compiler.Compiler().compile(
+        outer_with(None), str(path), resource_kind='Workflow'
+    )
+    assert next(iter(_pods(path).values()))['memoize']['key'] == keys[None]
+
+
+def test_nested_pipeline_static_kubernetes_settings_reach_inner_pods(tmp_path):
+    """C03: kfp-kubernetes settings on a nested task propagate to its inner
+    pods (stock drops them). Inner settings win; env lists accumulate."""
+    from kfp import kubernetes
+
+    @dsl.pipeline(name='k8s-inner')
+    def inner(value: int) -> int:
+        task = identity(value=value)
+        kubernetes.add_node_selector(task, 'zone', 'inner')
+        kubernetes.use_secret_as_env(
+            task, secret_name='inner-secret', secret_key_to_env={'k': 'INNER'}
+        )
+        return task.output
+
+    @dsl.pipeline(name='k8s-outer')
+    def outer(value: int = 1):
+        nested = inner(value=value)
+        kubernetes.add_node_selector(nested, 'zone', 'outer')
+        kubernetes.add_node_selector(nested, 'pool', 'gpu')
+        kubernetes.use_secret_as_env(
+            nested, secret_name='outer-secret', secret_key_to_env={'k': 'OUTER'}
+        )
+
+    path = tmp_path / 'k8s.yaml'
+    compiler.Compiler().compile(outer, str(path), resource_kind='Workflow')
+    (pod,) = _pods(path).values()
+    assert pod['nodeSelector'] == {'zone': 'inner', 'pool': 'gpu'}
+    env = {
+        e['name']: e['valueFrom']['secretKeyRef']['name']
+        for e in pod['container']['env']
+        if 'secretKeyRef' in e.get('valueFrom', {})
+    }
+    assert env['OUTER'] == 'outer-secret' and env['INNER'] == 'inner-secret'
+
+
+def test_nested_pipeline_parameter_bound_kubernetes_settings_are_rejected(
+    tmp_path,
+):
+    from kfp import kubernetes
+
+    @dsl.pipeline(name='k8s-dynamic-inner')
+    def inner(value: int) -> int:
+        return identity(value=value).output
+
+    @dsl.pipeline(name='k8s-dynamic-outer')
+    def outer(value: int = 1, secret: str = 'from-parameter'):
+        nested = inner(value=value)
+        kubernetes.use_secret_as_env(
+            nested, secret_name=secret, secret_key_to_env={'k': 'K'}
+        )
+
+    with pytest.raises(ValueError, match='reference pipeline parameters'):
+        compiler.Compiler().compile(outer, str(tmp_path / 'dynamic.yaml'))
+
+
 def test_nested_pipeline_outputs(tmp_path):
     @dsl.pipeline(name='nested-inner')
     def inner(value: int) -> int:
