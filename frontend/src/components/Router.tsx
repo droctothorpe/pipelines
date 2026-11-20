@@ -9,7 +9,7 @@ import Input from 'src/atoms/Input';
 import BusyButton from 'src/atoms/BusyButton';
 import SideNavigation from './SideNav';
 import NativePage from './NativePage';
-import { setArgoToken } from 'src/lib/Argo';
+import { setArgoToken, type UiAuthMode } from 'src/lib/Argo';
 import { NativeUiContext, type Confirmation } from 'src/lib/NativeUiContext';
 import {
   NativeListPage,
@@ -43,9 +43,12 @@ export const ExternalLinks = {
   GITHUB_ISSUE: 'https://github.com/kubeflow/pipelines/issues/new/choose',
 };
 
-function Workspace({ namespace }: { namespace: string }) {
+function Workspace({ namespace, authMode }: { namespace: string; authMode: UiAuthMode }) {
   const location = useLocation();
-  const [connected, setConnected] = useState(false);
+  const [tokenConnected, setTokenConnected] = useState(false);
+  // Single-user proxies authenticate with their own service account; otherwise
+  // a namespace-scoped browser token is required before any request is made.
+  const connected = authMode === 'single-user' || tokenConnected;
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [confirmation, setConfirmation] = useState<Confirmation>();
@@ -118,7 +121,7 @@ function Workspace({ namespace }: { namespace: string }) {
             onClick={() => {
               setArgoToken(token);
               setToken('');
-              setConnected(true);
+              setTokenConnected(true);
             }}
           >
             Connect
@@ -162,10 +165,16 @@ function Workspace({ namespace }: { namespace: string }) {
     </NativeUiContext.Provider>
   );
 }
-export default function Router({ namespace }: { namespace: string }) {
+export default function Router({
+  namespace,
+  authMode = 'token',
+}: {
+  namespace: string;
+  authMode?: UiAuthMode;
+}) {
   return (
     <HashRouter>
-      <Workspace namespace={namespace} />
+      <Workspace namespace={namespace} authMode={authMode} />
     </HashRouter>
   );
 }

@@ -56,7 +56,7 @@ const views = [
   ],
 ];
 const token = 'namespace-test-token';
-async function mount(browser, entry, inventory = {}) {
+async function mount(browser, entry, inventory = {}, authMode = 'token') {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const errors = [],
     requests = [];
@@ -79,12 +79,25 @@ async function mount(browser, entry, inventory = {}) {
         contentType: type,
       });
     }
+    if (url.pathname === '/config.json') {
+      // Token-mode deployments may predate the config endpoint; single-user
+      // proxies publish their mode so the UI skips the login dialog.
+      return authMode === 'single-user'
+        ? route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({ authMode, namespace: 'team' }),
+          })
+        : route.fulfill({ status: 404 });
+    }
     requests.push(url.pathname);
     assert.ok(
       /^\/(argo|kubernetes)\//.test(url.pathname),
       `Retired backend request: ${url.pathname}`,
     );
-    assert.equal(request.headers().authorization, `Bearer ${token}`);
+    assert.equal(
+      request.headers().authorization,
+      authMode === 'single-user' ? undefined : `Bearer ${token}`,
+    );
     const handled = await inventory.handleRequest?.(request, url);
     if (handled) return route.fulfill(handled);
     let body = { items: [] };
@@ -131,12 +144,33 @@ async function mount(browser, entry, inventory = {}) {
       return route.fulfill({ contentType: 'text/plain', body: 'x,y\n1,2\n' });
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
-  await page.goto(`http://localhost/${entry}?namespace=team`);
-  await page.getByLabel('Kubernetes bearer token').fill(token);
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  // Single-user proxies publish their namespace, so the URL needs none.
+  await page.goto(`http://localhost/${entry}${authMode === 'token' ? '?namespace=team' : ''}`);
+  if (authMode === 'token') {
+    await page.getByLabel('Kubernetes bearer token').fill(token);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  }
   return { page, errors, requests };
 }
+
+test('single-user proxies skip the token dialog, default the namespace and send no browser credentials', async () => {
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+  try {
+    const { page, errors, requests } = await mount(browser, 'argo.html', {}, 'single-user');
+    await page.getByText('No pipelines found.', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.equal(await page.getByLabel('Kubernetes bearer token').count(), 0);
+    assert.ok(requests.some((path) => path.startsWith('/kubernetes/')));
+    await page.reload();
+    await page.getByText('No pipelines found.', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.deepEqual(errors, []);
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+});
 
 test(
   'production entrypoints retain stock navigation, list columns and forms at desktop and mobile sizes',

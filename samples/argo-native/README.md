@@ -69,6 +69,29 @@ not cluster-admin credentials. Tokens are cleared when the UI reloads. Restart a
 port-forward after its target pod is replaced; a stale forward can keep its port
 bound until its next request detects that the old pod is gone.
 
+### Single-user mode (no login)
+
+For a disposable local namespace, generate the deployment with
+`--auth-mode single-user` instead:
+
+```sh
+uv run python samples/argo-native/deploy.py --auth-mode single-user > /tmp/kfp-argo-deployment.yaml
+kubectl --context orbstack -n kfp-argo apply --server-side -f /tmp/kfp-argo-deployment.yaml
+kubectl --context orbstack -n kfp-argo rollout status deploy/kfp-argo-ui
+```
+
+This is the counterpart of stock KFP's standalone (non multi-user) deployment. The
+proxy is bound to the `argo-ui-read` and `argo-ui-edit` roles, authenticates every
+`/argo/` and `/kubernetes/` request with its own projected service-account token
+(read per request, so rotation needs no restart), ignores any browser
+`Authorization` header, and publishes `{"authMode":"single-user","namespace":"kfp-argo"}`
+at `/config.json`. The UI reads that endpoint on load, skips the token dialog and
+defaults to that namespace, so <http://127.0.0.1:3003/> works without a
+`?namespace=` query (an explicit `?namespace=` still wins). The deployment smoke
+test and its denied-mutation checks need the default `token` mode.
+Do not use single-user mode on a shared cluster: anyone who can reach the
+port-forward has editor rights in the namespace.
+
 ## Compile and submit
 
 `components.py` is the dataset → model → metrics example. The ordinary

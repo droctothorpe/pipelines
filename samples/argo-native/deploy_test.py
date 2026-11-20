@@ -4,15 +4,47 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
 import yaml
 
+NAMESPACE_ENV = {
+    'name': 'KFP_UI_NAMESPACE',
+    'valueFrom': {'fieldRef': {'fieldPath': 'metadata.namespace'}},
+}
 
-def test_isolated_client_auth_and_persistent_services():
+
+def load_deployment():
     spec = importlib.util.spec_from_file_location(
         'deployment', Path(__file__).with_name('deploy.py')
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def proxy_bindings(result):
+    return sorted(
+        item['roleRef']['name']
+        for item in result
+        if item['kind'] == 'RoleBinding'
+        and any(
+            subject['name'] == 'argo-ui-proxy' for subject in item['subjects']
+        )
+    )
+
+
+def ui_container(result):
+    deployment = next(
+        item
+        for item in result
+        if item['kind'] == 'Deployment'
+        and item['metadata']['name'] == 'kfp-argo-ui'
+    )
+    return deployment['spec']['template']['spec']['containers'][0]
+
+
+def test_isolated_client_auth_and_persistent_services():
+    module = load_deployment()
     upstream = []
     for name in (
         'argo-server',
@@ -71,17 +103,49 @@ def test_isolated_client_auth_and_persistent_services():
         )
     proxy = deployments['kfp-argo-ui']['spec']['template']['spec']
     assert proxy['serviceAccountName'] == 'argo-ui-proxy'
-    assert not any(
-        item['kind'] == 'RoleBinding'
-        and any(
-            subject['name'] == 'argo-ui-proxy' for subject in item['subjects']
-        )
-        for item in result
-    )
+    assert proxy_bindings(result) == []
+    assert ui_container(result)['env'] == [
+        {'name': 'KFP_UI_AUTH_MODE', 'value': 'token'},
+        NAMESPACE_ENV,
+    ]
     assert all(
         item['metadata'].get('namespace', 'isolated') == 'isolated'
         for item in result
     )
+
+
+def test_single_user_mode_binds_proxy_and_publishes_mode():
+    """Single-user mode is opt-in: the proxy gets namespace editor rights and the
+    rendered nginx config advertises the mode and uses the pod's own token."""
+    module = load_deployment()
+    result = module.resources([], 'isolated', 'ui:test', 'single-user')
+    assert proxy_bindings(result) == ['argo-ui-edit', 'argo-ui-read']
+    assert all(
+        item['metadata']['namespace'] == 'isolated'
+        for item in result
+        if item['kind'] == 'RoleBinding'
+    )
+    assert ui_container(result)['env'] == [
+        {'name': 'KFP_UI_AUTH_MODE', 'value': 'single-user'},
+        NAMESPACE_ENV,
+    ]
+    assert ui_container(result)['volumeMounts'][0]['mountPath'] == (
+        '/etc/nginx/templates'
+    )
+    template = next(
+        item
+        for item in result
+        if item['kind'] == 'ConfigMap'
+        and item['metadata']['name'] == 'kfp-argo-ui-nginx'
+    )['data']['default.conf.template']
+    assert '${KFP_UI_AUTH_MODE}' in template
+    assert '"namespace":"${KFP_UI_NAMESPACE}"' in template
+    assert 'single-user $service_account_authorization;' in template
+    assert 'default $http_authorization;' in template
+    assert template.count('Authorization $upstream_authorization') == 2
+    assert '$http_authorization;\n' not in template.split('map ')[0]
+    with pytest.raises(ValueError):
+        module.resources([], 'isolated', 'ui:test', 'anonymous')
 
 
 def test_reader_cannot_mutate_and_no_cluster_admin_browser_binding():

@@ -18,6 +18,7 @@ export default defineConfig({
     proxy: {
       '^/argo/': { target, changeOrigin: true },
       '^/kubernetes/': { target, changeOrigin: true },
+      '^/config\\.json$': { target, changeOrigin: true },
     },
   },
   build: {

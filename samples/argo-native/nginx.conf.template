@@ -1,0 +1,49 @@
+# Rendered by the image entrypoint with envsubst. ${KFP_UI_AUTH_MODE} and
+# ${KFP_UI_NAMESPACE} are the only substituted values; nginx variables keep
+# their $name form.
+js_import proxy from /etc/nginx/ui-proxy.js;
+js_set $service_account_authorization proxy.serviceAccountAuthorization;
+
+# token: forward the browser's bearer token unchanged.
+# single-user: the proxy's own service-account token replaces whatever the
+# browser sent, so the UI needs no login. Only for local single-user namespaces.
+map "${KFP_UI_AUTH_MODE}" $upstream_authorization {
+  single-user $service_account_authorization;
+  default $http_authorization;
+}
+
+server {
+  listen 8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index argo.html;
+  client_max_body_size 2m;
+
+  location = /config.json {
+    default_type application/json;
+    add_header Cache-Control no-store;
+    # The UI defaults to the deployment namespace when the URL names none.
+    return 200 '{"authMode":"${KFP_UI_AUTH_MODE}","namespace":"${KFP_UI_NAMESPACE}"}';
+  }
+
+  location /argo/ {
+    proxy_pass https://argo-server:2746/;
+    proxy_set_header Authorization $upstream_authorization;
+    # Local quick-start Argo uses a self-signed certificate.
+    proxy_ssl_verify off;
+    proxy_buffering off;
+  }
+
+  location /kubernetes/ {
+    proxy_pass https://kubernetes.default.svc/;
+    proxy_set_header Authorization $upstream_authorization;
+    proxy_ssl_server_name on;
+    proxy_ssl_name kubernetes.default.svc;
+    proxy_ssl_trusted_certificate /var/run/secrets/kubernetes.io/serviceaccount/ca.crt;
+    proxy_ssl_verify on;
+  }
+
+  location / {
+    try_files $uri $uri/ /argo.html;
+  }
+}
