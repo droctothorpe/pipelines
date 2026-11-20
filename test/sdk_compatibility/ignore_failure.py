@@ -76,6 +76,19 @@ def grouped_pipeline(fail: bool):
         ).ignore_upstream_failure().set_caching_options(False)
 
 
+@dsl.pipeline(name='crossing-ignore-failure-compatibility')
+def crossing_pipeline(fail: bool, enabled: bool = True):
+    """The producer is outside the condition; the tolerant consumer inside."""
+    source = produce(fail=fail).set_caching_options(False)
+    with dsl.If(enabled == True):
+        cleanup(
+            failed=fail,
+            message=source.outputs['Output'],
+            optional=source.outputs['Output'],
+            data=source.outputs['data'],
+        ).ignore_upstream_failure().set_caching_options(False)
+
+
 if __name__ == '__main__':
     namespace = os.environ.get('KFP_TEST_NAMESPACE', 'kfp-argo')
     client = kfp.Client(
@@ -88,6 +101,8 @@ if __name__ == '__main__':
         (pipeline, True),
         (pipeline, False),
         (grouped_pipeline, True),
+        (crossing_pipeline, True),
+        (crossing_pipeline, False),
     ]:
         run = client.create_run_from_pipeline_func(
             function,
@@ -107,10 +122,10 @@ if __name__ == '__main__':
         ]
         assert len(cleanups) == 1, nodes
         assert cleanups[0]['phase'] == 'Succeeded', cleanups[0]
-        status_node = next(
+        for status_node in (
             node for node in nodes if node.get('displayName') == 'check-status'
-        )
-        assert status_node['phase'] == 'Succeeded', status_node
+        ):
+            assert status_node['phase'] == 'Succeeded', status_node
         output = next(
             p['value']
             for p in cleanups[0]['outputs']['parameters']

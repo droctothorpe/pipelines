@@ -99,6 +99,10 @@ class _Scope:
         compiler.templates.append(self.template)
         self.inputs = {}
         self.exports = {}
+        # Group input ports whose producer failure a descendant tolerates; each
+        # gets a `kfp-present-<port>` input carrying the producer's status.
+        self.presence = set()
+        self.tolerant = {}
         self.children = [
             _Scope(compiler, child, self) for child in group.groups
         ]
@@ -369,8 +373,76 @@ class _Scope:
             }
             for name, channel in self.compiler.extra_inputs.get(id(task), [])
         )
-        argo_continuation.arguments(task, arguments)
+        self.presence.update(argo_continuation.arguments(task, arguments))
         return {key: value for key, value in arguments.items() if value}
+
+    def consumers(self, key):
+        """Tasks anywhere in this scope that consume the channel `key`."""
+        found = [
+            task
+            for task in self.group.tasks
+            if any(
+                isinstance(value, pipeline_channel.PipelineChannel)
+                and _key(value) == key
+                for value in task.inputs.values()
+            )
+        ]
+        for child in self.children:
+            found.extend(child.consumers(key))
+        return found
+
+    def thread_presence(self, child, item, arguments):
+        """Supply the producer status for each failure-tolerant group input of
+        `child`: from the sibling producer's status when it lives here, or from
+        this scope's own `kfp-present-` input when it lives further up."""
+        for port in sorted(child.presence):
+            channel = next(c for c in child.inputs.values() if _port(c) == port)
+            if any(
+                not task._ignore_upstream_failure_tag
+                for task in child.consumers(_key(channel))
+            ):
+                raise ValueError(
+                    f'Output {channel.full_name!r} is consumed inside {child.group.name!r} both with and '
+                    'without ignore_upstream_failure(); make every consumer in that group failure-tolerant.'
+                )
+            artifact = isinstance(
+                channel, pipeline_channel.PipelineArtifactChannel
+            )
+            reference = self.resolve(
+                channel, prefix='kfp-uri-' if artifact else ''
+            )
+            expression = _expression_reference(reference)
+            source = re.search(r'tasks\["([^"\\]+)"\]\.outputs\.', expression)
+            if source is None:
+                self.presence.add(port)
+                value = _ref('inputs.parameters', 'kfp-present-' + port)
+            else:
+                producer = source[1]
+                present = f"tasks[{_json(producer)}].status == 'Succeeded'"
+                value = '{{=' + present + '}}'
+                self.tolerant.setdefault(item['name'], set()).add(producer)
+                # Argo refuses to resolve a failed task's outputs, so guard the
+                # values; the consumer applies its own fallback.
+                for parameter in arguments['parameters']:
+                    if parameter['name'] in (
+                        port,
+                        'kfp-uri-' + port,
+                        'kfp-meta-' + port,
+                    ):
+                        parameter['value'] = (
+                            '{{='
+                            + present
+                            + ' ? ('
+                            + _expression_reference(parameter['value'])
+                            + " ?? '') : ''}}"
+                        )
+                for entry in arguments['artifacts']:
+                    if entry['name'] in (port, port + '-metadata'):
+                        entry['optional'] = True
+                        entry['from'] = entry['from'][2:-2]
+            arguments['parameters'].append(
+                {'name': 'kfp-present-' + port, 'value': value}
+            )
 
     def build(self):
         for child in self.children:
@@ -500,6 +572,7 @@ class _Scope:
                         ),
                     }
                 )
+            self.thread_presence(child, item, arguments)
             item['arguments'] = {
                 key: value for key, value in arguments.items() if value
             }
@@ -529,6 +602,11 @@ class _Scope:
                 )
             else:
                 parameters.append({'name': name})
+        for port in sorted(self.presence):
+            parameters.append({'name': 'kfp-present-' + port})
+            for artifact in artifacts:
+                if artifact['name'] == port:
+                    artifact['optional'] = True
         self.template['inputs'] = {
             key: value
             for key, value in [
@@ -626,6 +704,18 @@ class _Scope:
                     arguments['parameters'].append(
                         {'name': name, 'value': _ref('inputs.parameters', name)}
                     )
+            for port in sorted(self.presence):
+                flag = 'kfp-present-' + port
+                wrapper_inputs['parameters'].append({'name': flag})
+                arguments['parameters'].append(
+                    {'name': flag, 'value': _ref('inputs.parameters', flag)}
+                )
+                for artifact in wrapper_inputs['artifacts']:
+                    if artifact['name'] == port:
+                        artifact['optional'] = True
+                for entry in arguments['artifacts']:
+                    if entry['name'] == port:
+                        entry['optional'] = True
             self.wrapper['inputs'] = {
                 key: value for key, value in wrapper_inputs.items() if value
             }
@@ -696,6 +786,7 @@ class _Scope:
                 for task in self.group.tasks
                 if task._ignore_upstream_failure_tag
             },
+            self.tolerant,
         )
         missing = (
             set().union(*dependencies.values()) - set(dependencies)
