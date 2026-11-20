@@ -20,7 +20,15 @@ import Toolbar from 'src/components/Toolbar';
 import MD2Tabs from 'src/atoms/MD2Tabs';
 import { useInventory } from 'src/lib/NativeQueries';
 import { useNativeUi } from 'src/lib/NativeUiContext';
-import { EXPERIMENT, displayName, description, enc } from 'src/lib/NativeUi';
+import {
+  EXPERIMENT,
+  displayName,
+  description,
+  enc,
+  resourceMatches,
+  isRunArchived,
+  setExperimentStorage,
+} from 'src/lib/NativeUi';
 import { action, createAction, runColumns, runRows } from './NativePages';
 
 // The original ExperimentDetails card styles and two-level toolbar layout.
@@ -65,23 +73,33 @@ const css = stylesheet({
 });
 export default function NativeExperimentDetails() {
   const { experimentId = '' } = useParams();
-  const { fail } = useNativeUi();
+  const { namespace, fail, confirm } = useNativeUi();
   const navigate = useNavigate();
   const inventory = useInventory();
-  const [tab, setTab] = useState(0),
-    [selected, setSelected] = useState<string[]>([]);
+  const [tabSelection, setTabSelection] = useState<{ experimentId: string; index: number }>();
+  const [selected, setSelected] = useState<string[]>([]);
   const [manager, setManager] = useState(false),
     [readMore, setReadMore] = useState(false);
-  const experiment = inventory.experiments.data?.find((exp) => exp.metadata.name === experimentId);
-  const schedules = (inventory.schedules.data || []).filter(
-    (schedule) => schedule.spec?.workflowMetadata?.labels?.[EXPERIMENT] === experimentId,
+  const experiment = inventory.experiments.data?.find((exp) => resourceMatches(exp, experimentId));
+  const archived = experiment?.data?.storageState === 'ARCHIVED';
+  const tab = tabSelection?.experimentId === experimentId ? tabSelection.index : archived ? 1 : 0;
+  const setTab = (index: number) => setTabSelection({ experimentId, index });
+  const refresh = () =>
+    Promise.all([
+      inventory.experiments.refetch(),
+      inventory.runs.refetch(),
+      inventory.schedules.refetch(),
+    ]);
+  const schedules = (inventory.schedules.data || []).filter((schedule) =>
+    resourceMatches(experiment, schedule.spec?.workflowMetadata?.labels?.[EXPERIMENT]),
   );
   const active = schedules.filter((schedule) => !schedule.spec?.suspend).length;
   const text = experiment ? description(experiment) : '';
   const rows = runRows(
     (inventory.runs.data || []).filter(
       (run) =>
-        run.metadata.labels?.[EXPERIMENT] === experimentId && (tab === 0 ? run.live : !run.live),
+        resourceMatches(experiment, run.metadata.labels?.[EXPERIMENT]) &&
+        isRunArchived(run) === (tab !== 0),
     ),
     inventory.versions.data || [],
     inventory.experiments.data || [],
@@ -92,15 +110,39 @@ export default function NativeExperimentDetails() {
       breadcrumbs={[{ displayName: 'Experiments', href: '/experiments' }]}
       error={inventory.error}
       actions={{
-        refresh: action('Refresh', () => inventory.runs.refetch().catch(fail), {
+        refresh: action('Refresh', () => refresh().catch(fail), {
           id: 'refreshBtn',
         }),
-        archive: action('Archive', () => {}, {
-          id: 'archiveBtn',
-          disabled: true,
-          disabledTitle:
-            'Native experiment ConfigMaps do not support archival. Runs can be archived individually.',
-        }),
+        archive: action(
+          archived ? 'Restore' : 'Archive',
+          () =>
+            experiment &&
+            confirm({
+              title: archived ? 'Restore this experiment?' : 'Archive this experiment?',
+              content: archived
+                ? 'Restore this experiment only. Its runs stay archived and recurring runs stay disabled.'
+                : 'Archive this experiment and its runs, and disable recurring runs. Active runs continue; workflows and artifacts are preserved.',
+              action: async () => {
+                try {
+                  await setExperimentStorage(
+                    namespace,
+                    experiment,
+                    archived ? 'AVAILABLE' : 'ARCHIVED',
+                  );
+                  setTab(archived ? 0 : 1);
+                  setSelected([]);
+                } finally {
+                  // Failed multi-resource operations may still have changed children.
+                  await Promise.allSettled([
+                    inventory.experiments.refetch(),
+                    inventory.runs.refetch(),
+                    inventory.schedules.refetch(),
+                  ]);
+                }
+              },
+            }),
+          { id: 'archiveBtn', disabled: !experiment },
+        ),
       }}
     >
       <div className={classes(commonCss.page, padding(20, 'lrt'))}>
@@ -209,7 +251,7 @@ export default function NativeExperimentDetails() {
                 selected={selected}
                 select={setSelected}
                 filterLabel='Filter runs'
-                emptyMessage='No available runs found.'
+                emptyMessage={tab === 0 ? 'No available runs found.' : 'No archived runs found.'}
               />
             </div>
           </div>

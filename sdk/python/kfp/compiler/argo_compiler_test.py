@@ -15,6 +15,24 @@ def identity(value: int) -> int:
     return value
 
 
+def test_yaml_preserves_single_letter_boolean_like_strings(tmp_path):
+    @dsl.pipeline
+    def pipeline(n: int = 1):
+        identity(value=n)
+
+    path = tmp_path / 'n.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    assert "name: 'n'" in path.read_text(), (
+        'Argo YAML 1.1 treats bare n as a boolean'
+    )
+    assert (
+        yaml.safe_load(path.read_text())['spec']['arguments']['parameters'][0][
+            'name'
+        ]
+        == 'n'
+    )
+
+
 def test_decorator_captures_without_building_ir(tmp_path):
     with patch(
         'kfp.dsl.structures.ComponentSpec.to_pipeline_spec',
@@ -98,14 +116,20 @@ def test_conditions_loops_and_collection(tmp_path):
     )
 
 
-def test_caching_requires_digest_and_keys_runtime_values(tmp_path):
+def test_caching_accepts_tags_and_honors_optional_image_identity(tmp_path):
     @dsl.pipeline(name='cache-test')
     def pipeline(value: int = 1):
         identity(value=value)
 
     path = tmp_path / 'cache.yaml'
-    with pytest.raises(ValueError, match='immutable image'):
-        compiler.Compiler().compile(pipeline, str(path))
+    compiler.Compiler().compile(pipeline, str(path))
+    tagged = next(
+        t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'container' in t
+    )
+    assert tagged['container']['image'] == 'python:3.11'
+    assert 'memoize' in tagged
     compiler.Compiler(
         image_digests={'python:3.11': 'sha256:' + 'a' * 64}
     ).compile(pipeline, str(path))
@@ -116,6 +140,7 @@ def test_caching_requires_digest_and_keys_runtime_values(tmp_path):
     )
     assert 'toJson(inputs.parameters)' in template['memoize']['key']
     assert template['container']['image'] == 'python:kfp-' + 'a' * 64
+    assert template['memoize']['key'] != tagged['memoize']['key']
 
 
 @pytest.mark.parametrize(
@@ -135,7 +160,7 @@ def test_local_image_snapshot_reference(image, repository):
     )
 
 
-def test_cache_rejects_runtime_package_installation(tmp_path):
+def test_cache_allows_runtime_package_installation(tmp_path):
     @dsl.component(base_image='python@sha256:' + 'a' * 64)
     def installed(value: int) -> int:
         return value
@@ -144,11 +169,21 @@ def test_cache_rejects_runtime_package_installation(tmp_path):
     def pipeline():
         installed(value=1)
 
-    with pytest.raises(ValueError, match='installs packages at execution time'):
-        compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    template = next(
+        t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'container' in t
+    )
+    assert 'memoize' in template
+    assert any(
+        'PIP_DISABLE_PIP_VERSION_CHECK=1' in command
+        for command in template['container']['command']
+    )
 
 
-def test_cache_rejects_mutable_external_configuration(tmp_path):
+def test_cache_preserves_explicit_external_configuration(tmp_path):
     from kfp import kubernetes
 
     @dsl.pipeline(name='mutable-cache')
@@ -156,10 +191,19 @@ def test_cache_rejects_mutable_external_configuration(tmp_path):
         task = identity(value=1)
         kubernetes.use_secret_as_env(task, 'mutable-secret', {'key': 'VALUE'})
 
-    with pytest.raises(ValueError, match='mutable external'):
-        compiler.Compiler(
-            image_digests={'python:3.11': 'sha256:' + 'a' * 64}
-        ).compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    template = next(
+        t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'container' in t
+    )
+    assert 'memoize' in template
+    assert any(
+        item.get('valueFrom', {}).get('secretKeyRef', {}).get('name')
+        == 'mutable-secret'
+        for item in template['container']['env']
+    )
 
 
 def test_retry_normalizes_integral_float_factor_and_duration_aliases(tmp_path):
@@ -180,6 +224,22 @@ def test_retry_normalizes_integral_float_factor_and_duration_aliases(tmp_path):
     assert template['retryStrategy']['backoff']['duration'] == '120s'
 
 
+def test_default_retry_covers_direct_component_failures(tmp_path):
+    @dsl.pipeline(name='retry-direct-failure')
+    def pipeline():
+        identity(value=1).set_retry(2)
+
+    compiler.Compiler().compile(pipeline, str(tmp_path / 'retry.yaml'))
+    manifest = yaml.safe_load((tmp_path / 'retry.yaml').read_text())
+    task = next(
+        template
+        for template in manifest['spec']['templates']
+        if 'container' in template
+    )
+    assert task['retryStrategy']['limit'] == '2'
+    assert task['retryStrategy']['retryPolicy'] == 'Always'
+
+
 def test_retry_rejects_fractional_factor(tmp_path):
     @dsl.pipeline(name='fractional-retry')
     def pipeline():
@@ -191,14 +251,23 @@ def test_retry_rejects_fractional_factor(tmp_path):
         compiler.Compiler().compile(pipeline, str(tmp_path / 'retry.yaml'))
 
 
-def test_dynamic_resources_fail_before_manifest_publication(tmp_path):
+def test_dynamic_resources_bind_native_inputs_and_patch_quantities(tmp_path):
     @dsl.pipeline(name='dynamic-resource')
     def pipeline(cpu: str = '100m'):
         identity(value=1).set_cpu_request(cpu).set_caching_options(False)
 
-    with pytest.raises(ValueError, match='dynamic execution configuration'):
-        compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
-    assert not (tmp_path / 'pipeline.yaml').exists()
+    compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    manifest = yaml.safe_load((tmp_path / 'pipeline.yaml').read_text())
+    task = next(
+        item for item in manifest['spec']['templates'] if 'container' in item
+    )
+    assert 'resources' not in task['container']
+    assert '{{inputs.parameters.kfp-config-0}}' in task['podSpecPatch']
+    root = next(item for item in manifest['spec']['templates'] if 'dag' in item)
+    assert {
+        'name': 'kfp-config-0',
+        'value': '{{inputs.parameters.cpu}}',
+    } in root['dag']['tasks'][0]['arguments']['parameters']
 
 
 def test_resources_and_kubernetes_configuration(tmp_path):
@@ -271,9 +340,95 @@ def test_exit_handler_is_failure_aware_native_dag(tmp_path):
     )
 
 
-def test_unvalidated_container_scalar_outputs_fail_compilation(tmp_path):
+@pytest.mark.parametrize('grouped', [False, True])
+def test_ignore_upstream_failure_preserves_defaults_and_failed_run(
+    tmp_path, grouped
+):
+    @dsl.component
+    def cleanup(message: str = 'fallback') -> str:
+        return message
+
+    @dsl.pipeline
+    def pipeline(enabled: bool = True):
+        def body():
+            source = cleanup(message='upstream')
+            cleanup(message=source.output).ignore_upstream_failure()
+
+        if grouped:
+            with dsl.If(enabled == True):
+                body()
+        else:
+            body()
+
+    path = tmp_path / 'cleanup.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    templates = yaml.safe_load(path.read_text())['spec']['templates']
+    dag = next(
+        t['dag']
+        for t in templates
+        if any(
+            task['name'] == 'cleanup-2'
+            for task in t.get('dag', {}).get('tasks', [])
+        )
+    )
+    task = next(task for task in dag['tasks'] if task['name'] == 'cleanup-2')
+    assert 'dependencies' not in task
+    assert 'cleanup.Failed' in task['depends']
+    assert 'cleanup.Errored' in task['depends']
+    assert dag['failFast'] is False
+    assert set(dag['target'].split()) == {'cleanup', 'cleanup-2'}
+    args = {p['name']: p['value'] for p in task['arguments']['parameters']}
+    assert 'Succeeded' in args['message']
+    assert ' ?? ' in args['message'], (
+        'Argo must not require absent outputs before evaluating the fallback'
+    )
+
+
+def test_ignore_upstream_failure_supplies_final_status(tmp_path):
+    @dsl.component
+    def cleanup(status: dsl.PipelineTaskFinalStatus):
+        print(status.state)
+
+    @dsl.pipeline
+    def pipeline():
+        source = identity(value=1)
+        cleanup().after(source).ignore_upstream_failure()
+
+    path = tmp_path / 'final-status.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    templates = yaml.safe_load(path.read_text())['spec']['templates']
+    task = next(
+        task
+        for template in templates
+        for task in template.get('dag', {}).get('tasks', [])
+        if task['name'] == 'cleanup'
+    )
+    status = next(
+        item['value']
+        for item in task['arguments']['parameters']
+        if item['name'] == 'status'
+    )
+    assert 'FAILED' in status
+    assert 'SUCCEEDED' in status
+    assert 'identity' in status
+
+
+def test_ignore_upstream_failure_without_dependencies_is_noop(tmp_path):
+    @dsl.pipeline
+    def pipeline():
+        identity(value=1).ignore_upstream_failure()
+
+    path = tmp_path / 'noop.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    root = yaml.safe_load(path.read_text())['spec']['templates'][0]['dag']
+    assert 'depends' not in root['tasks'][0]
+    assert 'failFast' not in root
+
+
+@pytest.mark.parametrize('kind', [int, float, bool, list, dict])
+def test_container_scalar_outputs_use_native_validation(tmp_path, kind):
     @dsl.container_component
-    def integer_output(value: dsl.OutputPath(int)):
+    def integer_output(value: dsl.OutputPath(kind)):
         return dsl.ContainerSpec(
             image='busybox:1.36.1',
             command=['sh', '-c'],
@@ -284,8 +439,29 @@ def test_unvalidated_container_scalar_outputs_fail_compilation(tmp_path):
     def pipeline():
         integer_output().set_caching_options(False)
 
-    with pytest.raises(ValueError, match='use a Python component bridge'):
-        compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    templates = yaml.safe_load(path.read_text())['spec']['templates']
+    assert sum('container' in t for t in templates) == 1
+    wrapper = next(
+        t
+        for t in templates
+        if t.get('metadata', {})
+        .get('annotations', {})
+        .get('pipelines.kubeflow.org/component-wrapper')
+        == 'true'
+    )
+    output = next(
+        p for p in wrapper['outputs']['parameters'] if p['name'] == 'value'
+    )
+    assert 'expression' in output['valueFrom']
+    assert 'execute' in output['valueFrom']['expression']
+    validation = next(t for t in templates if 'suspend' in t)
+    assert validation['suspend'] == {'duration': '0'}
+    assert wrapper['dag']['tasks'][-1]['dependencies'] == ['execute']
+    assert next(t for t in templates if 'container' in t)['container'][
+        'command'
+    ] == ['sh', '-c']
 
 
 def test_metadata_port_paths_and_storage_keys_do_not_collide(tmp_path):
@@ -335,6 +511,78 @@ def test_nested_pipeline_outputs(tmp_path):
         sum('dag' in template for template in manifest['spec']['templates'])
         == 2
     )
+
+
+def test_oneof_merges_conditional_parameter_outputs(tmp_path):
+    @dsl.pipeline(name='oneof-compatibility')
+    def pipeline(choice: bool = True) -> int:
+        with dsl.If(choice == True):
+            left = identity(value=3)
+        with dsl.Else():
+            right = identity(value=7)
+        return identity(value=dsl.OneOf(left.output, right.output)).output
+
+    compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    manifest = yaml.safe_load((tmp_path / 'pipeline.yaml').read_text())
+    expressions = [
+        parameter.get('valueFrom', {}).get('expression', '')
+        for template in manifest['spec']['templates']
+        for parameter in template.get('outputs', {}).get('parameters', [])
+    ]
+    assert any(
+        '.status' in expression and '.outputs.parameters' in expression
+        for expression in expressions
+    )
+
+
+def test_root_input_return_uses_expression_not_literal_parameter_lookup(
+    tmp_path,
+):
+    @dsl.pipeline(name='input-return')
+    def pipeline(value: int = 7) -> int:
+        identity(value=value)
+        return value
+
+    compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    manifest = yaml.safe_load((tmp_path / 'pipeline.yaml').read_text())
+    root = next(
+        template
+        for template in manifest['spec']['templates']
+        if template['name'] == manifest['spec']['entrypoint']
+    )
+    assert root['outputs']['parameters'][0]['valueFrom'] == {
+        'expression': 'inputs.parameters["value"]'
+    }
+
+
+def test_compile_type_check_false_preserves_valid_programs_and_relaxes_defaults(
+    tmp_path,
+):
+    import kfp
+
+    @dsl.pipeline(name='unchecked-default')
+    def pipeline(value: int = 7):
+        identity(value=value)
+
+    previous = kfp.TYPE_CHECK
+    compiler.Compiler().compile(
+        pipeline,
+        str(tmp_path / 'pipeline.yaml'),
+        pipeline_parameters={'value': 'unchecked'},
+        type_check=False,
+    )
+    assert kfp.TYPE_CHECK == previous
+    manifest = yaml.safe_load((tmp_path / 'pipeline.yaml').read_text())
+    assert (
+        manifest['spec']['arguments']['parameters'][0]['value'] == '"unchecked"'
+    )
+    with pytest.raises(ValueError, match='Integer'):
+        compiler.Compiler().compile(
+            pipeline,
+            str(tmp_path / 'checked.yaml'),
+            pipeline_parameters={'value': 'unchecked'},
+        )
+    assert kfp.TYPE_CHECK == previous
 
 
 def test_versions_are_content_addressed(tmp_path):

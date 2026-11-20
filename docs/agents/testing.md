@@ -10,8 +10,8 @@ uv run ruff format --check sdk/python/kfp samples/argo-native hack/generate-pyth
 ```
 
 Repeat SDK validation on Python 3.11 and 3.13. Build a wheel and sdist; verify the
-wheel includes the native runtime and both schema bindings, and excludes retired
-client/runner packages. Generated bindings are committed so installing a wheel
+wheel includes the native runtime, public Client/native adapters and both schema
+bindings, and excludes retired service API transports and local runners. Generated bindings are committed so installing a wheel
 requires neither protoc nor a backend.
 
 Frontend, with the pinned Node/npm versions:

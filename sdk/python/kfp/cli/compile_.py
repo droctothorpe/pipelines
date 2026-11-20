@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compile the KFP Python DSL to native Argo resources."""
 
+import hashlib
+import importlib.util
 import json
+import linecache
 import logging
 import os
 import sys
 import types
+from pathlib import Path
 from typing import Callable, Dict, Optional
 
 import click
@@ -48,21 +52,37 @@ def collect_pipeline_or_component_from_module(
 def collect_pipeline_or_component_func(
     python_file: str, function_name: Optional[str]
 ) -> base_component.BaseComponent:
-    sys.path.insert(0, os.path.dirname(python_file))
+    path = Path(python_file).resolve()
+    module_name = (
+        '_kfp_compile_' + hashlib.sha256(str(path).encode()).hexdigest()[:16]
+    )
+    module_spec = importlib.util.spec_from_file_location(module_name, path)
+    if module_spec is None or module_spec.loader is None:
+        raise ValueError(f'Cannot load Python source: {python_file}')
+    module = importlib.util.module_from_spec(module_spec)
+    previous_module = sys.modules.get(module_name)
+    previous_path = list(sys.path)
+    sys.modules[module_name] = module
+    sys.path.insert(0, str(path.parent))
     try:
-        module_name = os.path.splitext(os.path.basename(python_file))[0]
+        # Read current bytes rather than reusing a basename import or stale .pyc.
+        linecache.cache.pop(str(path), None)
+        exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
         if function_name is None:
-            return collect_pipeline_or_component_from_module(
-                __import__(module_name)
-            )
-        module = __import__(module_name, fromlist=[function_name])
+            return collect_pipeline_or_component_from_module(module)
         if not hasattr(module, function_name):
             raise ValueError(
                 f'Pipeline function or component "{function_name}" not found in module {os.path.basename(python_file)}.'
             )
         return getattr(module, function_name)
+    except BaseException:
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
+        raise
     finally:
-        del sys.path[0]
+        sys.path[:] = previous_path
 
 
 def parse_parameters(parameters: Optional[str]) -> Dict:

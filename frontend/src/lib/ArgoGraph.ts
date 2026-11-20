@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PipelineFlowElement } from './v2/FlowTypes';
+import { isComponentTemplate } from './ArgoComponents';
 import {
   buildGraphLayout,
   getArtifactNodeKey,
@@ -47,11 +48,14 @@ export function argoStaticView(manifest: ArgoManifest) {
       if (!target) throw new Error(`Missing native template ${task.template}.`);
       elements.push({
         id: getTaskNodeKey(task.name),
-        type: target.dag ? NodeTypeNames.SUB_DAG : NodeTypeNames.EXECUTION,
+        type:
+          target.dag && !isComponentTemplate(target)
+            ? NodeTypeNames.SUB_DAG
+            : NodeTypeNames.EXECUTION,
         position: { x: 0, y: 0 },
         data: {
           label: target.metadata?.annotations?.['workflows.argoproj.io/display-name'] || task.name,
-          taskType: target.dag ? TaskType.DAG : TaskType.EXECUTOR,
+          taskType: target.dag && !isComponentTemplate(target) ? TaskType.DAG : TaskType.EXECUTOR,
           groupKind:
             task.withParam || task.withItems ? 'Loop' : task.when ? 'Condition' : 'Sub-DAG',
         },
@@ -115,7 +119,13 @@ export function argoStaticView(manifest: ArgoManifest) {
       const task = (parent.dag?.tasks || [{ name: parent.name, template: parent.name }]).find(
         (task: any) => task.name === taskName,
       );
-      return { task, template: templates.get(task?.template) };
+      const template = templates.get(task?.template);
+      const body = isComponentTemplate(template)
+        ? templates.get(
+            template?.dag?.tasks?.find((child: any) => child.name === 'execute')?.template,
+          )
+        : undefined;
+      return { task, template: body ? { ...template, container: body.container } : template };
     },
   };
 }

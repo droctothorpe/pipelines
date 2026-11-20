@@ -35,6 +35,7 @@ export interface ArgoWorkflow {
     name: string;
     namespace: string;
     uid: string;
+    resourceVersion?: string;
     creationTimestamp?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
@@ -95,6 +96,12 @@ const segment = encodeURIComponent;
 const workflowPath = (namespace: string, name: string) =>
   `/argo/api/v1/workflows/${segment(namespace)}/${segment(name)}`;
 
+export class ArgoRequestError extends Error {
+  constructor(public readonly status: number) {
+    super(`Argo request failed (${status}). Check your namespace and access permissions.`);
+  }
+}
+
 export async function argoRequest(
   path: string,
   signal?: AbortSignal,
@@ -110,10 +117,7 @@ export async function argoRequest(
       ...init.headers,
     },
   });
-  if (!response.ok)
-    throw new Error(
-      `Argo request failed (${response.status}). Check your namespace and access permissions.`,
-    );
+  if (!response.ok) throw new ArgoRequestError(response.status);
   return response;
 }
 
@@ -123,11 +127,18 @@ export async function listNativeItems<T>(
   query: URLSearchParams,
   tokenKey: string,
   signal?: AbortSignal,
+  accept?: string,
 ): Promise<T[]> {
   const items: T[] = [],
     seen = new Set<string>();
   while (true) {
-    const result = await (await argoRequest(`${path}?${query}`, signal)).json();
+    const result = await (
+      await argoRequest(
+        `${path}?${query}`,
+        signal,
+        accept ? { headers: { Accept: accept } } : undefined,
+      )
+    ).json();
     items.push(...(result.items || []));
     const next = result.metadata?.continue || '';
     if (!next) return items;

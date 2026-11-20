@@ -35,6 +35,7 @@ const run = {
     name: 'run-one',
     namespace: 'argo',
     uid: 'uid-one',
+    resourceVersion: '1',
     labels: { 'pipelines.kubeflow.org/experiment': 'training' },
   },
   spec: {},
@@ -88,6 +89,8 @@ function setup(path = '/runs/details/uid-one', otherRuns: unknown[] = []) {
       if (url.includes('/artifacts/')) return new Response(JSON.stringify(metadata));
       if (url.includes('/api/v1/workflows/argo/run-one')) return new Response(JSON.stringify(run));
       if (url.includes('/archived-workflows')) return new Response(JSON.stringify({ items: [] }));
+      if (url.includes('/configmaps') && !url.includes('resource%3Dexperiment'))
+        return new Response(JSON.stringify({ items: [] }));
       if (url.includes('/configmaps'))
         return new Response(
           JSON.stringify({
@@ -95,7 +98,7 @@ function setup(path = '/runs/details/uid-one', otherRuns: unknown[] = []) {
               {
                 apiVersion: 'v1',
                 kind: 'ConfigMap',
-                metadata: { name: 'training' },
+                metadata: { name: 'training', uid: 'experiment-uid', resourceVersion: '1' },
                 data: { displayName: 'Human training', description: 'Training group' },
               },
             ],
@@ -104,6 +107,12 @@ function setup(path = '/runs/details/uid-one', otherRuns: unknown[] = []) {
       if (url.includes('/workflow-templates') || url.includes('/cron-workflows'))
         return new Response(JSON.stringify({ items: [] }));
       if (url.startsWith('/kubernetes/apis/argoproj.io/'))
+        return new Response(
+          JSON.stringify({
+            items: [run, ...otherRuns].map((item: any) => ({ metadata: item.metadata })),
+          }),
+        );
+      if (url.startsWith('/argo/api/v1/workflows/argo?'))
         return new Response(JSON.stringify({ items: [run, ...otherRuns] }));
       throw new Error(`Unexpected request: ${url}`);
     }),
@@ -153,6 +162,11 @@ describe('stock run presentation with native data', () => {
     expect(await screen.findByText('Human training')).toBeInTheDocument();
     expect(await screen.findByRole('link', { name: 'run-one' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'other-run' })).not.toBeInTheDocument();
+  });
+  it('opens an SDK experiment UID and keeps legacy membership visible', async () => {
+    setup('/experiments/details/experiment-uid');
+    expect(await screen.findByText('Human training')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'run-one' })).toBeInTheDocument();
   });
   it('retains the selected task across refresh and exposes cached artifact provenance', async () => {
     const { client } = setup();

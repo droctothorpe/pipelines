@@ -41,6 +41,8 @@ export default function NativeTable({
   emptyMessage,
   filterActions,
   disablePaging,
+  noFilterBox,
+  disableSorting,
   radio = false,
 }: {
   rows: NativeRow[];
@@ -53,6 +55,8 @@ export default function NativeTable({
   emptyMessage?: string;
   filterActions?: React.ReactNode;
   disablePaging?: boolean;
+  noFilterBox?: boolean;
+  disableSorting?: boolean;
   radio?: boolean;
 }) {
   const [request, setRequest] = useState<ListRequest>({
@@ -69,6 +73,8 @@ export default function NativeTable({
       emptyMessage={emptyMessage}
       filterActions={filterActions}
       disablePaging={disablePaging}
+      noFilterBox={noFilterBox}
+      disableSorting={disableSorting}
       useRadioButtons={radio}
       selectedIds={selected}
       updateSelection={select}

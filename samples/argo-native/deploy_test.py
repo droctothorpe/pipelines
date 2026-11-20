@@ -110,6 +110,12 @@ def test_reader_cannot_mutate_and_no_cluster_admin_browser_binding():
         for item in resources
         if item['kind'] == 'Role' and item['metadata']['name'] == 'argo-ui-edit'
     )
+    metadata = next(
+        rule for rule in edit['rules'] if rule['resources'] == ['configmaps']
+    )
+    assert 'update' in metadata['verbs'], (
+        'SDK/UI archive state requires ConfigMap updates'
+    )
     templates = next(
         rule
         for rule in edit['rules']
@@ -118,3 +124,45 @@ def test_reader_cannot_mutate_and_no_cluster_admin_browser_binding():
     assert (
         'update' not in templates['verbs'] and 'patch' not in templates['verbs']
     )
+
+
+def test_template_offload_grants_controller_creation_only():
+    resources = list(
+        yaml.safe_load_all(
+            Path(__file__).with_name('native-rbac.yaml').read_text()
+        )
+    )
+    role = next(
+        (
+            r
+            for r in resources
+            if r['kind'] == 'Role'
+            and r['metadata']['name'] == 'kfp-template-config'
+        ),
+        None,
+    )
+    assert role is not None, (
+        'Large native templates require controller ConfigMap creation'
+    )
+    assert role['rules'] == [
+        {'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['create']}
+    ]
+    binding = next(
+        r
+        for r in resources
+        if r['kind'] == 'RoleBinding'
+        and r['metadata']['name'] == 'kfp-template-config'
+    )
+    assert binding['subjects'] == [{'kind': 'ServiceAccount', 'name': 'argo'}]
+    workflow = next(
+        r
+        for r in resources
+        if r['kind'] == 'Role' and r['metadata']['name'] == 'argo-workflow'
+    )
+    assert workflow['rules'] == [
+        {
+            'apiGroups': ['argoproj.io'],
+            'resources': ['workflowtaskresults'],
+            'verbs': ['create', 'patch'],
+        }
+    ]

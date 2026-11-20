@@ -19,17 +19,28 @@ import { commonCss, padding, fontsize } from 'src/Css';
 import { ExternalLink } from 'src/atoms/ExternalLink';
 import { HelpButton } from 'src/atoms/HelpButton';
 import Input from 'src/atoms/Input';
+import NativeParameterInput from 'src/components/NativeParameterInput';
 import BusyButton from 'src/atoms/BusyButton';
 import NativePage from 'src/components/NativePage';
 import NativeTable from 'src/components/NativeTable';
 import Toolbar from 'src/components/Toolbar';
+import Trigger from 'src/components/Trigger';
+import { createSchedule, scheduleTrigger, type ScheduleSettings } from 'src/lib/NativeScheduling';
 import AddIcon from '@mui/icons-material/Add';
 import { formatDateString } from 'src/lib/UiUtils';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { useInventory } from 'src/lib/NativeQueries';
-import { createResource, submitRun, type NativeResource } from 'src/lib/ArgoResources';
+import { ARTIFACT_ROOT, workflowArtifactRoot } from 'src/lib/NativeArtifacts';
+import {
+  createResource,
+  submitRun,
+  parameterAnnotations,
+  type NativeResource,
+} from 'src/lib/ArgoResources';
 import {
   description as resourceDescription,
+  resourceId,
+  resourceMatches,
   DISPLAY_NAME,
   DESCRIPTION,
   EXPERIMENT,
@@ -94,14 +105,14 @@ export function NativeNewExperiment() {
                       namespace,
                       labels: { 'pipelines.kubeflow.org/resource': 'experiment' },
                     },
-                    data: { displayName: name.trim(), description },
+                    data: { displayName: name.trim(), description, storageState: 'AVAILABLE' },
                   };
-                  await createResource(namespace, 'experiments', resource);
+                  const created = await createResource(namespace, 'experiments', resource);
                   await client.invalidateQueries({
                     queryKey: ['native', namespace, 'experiments'],
                   });
                   navigate(
-                    `/runs/new?experimentId=${enc(resource.metadata.name)}&firstRunInExperiment=1`,
+                    `/runs/new?experimentId=${enc(resourceId(created))}&firstRunInExperiment=1`,
                   );
                 } catch (error) {
                   fail(error);
@@ -169,38 +180,44 @@ export function NativeNewRun() {
   const [description, setDescription] = useState<string>();
   const [parameters, setParameters] = useState<Record<string, string>>({});
   const [account, setAccount] = useState<string>();
+  const [customRoot, setRoot] = useState<string>();
+  const [useRoot, setUseRoot] = useState<boolean>();
   const [recurring, setRecurring] = useState(search.get('recurring') === '1');
-  const [customCron, setCron] = useState<string>(),
-    [customTimezone, setTimezone] = useState<string>();
+  const [customSchedule, setSchedule] = useState<ScheduleSettings>();
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState<'Pipeline' | 'Pipeline Version' | 'Experiment'>();
   const [pick, setPick] = useState<string[]>([]);
   const cloneId = search.get('cloneFromRun');
   const cloneScheduleId = search.get('cloneFromRecurringRun');
-  const cloneSchedule = inventory.schedules.data?.find(
-    (schedule) => schedule.metadata.name === cloneScheduleId,
+  const cloneSchedule = inventory.schedules.data?.find((schedule) =>
+    resourceMatches(schedule, cloneScheduleId),
   );
-  const cron = customCron ?? cloneSchedule?.spec?.schedules?.[0] ?? '0 * * * *';
-  const timezone = customTimezone ?? cloneSchedule?.spec?.timezone ?? 'UTC';
+  const initialSchedule = scheduleTrigger(cloneSchedule);
+  const scheduling = customSchedule ?? initialSchedule;
   const clone = useQuery({
     queryKey: ['native', namespace, 'run', cloneId],
     queryFn: ({ signal }) => getUiRun(namespace, cloneId!, signal),
     enabled: !!cloneId,
   });
   const versions = inventory.versions.data || [];
-  const version = versions.find(
-    (version) =>
-      version.metadata.name ===
-      (versionName ||
+  const version = versions.find((version) =>
+    resourceMatches(
+      version,
+      versionName ||
+        clone.data?.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
         clone.data?.spec.workflowTemplateRef?.name ||
-        cloneSchedule?.spec?.workflowSpec?.workflowTemplateRef?.name),
+        clone.data?.metadata.annotations?.['pipelines.kubeflow.org/workflow-template'] ||
+        cloneSchedule?.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
+        cloneSchedule?.spec?.workflowSpec?.workflowTemplateRef?.name,
+    ),
   );
-  const experiment = inventory.experiments.data?.find(
-    (exp) =>
-      exp.metadata.name ===
-      (experimentName ||
+  const experiment = inventory.experiments.data?.find((exp) =>
+    resourceMatches(
+      exp,
+      experimentName ||
         clone.data?.metadata.labels?.[EXPERIMENT] ||
-        cloneSchedule?.spec?.workflowMetadata?.labels?.[EXPERIMENT]),
+        cloneSchedule?.spec?.workflowMetadata?.labels?.[EXPERIMENT],
+    ),
   );
   const name =
     customName ??
@@ -227,6 +244,9 @@ export function NativeNewRun() {
     cloneSchedule?.metadata.annotations?.[DESCRIPTION] ??
     '';
   const specs: Array<{ name: string; value?: string }> = version?.spec?.arguments?.parameters || [];
+  const parameterTypes = JSON.parse(
+    version?.metadata.annotations?.['pipelines.kubeflow.org/parameter-types'] || '{}',
+  );
   const values = Object.fromEntries(
     specs.map((parameter) => [
       parameter.name,
@@ -236,8 +256,17 @@ export function NativeNewRun() {
         '',
     ]),
   );
+  const clonedRoot =
+    clone.data?.metadata.annotations?.['pipelines.kubeflow.org/pipeline-root'] ||
+    cloneSchedule?.spec?.workflowMetadata?.annotations?.['pipelines.kubeflow.org/pipeline-root'];
+  const pipelineRoot =
+    customRoot ?? clonedRoot ?? version?.metadata.annotations?.[ARTIFACT_ROOT] ?? '';
+  const rootEnabled =
+    useRoot ?? (!!clonedRoot && clonedRoot !== version?.metadata.annotations?.[ARTIFACT_ROOT]);
+  const selectedRoot = rootEnabled ? pipelineRoot.trim() : undefined;
   const invalid =
     !version ||
+    (rootEnabled && !selectedRoot) ||
     !name.trim() ||
     specs.some((parameter) => parameter.value === undefined && !values[parameter.name]);
   const unique = new Map(versions.map((version) => [pipelineId(version), version]));
@@ -252,28 +281,40 @@ export function NativeNewRun() {
     setBusy(true);
     try {
       if (recurring) {
+        const artifactRoot = workflowArtifactRoot(version, selectedRoot);
+        const labels = {
+          ...version.metadata.labels,
+          ...(version.metadata.uid
+            ? { 'pipelines.kubeflow.org/version-id': version.metadata.uid }
+            : {}),
+        };
         const resource: NativeResource = {
           apiVersion: 'argoproj.io/v1alpha1',
           kind: 'CronWorkflow',
           metadata: {
             name: `schedule-${crypto.randomUUID().slice(0, 12)}`,
             namespace,
-            labels: version.metadata.labels,
+            labels,
             annotations: { [DISPLAY_NAME]: name, [DESCRIPTION]: runDescription },
           },
           spec: {
-            schedules: [cron],
-            timezone,
-            suspend: true,
-            concurrencyPolicy: 'Forbid',
             workflowMetadata: {
               labels: {
-                ...version.metadata.labels,
-                ...(experiment ? { [EXPERIMENT]: experiment.metadata.name } : {}),
+                ...labels,
+                ...(experiment ? { [EXPERIMENT]: resourceId(experiment) } : {}),
+              },
+              annotations: {
+                ...artifactRoot.annotations,
+                ...parameterAnnotations(version, values),
+                'pipelines.kubeflow.org/storage-state': 'AVAILABLE',
+                'pipelines.kubeflow.org/workflow-template': version.metadata.name,
               },
             },
             workflowSpec: {
-              workflowTemplateRef: { name: version.metadata.name },
+              ...artifactRoot.spec,
+              ...(version.spec?.synchronization
+                ? { synchronization: structuredClone(version.spec.synchronization) }
+                : {}),
               ...(serviceAccount ? { serviceAccountName: serviceAccount } : {}),
               arguments: {
                 parameters: Object.entries(values).map(([name, value]) => ({ name, value })),
@@ -281,7 +322,7 @@ export function NativeNewRun() {
             },
           },
         };
-        await createResource(namespace, 'cron-workflows', resource);
+        await createSchedule(namespace, resource, scheduling);
         await client.invalidateQueries({ queryKey: ['native', namespace] });
         navigate(`/recurringrun/details/${enc(resource.metadata.name)}`);
       } else {
@@ -289,10 +330,11 @@ export function NativeNewRun() {
           namespace,
           version,
           values,
-          experiment?.metadata.name || '',
+          experiment ? resourceId(experiment) : '',
           name,
           runDescription,
           serviceAccount,
+          selectedRoot,
         );
         await client.invalidateQueries({ queryKey: ['native', namespace, 'runs'] });
         navigate(runHref(run));
@@ -408,22 +450,14 @@ export function NativeNewRun() {
             <>
               <div className={commonCss.header}>Run trigger</div>
               <div>Choose a method by which new runs will be triggered</div>
-              <Input
-                label='Cron schedule'
-                required
-                value={cron}
-                onChange={(event) => setCron(event.target.value)}
-                variant='outlined'
-              />
-              <Input
-                label='Timezone'
-                value={timezone}
-                onChange={(event) => setTimezone(event.target.value)}
-                variant='outlined'
+              <Trigger
+                key={cloneSchedule?.metadata.uid || cloneSchedule?.metadata.name || 'new'}
+                initialProps={initialSchedule}
+                onChange={setSchedule}
               />
               <p>
-                New recurring runs are disabled until you enable them. Overlapping runs are
-                forbidden.
+                Recurring runs start enabled. Argo recovers at most one missed occurrence after
+                downtime.
               </p>
             </>
           )}
@@ -435,12 +469,25 @@ export function NativeNewRun() {
             </ExternalLink>
             .
           </div>
-          <Tooltip title='The artifact repository is configured in the native WorkflowTemplate and Argo controller.'>
-            <FormControlLabel
-              label='Custom Pipeline Root'
-              control={<Checkbox checked={false} disabled color='primary' />}
+          <FormControlLabel
+            label='Custom Pipeline Root'
+            control={
+              <Checkbox
+                checked={rootEnabled}
+                onChange={(event) => setUseRoot(event.target.checked)}
+                color='primary'
+              />
+            }
+          />
+          {rootEnabled && (
+            <Input
+              label='Pipeline Root'
+              value={pipelineRoot}
+              required
+              onChange={(event) => setRoot(event.target.value)}
+              variant='outlined'
             />
-          </Tooltip>
+          )}
           <div className={commonCss.header}>Run parameters</div>
           <div>
             {version
@@ -450,15 +497,15 @@ export function NativeNewRun() {
               : 'Parameters will appear after you select a pipeline'}
           </div>
           {specs.map((parameter) => (
-            <Input
+            <NativeParameterInput
               key={parameter.name}
-              label={parameter.name}
+              name={parameter.name}
+              kind={parameterTypes[parameter.name]}
               required={parameter.value === undefined}
               value={values[parameter.name]}
-              onChange={(event) =>
-                setParameters((current) => ({ ...current, [parameter.name]: event.target.value }))
+              onChange={(value) =>
+                setParameters((current) => ({ ...current, [parameter.name]: value }))
               }
-              variant='outlined'
             />
           ))}
           <div className={classes(commonCss.flex, padding(20, 'tb'))}>
@@ -467,7 +514,13 @@ export function NativeNewRun() {
               title='Start'
               className={commonCss.buttonAction}
               busy={busy}
-              disabled={invalid || (recurring && !cron.trim())}
+              disabled={
+                invalid ||
+                (recurring &&
+                  (!scheduling.trigger ||
+                    !Number.isSafeInteger(Number(scheduling.maxConcurrentRuns)) ||
+                    Number(scheduling.maxConcurrentRuns) < 1))
+              }
               onClick={start}
             />
             <Button id='exitNewRunPageBtn' onClick={() => navigate('/runs')}>

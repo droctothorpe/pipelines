@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { argoRequest, getArgoWorkflow, listNativeItems, type ArgoWorkflow } from './Argo';
+import { workflowArtifactRoot } from './NativeArtifacts';
+import { prepareArtifactLists } from './NativeArtifactLists';
 
 export interface NativeResource {
   apiVersion: string;
@@ -19,13 +21,24 @@ export interface NativeResource {
   data?: Record<string, string>;
 }
 const encode = encodeURIComponent;
-export type ResourceKind = 'workflow-templates' | 'cron-workflows' | 'experiments';
+export type ResourceKind =
+  | 'workflow-templates'
+  | 'cron-workflows'
+  | 'experiments'
+  | 'pipelines'
+  | 'run-state'
+  | 'schedule-limits';
+const configMapKinds: Partial<Record<ResourceKind, string>> = {
+  experiments: 'experiment',
+  pipelines: 'pipeline',
+  'run-state': 'run-state',
+  'schedule-limits': 'schedule-limit',
+};
 
 function resourcePath(namespace: string, kind: ResourceKind, name?: string) {
-  const root =
-    kind === 'experiments'
-      ? `/kubernetes/api/v1/namespaces/${encode(namespace)}/configmaps`
-      : `/argo/api/v1/${kind}/${encode(namespace)}`;
+  const root = configMapKinds[kind]
+    ? `/kubernetes/api/v1/namespaces/${encode(namespace)}/configmaps`
+    : `/argo/api/v1/${kind}/${encode(namespace)}`;
   return root + (name ? '/' + encode(name) : '');
 }
 
@@ -35,8 +48,8 @@ export async function listResources(
   signal?: AbortSignal,
 ): Promise<NativeResource[]> {
   const query = new URLSearchParams(
-    kind === 'experiments'
-      ? { labelSelector: 'pipelines.kubeflow.org/resource=experiment', limit: '100' }
+    configMapKinds[kind]
+      ? { labelSelector: `pipelines.kubeflow.org/resource=${configMapKinds[kind]}`, limit: '100' }
       : {
           'listOptions.labelSelector': 'pipelines.kubeflow.org/pipeline',
           'listOptions.limit': '100',
@@ -45,19 +58,18 @@ export async function listResources(
   const items = await listNativeItems<NativeResource>(
     resourcePath(namespace, kind),
     query,
-    kind === 'experiments' ? 'continue' : 'listOptions.continue',
+    configMapKinds[kind] ? 'continue' : 'listOptions.continue',
     signal,
   );
   // Argo Server's protobuf JSON omits TypeMeta; the endpoint determines the kind.
   return items.map((item) => ({
     ...item,
-    apiVersion: kind === 'experiments' ? 'v1' : 'argoproj.io/v1alpha1',
-    kind:
-      kind === 'experiments'
-        ? 'ConfigMap'
-        : kind === 'workflow-templates'
-          ? 'WorkflowTemplate'
-          : 'CronWorkflow',
+    apiVersion: configMapKinds[kind] ? 'v1' : 'argoproj.io/v1alpha1',
+    kind: configMapKinds[kind]
+      ? 'ConfigMap'
+      : kind === 'workflow-templates'
+        ? 'WorkflowTemplate'
+        : 'CronWorkflow',
   }));
 }
 
@@ -70,6 +82,9 @@ export async function createResource(
     'workflow-templates': 'WorkflowTemplate',
     'cron-workflows': 'CronWorkflow',
     experiments: 'ConfigMap',
+    pipelines: 'ConfigMap',
+    'run-state': 'ConfigMap',
+    'schedule-limits': 'ConfigMap',
   }[kind];
   if (
     resource?.kind !== expected ||
@@ -86,7 +101,7 @@ export async function createResource(
       'WorkflowTemplate needs the pipelines.kubeflow.org/pipeline label. Compile with the native KFP compiler.',
     );
   const key = kind === 'workflow-templates' ? 'template' : 'cronWorkflow';
-  const body = kind === 'experiments' ? resource : { namespace, [key]: resource };
+  const body = configMapKinds[kind] ? resource : { namespace, [key]: resource };
   return (
     await argoRequest(resourcePath(namespace, kind), undefined, {
       method: 'POST',
@@ -109,6 +124,21 @@ export async function deleteExperiment(namespace: string, experiment: NativeReso
   });
 }
 
+export function parameterAnnotations(version: NativeResource, parameters: Record<string, string>) {
+  const encoded = version.metadata.annotations?.['pipelines.kubeflow.org/parameter-types'];
+  const types = JSON.parse(encoded || '{}');
+  const values = Object.fromEntries(
+    Object.entries(parameters).map(([key, value]) => [
+      key,
+      !types[key] || types[key] === 'String' ? value : JSON.parse(value),
+    ]),
+  );
+  return {
+    'pipelines.kubeflow.org/parameters': JSON.stringify(values),
+    ...(encoded ? { 'pipelines.kubeflow.org/parameter-types': encoded } : {}),
+  };
+}
+
 export async function submitRun(
   namespace: string,
   version: NativeResource,
@@ -117,9 +147,12 @@ export async function submitRun(
   name?: string,
   description?: string,
   serviceAccountName?: string,
+  pipelineRoot?: string,
 ) {
+  const artifactRoot = workflowArtifactRoot(version, pipelineRoot);
   const labels = {
     ...version.metadata.labels,
+    ...(version.metadata.uid ? { 'pipelines.kubeflow.org/version-id': version.metadata.uid } : {}),
     ...(experiment ? { 'pipelines.kubeflow.org/experiment': experiment } : {}),
   };
   const workflow = {
@@ -129,17 +162,17 @@ export async function submitRun(
       generateName: version.metadata.name.slice(0, 48) + '-',
       namespace,
       labels,
-      ...(name || description
-        ? {
-            annotations: {
-              ...(name ? { 'pipelines.kubeflow.org/display-name': name } : {}),
-              ...(description ? { 'pipelines.kubeflow.org/description': description } : {}),
-            },
-          }
-        : {}),
+      annotations: {
+        ...artifactRoot.annotations,
+        'pipelines.kubeflow.org/storage-state': 'AVAILABLE',
+        ...parameterAnnotations(version, parameters),
+        'pipelines.kubeflow.org/workflow-template': version.metadata.name,
+        ...(name ? { 'pipelines.kubeflow.org/display-name': name } : {}),
+        ...(description ? { 'pipelines.kubeflow.org/description': description } : {}),
+      },
     },
     spec: {
-      workflowTemplateRef: { name: version.metadata.name },
+      ...(await prepareArtifactLists(namespace, artifactRoot.spec)),
       ...(serviceAccountName ? { serviceAccountName } : {}),
       arguments: {
         parameters: Object.entries(parameters).map(([name, value]) => ({ name, value })),

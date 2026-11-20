@@ -14,12 +14,20 @@ import { listUiRuns, listVersions } from './NativeUi';
 import { useNativeUi } from './NativeUiContext';
 export function useInventory() {
   const { namespace } = useNativeUi();
+  const pipelines = useQuery({
+    refetchOnMount: 'always',
+    queryKey: ['native', namespace, 'pipelines'],
+    queryFn: ({ signal }) => listResources(namespace, 'pipelines', signal),
+    staleTime: 5000,
+  });
   const versions = useQuery({
+    refetchOnMount: 'always',
     queryKey: ['native', namespace, 'versions'],
     queryFn: ({ signal }) => listVersions(namespace, signal),
     staleTime: 5000,
   });
   const experiments = useQuery({
+    refetchOnMount: 'always',
     queryKey: ['native', namespace, 'experiments'],
     queryFn: ({ signal }) => listResources(namespace, 'experiments', signal),
     staleTime: 5000,
@@ -30,17 +38,24 @@ export function useInventory() {
     refetchInterval: 5000,
   });
   const schedules = useQuery({
+    refetchOnMount: 'always',
     queryKey: ['native', namespace, 'schedules'],
     queryFn: ({ signal }) => listResources(namespace, 'cron-workflows', signal),
     staleTime: 5000,
   });
   return {
+    pipelines,
     versions,
     experiments,
     runs,
     schedules,
-    error: versions.error || experiments.error || runs.error || schedules.error,
-    pending: versions.isPending || experiments.isPending || runs.isPending || schedules.isPending,
+    error: pipelines.error || versions.error || experiments.error || runs.error || schedules.error,
+    pending:
+      pipelines.isPending ||
+      versions.isPending ||
+      experiments.isPending ||
+      runs.isPending ||
+      schedules.isPending,
   };
 }
 export interface NativeArtifact {

@@ -10,9 +10,12 @@ from typing import Any, Dict, List, Optional
 class TaskConfig:
     """Configuration annotation retained for typed component definitions.
 
-    The native compiler currently rejects automatic TaskConfig injection.
-    Pass explicit component parameters or Kubernetes settings instead; there
-    is no KFP driver that populates this value.
+    The native compiler supplies selected passthrough fields from the task's
+    Kubernetes configuration. ``apply_to_task`` controls whether each selected
+    field also applies to the component pod; no driver pod populates this value.
+    Python components also receive conditional workspace volumes and resolved
+    structured settings, including resource claims. Mixed dynamic declarations
+    and raw-container structured TaskConfig still require additional lowering.
     """
 
     affinity: Optional[Dict[str, Any]] = None

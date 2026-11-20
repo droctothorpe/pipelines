@@ -1,126 +1,289 @@
-# Feature gaps versus stock KFP
+# Backwards-compatibility inventory
 
-## Comparison boundary
+**Snapshot: 2026-11-20. Implementation is paused for inventory and commit.**
 
-The stock baseline is commit `7780f12acfbde9f16169c7fcbfdfb6c3ef5432ea`, immediately
-before this branch's native implementation checkpoint (`2a1c1439a`). This compares
-that checkout's features, not every historical KFP release. The inventory concerns
-cluster execution, authoring compatibility and application features.
+Reference: stock KFP commit `7780f12acfbde9f16169c7fcbfdfb6c3ef5432ea`.
+This document covers all confirmed differences and unresolved compatibility areas
+identified during the native-Argo migration. It supersedes the earlier working
+inventory. It is **not a certification that everything absent from this list is
+compatible**, nor a claim that every possible SDK argument combination was tested.
+The intended contract and detailed implementation evidence are in
+[SDK compatibility](sdk-compatibility.md).
 
-“Unavailable” means the current native implementation has no equivalent interface
-or implementation. It does **not** mean Argo cannot provide that capability.
-Some have an Argo/Kubernetes alternative, but are not drop-in KFP compatibility.
-A separate section lists behavior not yet demonstrated end to end.
+## How to read this inventory
 
-## Execution and management interfaces
+- **A — Accepted departure:** a known difference explicitly accepted for this work.
+- **C — Confirmed gap:** user-facing functionality is missing, rejected, or narrower
+  in the current implementation. Unless marked A, it is not an approved removal.
+- **L — Known limit, uncertain stock impact:** the current boundary is established,
+  but a stock-valid counterexample or exact stock equivalence is not established.
+- **U — Uncertain:** implemented but insufficiently verified, an unresolved failure,
+  or an area whose stock/native behavior has not been fully compared.
+- **P — Prerequisite:** unavailable hardware, credentials, or installation coverage.
+- **B — Baseline issue:** stock itself fails, or stock support has not been established.
 
-| Stock capability | Current gap / alternative |
-|---|---|
-| KFP API server and its v2/v2beta1 REST/gRPC contracts | Removed. Browser management uses Kubernetes and Argo Server directly. Existing integrations calling KFP endpoints must change. |
-| `kfp.Client`, generated `kfp.server_api`, registry/Kubeflow backend clients, server-management CLI groups | Removed. No KFP `run`, `pipeline`, `experiment` or `recurring-run` management commands. Use Argo/Kubernetes clients; the CLI retains compile, image-build and preview commands. |
-| PipelineSpec execution IR and KFP Pipeline/PipelineVersion CRD output | No pipeline IR compiler or KFP CRDs. Compile original Python to WorkflowTemplate/Workflow/CronWorkflow. Portable **container definitions** still use shared schema messages, without an execution DAG builder. |
-| Loading compiled KFP pipeline graphs for reuse or migration | Not supported. Historical graph IR and old backend runs are not imported. Existing container definitions remain loadable. |
-| KFP pipeline/version/experiment/run ID conventions and server-side CRUD contracts | Replaced by resource names/labels and Workflow UIDs. The native UI creates content-named versions; it does not expose all old pipeline/version editing and sharing operations. |
-| ZIP/tar pipeline packages and old upload endpoints | The stock upload form is restored, but accepts native WorkflowTemplate `.yaml`/`.yml` files, including JSON encoded as YAML. URL imports require browser CORS access. ZIP/tar packages and KFP IR are rejected explicitly. |
-| KFP ScheduledWorkflow controller and recurring-run API | Removed. Recurrence exists through native CronWorkflows, not the old controller/model. The UI exposes cron expressions and suspension, not all old periodic-interval, start/end, catch-up or concurrency controls. Operators can configure native CronWorkflow fields separately. |
-| KFP archive/unarchive and experiment archive semantics | The stock Archive action verifies a durable Argo archive, then deletes the completed live Workflow with a UID precondition. Active means a live CR exists; Archived means only the SQL record remains. Restore and experiment archival are disabled with explanations. Experiment ConfigMaps can still be deleted through Kubernetes without deleting runs; the stock UI has no Delete experiment button. |
-| Every legacy dashboard action and historical bookmark | The stock sidebar, tables, forms, selectors, run graph, inspector and timeline are restored. Routes use native resource names and Workflow UIDs, not historical KFP IDs. Clone run/recurring run, failed-live-run retry and termination use native operations. Cloning requires the referenced WorkflowTemplate to remain available. Separate execution/settings pages and backend-only actions are not restored. |
-| KFP backend plugin inputs/outputs | No `plugins_input` dispatch or KFP plugin lifecycle. Component code/native Argo facilities must provide any replacement. |
-| Bundled legacy component/sample catalogue | The old `components/` catalogue and backend-oriented samples were removed. Authoring custom Python/container components remains supported; vendor packages and old catalogue entries are not shipped or qualified here. |
-| KFP release/upgrade tooling, service image builds and migration jobs | Retired with the backend. Native CI builds/tests the SDK, UI and an isolated Argo stack. It does not migrate or operate a stock KFP installation. |
+A passing signature, unit test, compilation, terminal workflow phase, or mocked
+browser test is not by itself proof of end-to-end compatibility. Earlier live
+passes do not prove that every subsequent compiler/runtime change works live.
+No C/L/U entry should be called an inherent Argo limitation without further evidence.
 
-## Authoring and compiler limits
+## Verification checkpoint and remaining closeout
 
-The DSL still captures many constructs so it can type-check source and report a
-useful compiler error. Presence of an annotation or helper does not imply native
-execution support.
+| Evidence | What it establishes | What it does not establish |
+|---|---|---|
+| 65 frozen signatures plus the top-level Client alias check | Captured calling conventions are restored | All methods' behavior, exceptions, fields or external integrations |
+| Full retained Python suites: **1,338 passed, 2 xfailed, 302 subtests**, on Python 3.11 and 3.13 | Current retained offline SDK/compiler/client tests pass | Execution of every generated workflow or every stock SDK feature |
+| Frontend CI: **295 unit tests**, offline viewer smoke and **3 production-bundle browser tests** | Build, retained UI logic, mocked API workflows and offline viewer pass | Current deployment parity, full visual equivalence or live authorization for recent changes |
+| **27/29** captured stock definitions compile with both SDKs; all 27 native manifests pass offline Argo lint | No remaining compilation failure in the stock-compilable corpus | Every original notebook cell, full-sized input, runtime branch or dependency environment |
+| **25/27** stock-compilable definitions passed live across earlier retained reports | Substantial real execution coverage | A complete live pass of the code being committed; GPU/cloud cases remain |
+| Latest live corpus rerun: **8 cases passed**, then transport failures; unchanged PVC sample separately passed | Partial rerun evidence | Remaining cases were not verified; preview-formats timed out before the later API outage |
+| Wheel/sdist builds and isolated installed-wheel smoke | Packaging includes tested native modules and bindings | Every installation platform, dependency resolution or external registry |
 
-| Stock capability | Current native limitation |
-|---|---|
-| Root artifact inputs and importer tasks | Rejected by the native compiler. Use a produced artifact in a supported graph or explicit native Argo artifact configuration outside this compiler. |
-| Artifact-list fan-in / `dsl.Collected` artifact lists | Rejected. Scalar collection is implemented and tested; multi-artifact staging/aggregation is not. |
-| Conditional output merges / `dsl.OneOf` execution lowering | Not implemented. Branches execute, but outputs cannot escape them through a conditional merge. Keep consumers inside the branch or restructure the pipeline. |
-| Every nested collection/loop/output pattern | Only the supported scope/collection forms are implemented. Some nested fan-in and grouped artifact-output cases fail explicitly. This is not complete control-flow compatibility. |
-| `.ignore_upstream_failure()` continuation | Not lowered. Failure-aware exit handlers are supported, but are not a universal substitute for this task setting. |
-| Workspace provisioning, workspace placeholders, and KFP `CreatePVC`/`DeletePVC` intrinsics | Not implemented. The fake `argostub` component hooks were removed with their backend compiler. Existing PVC mounts are supported; create/manage PVCs explicitly with Kubernetes/Argo. |
-| Dynamic images, resource quantities, PVC names and some dynamic Kubernetes settings | Rejected instead of leaving unresolved channels in manifests. Use fixed values for supported settings. |
-| All `kfp-kubernetes` options | Native lowering covers literal resources/retries, node selectors, pod metadata, tolerations, image pull policy, secret/config-map environment values, existing PVC mounts and timeout. Other configuration keys, including several affinity, volume, init-container, security-context and resource-claim/DRA options, are not mapped. |
-| Automatic TaskConfig/configuration passthrough to external workloads | Rejected. The annotation remains a component-definition type, not a driver-populated runtime context. Pass explicit inputs/configuration instead. |
-| Retry/custom-cache/platform overrides on nested DAG tasks | Some are rejected; configure supported inner tasks instead. |
-| Arbitrary container scalar output types | Non-Python container outputs currently require `String`. Use the Python bridge for validated numeric, boolean, list and dict returns. Typed artifact payloads are supported. |
-| Fractional retry backoff factors | Argo's integer factor is enforced. Integral values such as `2.0` normalize to `2`; fractional values fail compilation. This differs from the stock SDK's float-valued API/IR field. |
-| Disabling compiler type checks | Not supported by the native compiler. Type checking stays enabled. |
-| KFP launcher debug-pause barriers and UI resume protocol | Removed with the launcher. Native Argo suspend/resume is supported, but does not reproduce before/after/on-error in-container debug barriers. |
-| Stock launcher/runtime image compatibility | Python component images need this checkout's runtime bridge (or its wheel). An unmodified upstream SDK runtime is not a drop-in executor for the new contract. |
+The local Kubernetes and Docker APIs became unavailable during validation. The
+most recent Kubernetes `/readyz` check returned `ok`, **but the interrupted tests
+have not been resumed**. That health response does not verify Docker, Argo Server,
+SQL reconnection, the UI port-forward or any pending live case. The last deployed
+UI image was `kfp-argo-ui:compatibility-20261120-080712`; newer changes are in the
+checkout/build, not that deployment. No restart or data deletion was used to
+resolve the outage.
 
-## Storage, caching and ML views
+Remaining closeout is a live rerun, investigation of its failures, completion of
+the C entries if full parity is still required, and resolution of the U/L/P items.
+This commit is an explicit compatibility checkpoint, not a declaration of completion.
 
-| Stock capability | Current gap / alternative |
-|---|---|
-| Every stock artifact-store/pipeline-root scheme | The compiler currently requires an S3-compatible `artifact_repository`. Other Argo artifact drivers are not exposed through this compiler. |
-| KFP cache store/API semantics | Replaced by native ConfigMap memoization. There is no KFP cache service or cache API, and SQL memoization is not implemented here. |
-| Caching mutable image tags, runtime-installed dependencies, secret/config-map/PVC-backed state without explicit version identity | The compiler conservatively rejects these cache configurations. Pin/snapshot the image and use versioned declared inputs, bake dependencies into it, or disable caching. |
-| Scalable global artifact discovery/indexing and cross-run metadata queries | No indexing service or global metadata database. The artifact list scans the 50 most recent runs and displays a notice when truncated; older artifacts remain accessible from their run. Producer/input references preserve lineage and cached origin identity. |
-| Full artifact comparison and visualization dashboard | Selected-run scalar metrics, typed metadata/downloads and input lineage are exposed. Artifact previews are bounded to 1 MiB; HTML uses a script-disabled, network-disabled sandbox and other payloads have a text preview. ROC/confusion-matrix plots, Markdown/table renderers and richer artifact comparisons are not ported. |
-| Automatic Dataset/Model previews in the native execution path | The bridge currently disables automatic preview generation. Existing metadata and payloads are preserved; stock automatic preview production/viewing is not reproduced. |
-| Managed TensorBoard viewers | Viewer controller, TensorBoard proxy and associated UI are removed. Run TensorBoard independently if required. |
-| Namespace export/import and historical metadata transfer | Removed. There is no migration/export service for stock KFP runs, artifacts or experiments. Native resource/SQL/object-store backup is an operator responsibility. |
-| Server-indexed list/search/comparison behavior | The stock table filters, sorting, page sizes and selection are restored. Native collection continuations are followed, then namespace inventory is filtered/sorted/paged in the browser. Comparison is limited to five selected runs. This is not a scalable replacement for server-indexed global queries. |
-| Full legacy logging UX | The current UI fetches the last 200 lines per task pod and offers refresh. Argo archive logs remain readable, but the old logging/proxy interfaces and all their options are not reproduced. |
+## A. Accepted departures
 
-## Authentication and operations
+| ID | Surface | Known difference / agreement |
+|---|---|---|
+| A01 | Compiled execution format | Native WorkflowTemplate/Workflow/CronWorkflow replaces PipelineSpec execution IR and KFP PipelineVersion CRDs. Historical IR manipulation/import is outside the agreed target; recompile original Python. Portable container component definitions remain supported. |
+| A02 | Backend and wire protocols | KFP backend/controllers, old REST/gRPC service transports and per-component driver infrastructure remain removed. Public SDK/UI outcomes are the target, not the old internal endpoints or storage layout. |
+| A03 | Local execution | Local runners/local execution remain removed. Passing `execute_locally=True` does not restore them. |
+| A04 | Missed recurring occurrences | Native Argo recovers at most one missed occurrence within its recovery window, not every missed occurrence. No backfill dispatcher. |
+| A05 | Artifact-list staging architecture | A consumer init-container may stage runtime-sized collections using the installed Argo downloader. No additional copy pods; storage credentials remain init-only. This is an accepted implementation mechanism, not permission to drop artifact behavior. |
+| A06 | System Logs tab | The obsolete KFP System Logs tab was removed at the user's request. Task logs, details and I/O remain. |
+| A07 | Release infrastructure | The old release/merge-queue machinery was retired with approval. Native CI/security/contributor checks are not a replica of the retired release system. |
 
-- The provided deployment is namespace-scoped development infrastructure, not the
-  stock Kubeflow multi-user/profile/central-dashboard integration. It uses manual
-  in-memory service-account tokens, not a complete SSO/session experience.
-- Namespace RBAC and denied Kubernetes/Argo actions are tested. This does not
-  establish production tenancy, network isolation, storage-credential isolation,
-  OpenShift support or every stock installation mode.
-- The old persistence agent, KFP run/metadata database, retention/backfill logic,
-  custom controllers, backend health endpoints and backend-specific telemetry are
-  gone. Argo owns workflow status, archive/offloading, TTL and scheduling instead;
-  its operational settings and semantics are not the KFP contracts.
-- Argo 4.1.6 was observed retaining a closed SQL session after PostgreSQL restarted.
-  Restarting Argo Server and the workflow controller recovered the same archived
-  run and artifact bytes. The persistence acceptance test explicitly restarts these
-  stateless services after storage; it does not demonstrate automatic database
-  reconnection or high availability.
-- Stock release/merge-queue workflows were intentionally retired with user approval.
-  Security scanning and basic issue/contributor automation remain. External branch
-  protection or repository settings are not changed by this commit.
+## C. Confirmed gaps or narrower functionality
 
-## Not yet established, rather than declared unavailable
+### Authoring, runtime, artifacts and Kubernetes
 
-- Complete behavior parity for every cancellation/error-code field of
-  `PipelineTaskFinalStatus`; success and failure are verified.
-- Every notebook, custom artifact class, optional-input combination and third-party
-  component package, even where its source compiles successfully.
-- Large production DAG throughput, global lineage scale, HA deployments, storage
-  retention beyond the demonstrated cache lifetime, and all Kubernetes/Argo versions.
-- Every native Argo feature through the KFP UI. Native operators can use Argo
-  resources/APIs directly without adding a KFP backend.
+| ID | Surface | Current difference | Evidence / boundary |
+|---|---|---|---|
+| C01 | Nested graph task retry | Applying a retry policy to a captured nested pipeline task is rejected; configuring its inner tasks is not an equivalent public operation. | `compiler/argo_compiler.py:compile_component` |
+| C02 | Nested graph custom caching | Custom cache keys on nested graph tasks are rejected. This is distinct from ordinary default-on task caching, which works. | Same explicit guard as C01 |
+| C03 | Nested graph platform overrides | Platform configuration on the nested graph task is rejected rather than applied to that graph's execution. | Same explicit guard as C01 |
+| C04 | Cross-boundary failure-tolerant inputs | `.ignore_upstream_failure()` still rejects inputs that require optional lowering across group boundaries. Same-scope/conditional-group successes do not close this gap. | `compiler/argo_continuation.py:arguments` |
+| C05 | Raw-container failure-tolerant inputs | Optional/no-default failure-tolerant container inputs are rejected; an explicit non-None default is required. Python cleanup support is broader. | `compiler/argo_compiler.py`, `optional_after_failure` guard |
+| C06 | Workspace deployment defaults | Workspace PVC access modes must be supplied explicitly. Stock deployment-provided workspace defaults are not bound into the native compiler. | `compiler/argo_workspace.py:configure` |
+| C07 | Importer download to workspace | `download_to_workspace=True` is explicitly rejected. Ordinary podless URI importers do not reproduce workspace materialization. | `compiler/argo_importer.py:compile_importer` |
+| C08 | Workspace TaskConfig in raw containers | Workspace volume passthrough currently requires a Python component. | `compiler/argo_task_config.py:project` |
+| C09 | Dynamic structured TaskConfig in raw containers | Dynamic structured projection requires the Python runtime bridge; raw/container equivalents are not lowered. | `compiler/argo_structured.py:finalize` |
+| C10 | Mixed dynamic affinity | Mixed dynamic node-affinity terms are rejected. Single dynamic affinity JSON and static affinity are a narrower implementation. | `compiler/argo_kubernetes.py:lower` |
+| C11 | Mixed dynamic resource claims | Mixed dynamic DRA declarations are rejected. Single dynamic declarations do not cover the mixed case. | Same lowerer, explicit mixed-claim guard |
+| C12 | Entrypoint-only raw artifact-list consumers | A raw list consumer needs an explicit executable command. Image-entrypoint-only consumers are rejected. | `compiler/argo_artifact_lists.py:add_staging` |
+| C13 | Storage/provider coverage | Pipeline artifact roots accept S3/GCS; importers and list staging accept S3/GCS/HTTP(S). OCI/modelcar and repository-plugin list staging are not implemented. Other stock provider/integration combinations are not substitutes for these supported paths. | `argo_artifacts.py`, `argo_importer.py`, `argo_staging.py`, `client/_artifact_repository.py` |
+| C14 | Stock default storage policy | The native compiler defaults to `s3://argo-artifacts` for the bundled deployment. It does not discover or migrate an existing stock KFP server's default pipeline-root/storage policy. Explicit root overrides are implemented. | `compiler/compiler.py:Compiler.__init__`, `argo_artifacts.py` |
+| C15 | Non-Kubernetes platform extensions | Only the retained kfp-kubernetes settings have native lowering. Other platform settings are rejected; preserving their serialized schema does not execute the corresponding service. | `argo_compiler.py:platform` |
+| C16 | Launcher debugging barriers | Stock launcher-specific before/after/error pause hooks are not reproduced. Native suspend/resume is not the same in-container debugging interface. | Native bootstrap/runtime replaces the launcher |
 
-## Evidence and source anchors
+### SDK, lifecycle, UI and integrations
 
-Confirmed native behavior is exercised by `argo_compiler_test.py`,
-`native_cli_test.py`, the retained SDK/widget tests, `verify_compatibility.py` and
-`argo-deployment.smoke.mjs`. Compiler rejection paths are in `argo_compiler.py`
-and `argo_groups.py`; UI presentation is in `components/Router.tsx` and the
-`Native*` pages. Native transport/identity boundaries are in `Argo.ts`,
-`ArgoResources.ts`, `NativeUi.ts`, `NativeImport.ts` and `ArgoRunGraph.ts`.
-`native-bundle.smoke.mjs` covers the built stock presentation without KFP endpoints.
+| ID | Surface | Current difference | Evidence / boundary |
+|---|---|---|---|
+| C17 | Backend plugin inputs | Run plugin inputs explicitly raise `NotImplementedError`; plugin output models exist but there is no corresponding native plugin execution path. | `client/_native.py:_workflow_spec` |
+| C18 | Certificate-only full history/artifacts | Direct Kubernetes authentication supports resource operations. Argo-only archive/artifact/history requests still need an authenticated Argo endpoint. `list_runs` and experiment archival also consult archive history; Kubernetes-only full-history separation is unfinished. | `client/_transport.py`, `_native.py`; U29 |
+| C19 | Historical task/MLMD detail | Historical Pod UIDs, state transitions, MLMD context identities and several task classification fields are not reconstructed. Missing values are left absent/None, not fabricated. | `client/_task_details.py`; detailed field inventory below |
+| C20 | Atomic experiment archival | Native archival is ordered, retryable multi-resource mutation, not the stock database transaction for experiment/run state. Some children may change before a reported failure. Concurrent run/schedule creation is not atomically fenced. | `_native.py:_experiment_storage`, `NativeUi.ts:setExperimentStorage` |
+| C21 | UI package upload breadth | The UI importer accepts a labelled native WorkflowTemplate document, narrower than the SDK's native YAML/JSON/ZIP/tar and resource-kind handling. URL import depends on browser CORS. | `frontend/src/lib/NativeImport.ts`, `pages/NativeUpload.tsx` |
+| C22 | Artifact discovery breadth | The UI artifact inventory scans the latest 50 runs and shows a truncation notice. It is not a global stock artifact catalog/index. Older artifacts remain reachable through their runs. | `frontend/src/lib/NativeQueries.ts:useArtifactInventory` |
+| C23 | Legacy visualizations | Full legacy UI-metadata/table/dashboard routing and managed TensorBoard behavior are not restored. Dataset/Model previews and classification viewers do not replace all legacy viewers. | `NativeArtifactPreview`, `NativeClassificationMetrics`, `NativeInspectors` |
+| C24 | Markdown/security rendering | Raw HTML, unsafe links, external images and active-format images are blocked. Content depending on those features will not render as in a permissive stock viewer. These restrictions must not be removed silently. | `components/viewers/MarkdownViewer.tsx` |
+| C25 | UI log breadth | Task log retrieval currently takes the last 200 lines with refresh. It is not full streaming, complete log history or every stock log option. | `frontend/src/lib/NativeUi.ts:taskLogs` |
+| C26 | Migration and export/import | No migration service for existing stock run databases, metadata histories or stored pipeline catalogs, and no complete namespace export/import path, is supplied. Preserving the local native fixtures is not a stock-data migration test. | Native architecture and deployment scope |
+| C27 | Kubeflow integration/session UX | Full profiles/central-dashboard integration and stock SSO/session UX are not restored. Native namespace/bearer-token UI access is the tested path. | `frontend/src/components/Router.tsx`, native proxy/auth adapters |
 
-Stock capabilities were checked against the baseline paths below. They are now
-removed where obsolete; inspect them with `git show BASE:path` using the commit
-above:
+## L. Confirmed implementation limits with uncertain stock impact
 
-- `sdk/python/kfp/client/client.py` and `sdk/python/kfp/cli/cli.py`
-- `sdk/python/kfp/compiler/compiler.py` and `pipeline_spec_builder.py`
-- `sdk/python/kfp/dsl/pipeline_task.py` and `pipeline_config.py`
-- `frontend/src/components/Router.tsx` and `frontend/src/components/viewers/`
-- `backend/src/apiserver/`, `backend/src/crd/controller/`, `backend/src/v2/`
-- `manifests/`, `frontend/server/`, `sdk/python/kfp/registry/`
+These are **category (b)** until stock-valid counterexamples or exact equivalence
+are established. Do not call all validation errors regressions.
 
-The retained component schema is not a hidden execution backend. The cleanup test
-asserts that retired services, controllers, RPC clients and their build roots stay
-absent.
+| ID | Boundary | Established limit and unresolved comparison |
+|---|---|---|
+| L01 | Fractional retry factors | Positive integral factors, including integral floats, work; fractional factors are rejected. Stock's compiler forwarded a float string, but the stock/pinned Argo runtime uses an integer factor. Exact stock execution semantics are not established; the signature alone is insufficient. |
+| L02 | Root artifact inputs | Native root artifact binding is rejected. Stock RootDAG/runtime configuration evidence exposes parameters, not an established public artifact-root submission path. Nested artifact inputs work. See B04. |
+| L03 | Remaining graph escape/aggregation guards | Direct conditional-output escape, uncollected loop outputs, unmapped artifact aggregation and unsupported dependency scopes still have guards. Some are invalid in stock too; valid OneOf/Collected cases must be distinguished from unsupported combinations. |
+| L04 | Workspace storage-class validation | Empty `storageClassName` is rejected; prior stock-source investigation also found rejection. Do not report this as a migration regression without a valid baseline. |
+| L05 | Package size/shape | SDK packages are limited to 64 MiB uncompressed, exactly one supported native manifest, with embedded templates/entrypoint. Reference-only or multi-document native bundles are not accepted. Historical IR is separately A01. |
+| L06 | Raw argument and collection size | Raw staged arguments at or above 128 KiB are rejected; the process argument limit also constrains stock executables. Python list consumers use files instead. Collection flattening has a 64-level nesting guard. |
+| L07 | Compressed node status | Local gzip status expansion is limited to 64 MiB. Malformed/oversized gzip fails explicitly. Alternative codecs or SQL-only status need server hydration; unavailable inventory returns None. |
+| L08 | Preview size | Dataset/Model preview retrieval is bounded to 64 KiB and does not fetch arbitrary full payloads. Oversized/legacy previews need comparison with stock. Markdown retains the stock 400,000-character cap; that cap is not a newly established regression. |
+| L09 | URI validation | Staging rejects credential-bearing URIs, fragments, and object-storage query strings. HTTP(S) does not inherit repository storage credentials. Legitimate stock inputs outside these rules need explicit comparison, not silent credential forwarding. |
+| L10 | Changing artifact roots | Packages without compiler-owned root bindings must be recompiled. Switching schemes while explicit driver credentials/settings are attached is rejected. Normal immutable-version root overrides are implemented. |
+| L11 | Old cached identities | A cached identity without inline metadata, a metadata companion URI, or a derivable canonical metadata path cannot be reconstructed; the stager requests producer regeneration. This is not migration of arbitrary stock MLMD records. |
+| L12 | Executor command recognition | The portable bridge requires a recognized SDK executor invocation. Arbitrary wrappers, alternate entrypoints and flag collisions need testing. |
+| L13 | Artifact path/layout assumptions | Native local paths, IDs and storage layout differ from old backend implementation details. Payload access and origin are preserved in tested cases; user code hard-coding launcher paths/MLMD IDs is not established as compatible. |
+| L14 | Resource-size ceilings | Native ConfigMap caches/registries and Workflow/annotation limits remain. Cache sharding/eviction and large-root-parameter handling are not proven. In particular, duplicating runtime parameters into annotations may hit the annotation limit before the workflow limit; this is an untested risk, not a reproduced stock regression. |
+| L15 | Individual UI run archival | The UI's individual-run archive helper allows only terminal runs, while SDK archival and experiment cascading can archive active runs without termination. Exact stock UI selection/guard behavior still needs comparison. |
+
+## U. Compatibility not established
+
+### Compiler, runtime, storage and configuration
+
+| ID | Area | What remains uncertain | Existing coverage / next evidence |
+|---|---|---|---|
+| U01 | Artifact-list iteration | Latest single-item staging and nested list iteration have not run live. | Compiler/stager/runtime tests and native lint pass; `artifact_lists.py:verify_iteration` remains unrun. |
+| U02 | Nullable raw-container argv | None/empty/literal-null handling, nested Concat and staged-list IfPresent need actual execution. | BusyBox fixture `container_optional_inputs.py`; 25 temporary pinned Expr/Sprig evaluations are only expression-level evidence. |
+| U03 | Literal native-template text | Strings such as `{{inputs.parameters.value}}` or `{{workflow.uid}}` must remain data where stock does. Argo performs multiple substitution passes. | Compare stock and native end-to-end; do not infer safety/equivalence from single-expression evaluation. |
+| U04 | Nullable Kubernetes settings | Nullable source channels in resource quantities, env, resource names and structured settings have not been fully lowered/verified. | Non-null dynamic settings and Python nullable parameters passed separately. |
+| U05 | Whole control-flow combination space | Nested loops/conditions/OneOf, zero iterations, conditional/skipped producers, collection returns, explicit dependencies and their combinations are not exhaustive. | Many retained cases pass; remaining guards are C04/C05/L03, not proof that every other combination works. |
+| U06 | Retry/failure combinations | Retries with validation wrappers, cleanup, caching, lists, workspaces, nested graphs and cancellation need broader live coverage. | Default/integral retry samples and targeted failure cleanup passed; latest nested task/pod projection is unit-tested. |
+| U07 | Raw scalar validation edges | Malformed float/dict, valid JSON of the wrong shape, overflow/nonfinite values, optional outputs and all retry/cache combinations are not fully live-tested. | Valid scalar types and malformed integer/bool/list runs were tested. |
+| U08 | Artifact list error/provider matrix | Metadata mismatch, download interruption, credentials expiry, provider changes, consumer cache hits, cross-root references and historical identity variants need broader validation. | Cached files/directories, empty/nested collections, missing-object failure, HTTPS and 256-item consumption passed in selected cases. |
+| U09 | Stager execution layouts | Init-less/alternative Argo executors, binary paths, images/architectures and externally customized pod patches are not verified. | Pinned regular Argo 4.1.6 layout was tested. |
+| U10 | Artifact-list schedules | SDK periodic execution passed; every UI-created recurring staging path, trigger and rebind combination is not established live. | Shared SDK/UI binding code and unit tests are not all schedule execution paths. |
+| U11 | Importer variants | Complete HTTP/GCS/provider semantics, dynamic metadata shapes, reimport/cache concurrency and all artifact types remain unverified. | S3 and selected HTTP consumption passed; workspace materialization is C07. |
+| U12 | Workspace lifecycle matrix | Access modes/storage classes, concurrent tasks, failed/cancelled runs, cleanup races, imported paths and custom cache keys need further testing. | Explicit-spec shared files, dynamic paths, unrelated-task caching and successful owned-claim cleanup passed. |
+| U13 | TaskConfig matrix | Every field combination, nested scope, apply-to-task mode and older SDK runtime combination is not verified. | Selected CPU/env/selectors, external-only workspace/DRA projection passed; C08–C11 remain. |
+| U14 | Kubernetes modifier breadth | All schema fields, scheduling constraints, security contexts, volume conflicts and dynamic/static combinations have not been compared. Unmapped fields still reject. | Retained pod-shape/live settings tests cover a subset; this is not every Kubernetes plugin configuration. |
+| U15 | DRA execution | Correct Pod claim fields and external-only projection do not prove device allocation/use/release. | Shape tests only; the owned shape-test workflow was terminated. See P01. |
+| U16 | Runtime image/SDK breadth | Other SDK versions, Python versions in user images, containerized components, custom executor wrappers, offline/restricted installation and image authentication need coverage. | Default images and unmodified PyPI KFP 2.17.0 passed selected cases; local test suites cover Python 3.11/3.13. |
+| U17 | Less-exercised authoring APIs | Notebook components, externally loaded/containerized definitions, custom artifact subclasses, output/default/type combinations and less-common valid placeholders lack a complete runtime matrix. | Restored authoring unit tests and the stock corpus are substantial but not exhaustive. |
+| U18 | Caching under real load | Concurrent identical tasks, cache write conflicts, capacity exhaustion, eviction, stale mutable dependencies and all overrides are not proven. | Default-on, custom-key, pipeline scope, cold/hot runs and cached artifact identity passed selected tests. |
+| U19 | Root/storage combinations | GCS credentials, mixed providers, root changes with explicit driver settings, custom artifact URIs and provider-specific metadata need further execution. | S3 payload/URI/root overrides passed; provider limits are C13/L09/L10. |
+| U20 | File/directory edge semantics | Symlinks, modes, unusual filenames, large files, custom paths, direct artifact executables and archive formats have not been exhaustively compared. | Ordinary files/directories and payload checks passed. |
+| U21 | Preview variants | Manual v1-directory previews, full format/type coverage after latest changes, oversized/absent/corrupt previews and all classification variants are not fully live-verified. | Sibling v2 Dataset/Model previews, ROC/confusion and selected Markdown cases passed earlier. |
+
+### SDK, authentication, lifecycle and scheduling
+
+| ID | Area | What remains uncertain | Existing coverage / next evidence |
+|---|---|---|---|
+| U22 | Latest experiment cascade | SDK/UI archival, partial failure/retry, late-created runs and parent-first restoration need live verification. | Unit and mocked production browser tests pass; `experiment_archive.py` is retained but unrun. |
+| U23 | Compact inventory API behavior | Latest field projection, metadata-only negotiation, count-aware paging, cache lag and identity reconciliation need live verification on the deployment. | Upstream source, unit and mocked browser tests pass; read-only `inventory.py` is unrun. |
+| U24 | Latest task projection | Gzip snapshots and nested retry/validation pod ownership need live proof, especially compressed/offloaded histories and retries. | New red/green tests pass; prior typed task snapshots were checked live before these edits. |
+| U25 | Complete response/exception parity | Full DTO field availability, error codes/categories, I/O producer classification, child hierarchy, cancellation state and serialization equivalence remain incomplete. | C19 and U49–U54 identify omissions; model/signature presence is not sufficient. |
+| U26 | Filtering and pagination semantics | All filter operators/field aliases/types, empty inventories, ordering ties, paging under mutation and old cursor/error expectations lack complete baseline comparison. | `_listing.py` has retained tests; old wire tokens are not preserved. |
+| U27 | Remaining lifecycle edges | Default-experiment deletion protection, orphan membership, deletion races, already-deleted resources, default/shared version selection, unregistered template adoption and all clone paths need review. | Basic CRUD/UID/name-reuse tests pass. No new destructive probes were run to close these questions. |
+| U28 | Recurring trigger semantics | Seconds-bearing cron, time zones/DST, start/end boundaries, outage windows, concurrency saturation/queued-vs-skipped occurrences and enable/disable races need full comparison. | Periodic/default-enabled/cron configuration and selected executions passed. Six-field zero-seconds normalization is narrower than arbitrary seconds cron. A04 only accepts missed-occurrence catch-up, not every other scheduling difference. |
+| U29 | Authentication matrix | SSO/IAP/OIDC/Dex/cookies, proxy/TLS variants, token expiry/refresh under live load, impersonation expectations, in-cluster deployments and archive-path credentials are not all proven. | Certificate and SA direct Kubernetes execution, reader denial, and offline credential tests passed. C18/C27 remain. |
+| U30 | Registry interoperability | Remote registry upload/download/auth/version behavior for native packages is not live-established. | Public entrypoints and restored registry unit tests pass, not a production registry integration. |
+| U31 | CLI and notebook helpers | All command flags, output/error text, context/config/completion behavior, diagnostics and notebook links/widgets need full stock comparison. | Groups/aliases and exact-source loading regressions pass; old backend diagnostics may not describe the native topology fully. |
+| U32 | Long-lived SDK clients | Refresh/retry/reconnection, multiple namespaces, concurrent operations and route caches under sustained churn need broader live coverage. | Warm route lookup remains fresh and UID-safe; cold metadata-only lookup is currently offline-tested. |
+| U33 | Package and upload matrix | All archive layouts, malformed packages, external URLs/CORS, remote component packages and storage policies lack exhaustive compatibility checks. | Bounded safe extraction-free loading is tested; C21/L05 are explicit boundaries. |
+
+### UI and operations
+
+| ID | Area | What remains uncertain | Existing coverage / next evidence |
+|---|---|---|---|
+| U34 | Full visual parity | Every stock page, dialog, populated state, error state, viewport, browser and accessibility interaction has not been compared. | Five empty list pages were compared earlier; later targeted screenshots are not whole-UI pixel parity. |
+| U35 | Remaining UI actions | All selection, bulk actions, nested expansions, comparisons, uploads, clone/restore/delete flows and deep-link states need final audit. | Recent experiment layouts/default tabs/refresh and nested links have targeted tests, not a complete UI action inventory certification. |
+| U36 | Artifact comparisons/lineage | Rich cross-run artifact comparisons and complete lineage navigation/catalog behavior are not established. | Basic typed artifacts, origin, previews and classification rendering passed selected cases. C22/C23 remain. |
+| U37 | Logs/history/downloads | Long/streaming/multi-attempt logs, archived logs, every container/log selection, download failures and historical artifacts require more coverage. | Actual selected pod logs and downloads were tested; C25 and missing historical fields remain. |
+| U38 | HTML/Markdown fidelity | Sandboxing/security restrictions, allowed embedded content and all legacy renderer variants need full stock comparison. | Formatting/security cases passed; C24 is intentional current restriction, not blanket parity. |
+| U39 | Current deployed UI | The latest archive, inventory and other post-deployment changes have not been rebuilt/deployed/live-accepted on the recovered cluster. | Latest production browser tests use explicitly mocked APIs; do not label them deployed acceptance. |
+| U40 | Deployment modes/tenancy | Full multi-user isolation, Kubeflow profiles, service meshes, ingress/proxy layouts, OpenShift, cloud distributions and arbitrary existing clusters are not certified. | Namespace-scoped deployment/RBAC and denied-action checks passed selected cases. |
+| U41 | SQL reconnect/HA | Argo previously retained a closed SQL session after PostgreSQL restart. Recovery required restarting stateless Argo Server/controller. Automatic reconnect, HA and failover are not proven. | Persistence checks that explicitly restart services are not automatic-recovery proof. |
+| U42 | Current local outage | Cause and full recovery are unknown. One successful Kubernetes health check does not close the outage or its effect on in-flight workflows. | No VM restart/prune/deletion was performed; inspect services and pending workflows before resuming live verification. |
+| U43 | Scale/performance | Namespace inventory still gathers all summary pages; SDK listings, artifact scans, ConfigMap cache/registry growth, controller throughput and large templates require load testing. | A 256-artifact cached-source case is not a production-scale benchmark. Reduced polling payloads are not established as the outage fix. |
+| U44 | Persistence/GC/retention | Full retention, cancellation/failure cleanup, TTL/archive interaction, deleted-version references, backup/restore and recovery across all services remain unverified. | Earlier resource/artifact persistence checks passed a bounded scenario, not every lifecycle. |
+| U45 | Packaging/distribution breadth | All supported installation environments, clean offline installs, optional extras, provider dependencies, documentation examples and external consumers have not been exercised. | Wheel/sdist and isolated installed-wheel checks pass; production npm audit reported zero known vulnerabilities at the check time, not a security proof. |
+| U46 | Latest full live corpus | A fresh complete execution pass is still missing. Cache hits alone cannot establish that the newest runtime code ran. | Retain existing caches; use an explicit cold-execution test pass and separate default-on cache verification. |
+| U47 | Preview-formats timeout | Run `625f941b-4d33-4bbd-a4ec-cec7e4458c8c` timed out before subsequent cases passed and before the API outage. Its cause is unresolved. | Do not classify it as purely environmental or claim the newest preview-formats implementation passes. |
+| U48 | Interrupted nested-condition run | Run `619f7789-6563-4c50-b410-3f262b21a291` and remaining transport-failed corpus cases need inspection/rerun. | A client timeout/reset is not a pipeline correctness verdict. |
+
+### Field-level response uncertainty
+
+These are category **(b)**: the adapter does not populate the listed fields, but
+per-operation stock availability has not been fully compared. Stock need not fill
+every field on every response. Do not turn these omissions into fabricated values
+or equate restored model classes with complete response compatibility.
+
+| ID | Model | Fields the current projection does not populate |
+|---|---|---|
+| U49 | `V2Run` | `error`, `plugins_input`, `plugins_output`, `run_details`, `scheduled_at`, `state_history` |
+| U50 | `V2Experiment` | `last_run_created_at` |
+| U51 | `V2Pipeline` / `V2PipelineVersion` | Pipeline: `error`, `tags`. Version: `error`, `package_url`, `tags`. |
+| U52 | `V2RecurringRun` | `error`, `plugins_input`, `updated_at` |
+| U53 | `V2PipelineTask` / `PipelineTaskTaskPod` | Task: `lifecycle_category`, `scope_path`, `state_history`, `type_attributes`. Pod: `uid`. |
+| U54 | I/O and artifact DTOs | `InputOutputsIOParameter.producer`, `InputOutputsIOArtifact.producer`; `V2Artifact.created_at`, `description`, `number_value`. Artifact URI and available producer-derived identity are projected, but this does not fill those separate DTO fields. |
+
+Evidence: `client/_native.py` and `_task_details.py` constructor arguments compared
+with `server_api/models/*`. See U25 for behavioral comparison still required.
+
+## P. External prerequisites, not passing results
+
+| ID | Prerequisite | Unverified scope |
+|---|---|---|
+| P01 | GPU/TPU/DRA hardware and device plugins | OrbStack is arm64 with no allocatable GPU/TPU; DRA allocation/use was not demonstrated. |
+| P02 | Cloud credentials and services | Credentialed cloud/secret sample, GCS execution and provider-specific storage behavior need authorized credentials/services. |
+| P03 | Image/runtime architecture | External cloud SDK, legacy TFX and other user images must support the actual architecture and dependencies. An image pull/import failure is not proof of DSL incompatibility. |
+| P04 | PVC policy and permissions | Explicit CreatePVC/DeletePVC/workspace tests need suitable StorageClass/access modes and scoped SA permissions. The fixture used `standard` and an owned scoped service account; default component permissions were not broadly elevated. |
+| P05 | Browser URL access and auth infrastructure | URL uploads need CORS; SSO/IAP/profile/ingress checks need the corresponding configured environment. |
+
+## B. Baseline failures and questions
+
+| ID | Baseline finding | Classification |
+|---|---|---|
+| B01 | `samples/core/parallel_join/parallel_join.py` uses invalid `@dsl.container_component()` invocation | Fails stock compilation too; retained as a known xfail, not a native regression. |
+| B02 | `samples/core/kfp_env_validation/kfp_env_validation.ipynb` has missing/stale definitions/imports | Fails the captured stock compilation too; retained as a known xfail. |
+| B03 | TFX notebook and excluded notebook cells | TFX uses an external legacy runner rather than a captured local DSL definition. Install/submission/timing cells are excluded from the 29-definition corpus. Their compatibility is unverified, not counted as passed. |
+| B04 | Root artifact submission, direct Collected iteration and fractional retry semantics | Authoring/API signatures alone do not establish stock end-to-end support. RootDAG parameter-only evidence, the authoring-time direct-Collected failure, and the integer runtime retry factor must be checked before calling these migration regressions. See L01–L03. |
+
+## Evidence and reproduction map
+
+Repository-relative anchors above omit the common prefix `sdk/python/kfp/` for
+compiler/client/runtime modules. Tests and programs are retained in the commit;
+local `/tmp` logs are supporting workstation evidence, not durable CI artifacts.
+No passing CI URL exists for this unpushed checkpoint.
+
+| Area | Retained test/program | Latest local evidence |
+|---|---|---|
+| Stock definitions | `test/stock_samples_test.py`, `test/sdk_compatibility/sample_corpus.py`, frozen `stock_samples.json` | `/tmp/kfp-current-stock-offline/`, `/tmp/kfp-stock-native-lint-current.log` |
+| Full SDK | `sdk/python/kfp`, `test`, `samples/argo-native/deploy_test.py`, `.github/scripts` | `/tmp/kfp-inventory-projection-full311.log`, `...full313.log` |
+| Full UI | `frontend` test:ci; production `native-bundle.smoke.mjs` | `/tmp/kfp-inventory-projection-ui-ci.log`; screenshots `/tmp/kfp-experiment-ui-evidence/` are API-mocked UI evidence |
+| Default runtime/cache | `default_pipeline.py`, `stock_runtime.py`, `test/sdk_authoring_compatibility_test.py` | Earlier default/cached/PyPI runtime live checks; not a latest complete rerun |
+| Lists/iteration/nullable | `artifact_lists.py`, `container_optional_inputs.py`, `optional_inputs.py`; compiler/runtime tests | Earlier list live logs; `/tmp/kfp-container-optional-full{311,313}.log`; iteration/raw-nullable latest live checks absent |
+| Failure/scalars | `ignore_failure.py`, `container_scalars.py`, compiler/runtime regressions | `/tmp/kfp-ignore-status-live.log`, `/tmp/kfp-native-scalars-live.log` |
+| Workspace/settings | `workspace.py`, `task_config.py`, `kubernetes_settings.py` | Workspace passthrough, structured staging and dynamic claim logs; no hardware allocation proof |
+| Archive/inventory | `experiment_archive.py`, read-only `inventory.py`, `native_client_test.py`, `NativeUi.test.ts` | Offline cascade/projection red-green logs; both live programs remain unrun |
+| Task DTOs | `test/native_task_details_test.py` | `/tmp/kfp-compressed-status-red.log`, `/tmp/kfp-retry-task-projection-red.log`; later full suites pass |
+| Interrupted corpus | `test/sdk_compatibility/run_samples.py` | `/tmp/kfp-current-stock-corpus/execution.json`; separate PVC report `/tmp/kfp-current-stock-pvc/execution.json` |
+
+All live programs in the table are under `test/sdk_compatibility/` unless another
+path is given. Live browser programs are under `frontend/scripts/`.
+
+### Exact offline validation commands
+
+```sh
+uv run --python 3.11 --isolated --frozen --extra test python -m pytest -q \
+  sdk/python/kfp test samples/argo-native/deploy_test.py .github/scripts
+uv run --python 3.13 --isolated --frozen --extra test python -m pytest -q \
+  sdk/python/kfp test samples/argo-native/deploy_test.py .github/scripts
+(cd frontend && PLAYWRIGHT_CHANNEL=chrome fnm exec --using=24.22.1 npm run test:ci)
+uv build --package kfp --wheel --sdist
+```
+
+For generated manifests, use `argo --context orbstack -n kfp-argo lint --offline
+<manifest>`. Offline lint is not a workflow submission.
+
+### Pending live commands (not executed as part of this inventory)
+
+Supply a **non-empty**, appropriately scoped `KFP_TEST_TOKEN` without printing it,
+plus `KFP_TEST_HOST` and `KFP_TEST_NAMESPACE`. Check token creation succeeds before
+starting a client; do not fall back to another identity. Then, for example:
+
+```sh
+uv run --python 3.11 --isolated --frozen --extra test python \
+  test/sdk_compatibility/container_optional_inputs.py
+uv run --python 3.11 --isolated --frozen --extra test python \
+  test/sdk_compatibility/experiment_archive.py --output /tmp/kfp-experiment-archive-live
+uv run --python 3.11 --isolated --frozen --extra test python \
+  test/sdk_compatibility/inventory.py --output /tmp/kfp-inventory-live.json
+```
+
+`artifact_lists.py` additionally exposes `verify_iteration(client)` for the pending
+iteration cases. The sample runner supports explicit `--disable-caching` for cold
+verification and `--parallelism` for a bounded submission copy; it does not clear
+caches or change SDK defaults. Known stock compilation failures retain a nonzero
+exit status, so read the per-case report rather than hiding that exit status.
+Do not restart unrelated infrastructure, delete preserved runs/artifacts/PVCs,
+loosen RBAC, or claim pending cases passed merely to close this inventory.

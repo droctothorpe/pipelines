@@ -13,6 +13,10 @@ import DetailsTable from 'src/components/DetailsTable';
 import NativeTable from 'src/components/NativeTable';
 import CompareTable from 'src/components/CompareTable';
 import CollapseButtonSingle from 'src/components/CollapseButtonSingle';
+import { NativeArtifactPreview } from 'src/components/viewers/NativeArtifactPreview';
+import { NativeClassificationMetrics } from 'src/components/viewers/NativeClassificationMetrics';
+import MarkdownViewer from 'src/components/viewers/MarkdownViewer';
+import { PlotType } from 'src/components/viewers/Viewer';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { useInventory } from 'src/lib/NativeQueries';
 import {
@@ -31,6 +35,8 @@ import {
   deleteNativeResource,
   EXPERIMENT,
   experimentHref,
+  resourceId,
+  resourceMatches,
   enc,
 } from 'src/lib/NativeUi';
 import { formatDateString } from 'src/lib/UiUtils';
@@ -54,9 +60,11 @@ export function NativeArtifactContent({
     enabled: !!hasArgoMetadata(node),
   });
   const artifact = metadata.data?.artifacts.find((artifact) => artifact.port === port);
+  const structured =
+    artifact?.type.startsWith('system.Dataset@') || artifact?.type.startsWith('system.Model@');
   const preview = useQuery({
     queryKey: ['native', run.metadata.namespace, run.metadata.uid, node.id, port, 'preview'],
-    enabled: tab === 1 && !!artifact && !artifact.type.includes('Metrics'),
+    enabled: tab === 1 && !!artifact && !structured && !artifact.type.includes('Metrics'),
     queryFn: async ({ signal }) => {
       const response = await argoRequest(argoArtifactUrl(run, node, port), signal);
       // Stream with a hard bound rather than downloading a large model into browser memory.
@@ -123,7 +131,9 @@ export function NativeArtifactContent({
       )}
       {tab === 1 && (
         <div className={classes(commonCss.page, padding(20))}>
-          {artifact?.type.includes('Metrics') ? (
+          {artifact?.type.includes('ClassificationMetrics') ? (
+            <NativeClassificationMetrics name={port} metadata={artifact.metadata} />
+          ) : artifact?.type.includes('Metrics') ? (
             <DetailsTable
               title='Metrics'
               fields={Object.entries(artifact.metadata).map(([name, value]) => [
@@ -131,10 +141,16 @@ export function NativeArtifactContent({
                 typeof value === 'string' ? value : JSON.stringify(value),
               ])}
             />
+          ) : structured && artifact ? (
+            <NativeArtifactPreview run={run} node={node} artifact={artifact} />
           ) : preview.error ? (
             <Alert severity='error'>{preview.error.message}</Alert>
           ) : preview.isPending ? (
             <CircularProgress aria-label='Loading visualization' size={24} />
+          ) : artifact?.type.includes('Markdown') ? (
+            <MarkdownViewer
+              configs={[{ type: PlotType.MARKDOWN, markdownContent: preview.data || '' }]}
+            />
           ) : artifact?.type.includes('HTML') ? (
             <iframe
               title='Artifact visualization'
@@ -289,12 +305,11 @@ export function NativeScheduleDetails() {
   const { namespace, fail, confirm } = useNativeUi();
   const navigate = useNavigate();
   const inventory = useInventory();
-  const schedule = inventory.schedules.data?.find(
-    (schedule) => schedule.metadata.name === scheduleId,
+  const schedule = inventory.schedules.data?.find((schedule) =>
+    resourceMatches(schedule, scheduleId),
   );
-  const experiment = inventory.experiments.data?.find(
-    (experiment) =>
-      experiment.metadata.name === schedule?.spec?.workflowMetadata?.labels?.[EXPERIMENT],
+  const experiment = inventory.experiments.data?.find((experiment) =>
+    resourceMatches(experiment, schedule?.spec?.workflowMetadata?.labels?.[EXPERIMENT]),
   );
   const toggle = async (suspend: boolean) => {
     if (!schedule) return;
@@ -314,7 +329,7 @@ export function NativeScheduleDetails() {
               { displayName: 'Experiments', href: '/experiments' },
               {
                 displayName: displayName(experiment),
-                href: experimentHref(experiment.metadata.name),
+                href: experimentHref(resourceId(experiment)),
               },
             ]
           : [{ displayName: 'All runs', href: '/runs' }]

@@ -16,8 +16,9 @@ class NativeCleanupTest(unittest.TestCase):
             'frontend/mock-backend',
             'frontend/src/apisv2',
             'frontend/src/lib/Apis.ts',
-            'sdk/python/kfp/client',
-            'sdk/python/kfp/server_api',
+            'sdk/python/kfp/server_api/api',
+            'sdk/python/kfp/server_api/api_client.py',
+            'sdk/python/kfp/server_api/rest.py',
             'sdk/python/kfp/kubeflow_client',
             'sdk/python/kfp/local',
             'sdk/python/kfp/compiler/pipeline_spec_builder.py',
@@ -47,13 +48,29 @@ class NativeCleanupTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue((ROOT / path).is_file(), path)
 
-    def test_sdk_has_no_kfp_server_client_export(self):
+    def test_sdk_client_uses_native_transport_not_retired_rpc_clients(self):
         import kfp
+        from kfp import server_api
+        from kfp.client import Client
 
-        self.assertFalse(hasattr(kfp, 'Client'))
+        self.assertIs(kfp.Client, Client)
+        self.assertFalse(hasattr(server_api, 'ApiClient'))
+        self.assertFalse(hasattr(server_api, 'RunServiceApi'))
         from kfp.cli.cli import cli
 
-        self.assertEqual(set(cli.commands), {'component', 'dsl', 'visualize'})
+        self.assertTrue(
+            {
+                'component',
+                'dsl',
+                'visualize',
+                'run',
+                'recurring-run',
+                'experiment',
+                'pipeline',
+                'diagnose-me',
+            }
+            <= set(cli.commands)
+        )
 
     def test_native_frontend_does_not_import_retired_models(self):
         for path in (ROOT / 'frontend/src').rglob('*.ts*'):

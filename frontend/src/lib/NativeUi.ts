@@ -1,15 +1,17 @@
 // Copyright 2026 The Kubeflow Authors
 // SPDX-License-Identifier: Apache-2.0
+import { componentPod } from './ArgoComponents';
 /** Native resource identities and operations behind the original KFP presentation. */
 import {
   argoRequest,
+  ArgoRequestError,
   listNativeItems as collection,
   argoArtifactUrl,
   getArgoWorkflow,
   type ArgoWorkflow,
   type ArgoNode,
 } from './Argo';
-import { listResources, type NativeResource } from './ArgoResources';
+import { listResources, setScheduleSuspended, type NativeResource } from './ArgoResources';
 import { V2RuntimeState } from './NativeViewTypes';
 
 export const PIPELINE = 'pipelines.kubeflow.org/pipeline';
@@ -17,7 +19,14 @@ export const EXPERIMENT = 'pipelines.kubeflow.org/experiment';
 export const DISPLAY_NAME = 'pipelines.kubeflow.org/display-name';
 export const DESCRIPTION = 'pipelines.kubeflow.org/description';
 export const enc = encodeURIComponent;
-export type UiRun = ArgoWorkflow & { live: boolean };
+export const STORAGE_STATE = 'pipelines.kubeflow.org/storage-state';
+export type UiRun = ArgoWorkflow & { live: boolean; storageState?: string };
+export const resourceMatches = (resource: NativeResource | undefined, id?: string | null) =>
+  !!resource && !!id && (resource.metadata.uid === id || resource.metadata.name === id);
+export const resourceId = (resource: NativeResource) =>
+  resource.metadata.uid || resource.metadata.name;
+export const isRunArchived = (run: UiRun) =>
+  (run.storageState || (run.live ? 'AVAILABLE' : 'ARCHIVED')) === 'ARCHIVED';
 export const displayName = (resource: {
   metadata: { name: string; annotations?: Record<string, string> };
   data?: Record<string, string>;
@@ -28,10 +37,12 @@ export const displayName = (resource: {
 export const description = (resource: NativeResource) =>
   resource.data?.description || resource.metadata.annotations?.[DESCRIPTION] || '';
 export const pipelineId = (resource: NativeResource) =>
-  resource.metadata.labels?.[PIPELINE] || resource.metadata.name;
+  resource.kind === 'ConfigMap'
+    ? resourceId(resource)
+    : resource.metadata.labels?.[PIPELINE] || resource.metadata.name;
 export const runHref = (run: ArgoWorkflow) => `/runs/details/${enc(run.metadata.uid)}`;
 export const pipelineHref = (version: NativeResource) =>
-  `/pipelines/details/${enc(pipelineId(version))}/version/${enc(version.metadata.name)}`;
+  `/pipelines/details/${enc(pipelineId(version))}/version/${enc(resourceId(version))}`;
 export const experimentHref = (name: string) => `/experiments/details/${enc(name)}`;
 export function runState(run: ArgoWorkflow): V2RuntimeState {
   if (run.status?.message === 'terminated' || run.spec.shutdown === 'Terminate')
@@ -50,29 +61,70 @@ export function runState(run: ArgoWorkflow): V2RuntimeState {
 }
 
 export async function listUiRuns(namespace: string, signal?: AbortSignal): Promise<UiRun[]> {
-  const [live, archive] = await Promise.all([
-    collection<ArgoWorkflow>(
+  const [liveMetadata, summaries, states] = await Promise.all([
+    collection<Pick<ArgoWorkflow, 'metadata'>>(
       `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${enc(namespace)}/workflows`,
       new URLSearchParams({ labelSelector: PIPELINE, limit: '100' }),
       'continue',
       signal,
+      'application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1,application/json;q=0.9',
     ),
     collection<ArgoWorkflow>(
-      '/argo/api/v1/archived-workflows',
+      `/argo/api/v1/workflows/${enc(namespace)}`,
       new URLSearchParams({
-        namespace,
         'listOptions.labelSelector': PIPELINE,
         'listOptions.limit': '100',
+        // Argo's combined live/SQL list needs the total count to paginate both.
+        'listOptions.fieldSelector': 'ext.showRemainingItemCount=true',
+        fields: [
+          'metadata',
+          'items.metadata',
+          'items.spec.shutdown',
+          'items.spec.workflowTemplateRef',
+          'items.status.phase',
+          'items.status.startedAt',
+          'items.status.finishedAt',
+          'items.status.message',
+        ].join(','),
       }),
       'listOptions.continue',
       signal,
     ),
+    listResources(namespace, 'run-state', signal),
   ]);
-  const runs = new Map(
-    archive.map((run) => [run.metadata.uid, { ...run, archived: true, live: false }]),
+  const liveIndex = new Map(liveMetadata.map((run) => [run.metadata.uid, run.metadata]));
+  const runs = new Map<string, ArgoWorkflow>();
+  for (const run of summaries) {
+    // Prefer live summaries over their SQL duplicates. Argo's SQLite cache may
+    // omit an Archived-labelled CR that still exists, so liveness also needs
+    // the lightweight Kubernetes identity index, not an archive label guess.
+    if (!runs.get(run.metadata.uid)?.metadata.resourceVersion || run.metadata.resourceVersion)
+      runs.set(run.metadata.uid, run);
+  }
+  for (const metadata of liveIndex.values())
+    if (!runs.has(metadata.uid)) runs.set(metadata.uid, { metadata, spec: {} });
+  const storage = new Map(
+    states
+      .filter((state) => state.data?.runId)
+      .map((state) => [state.data!.runId, state.data!.storageState]),
   );
-  for (const run of live) runs.set(run.metadata.uid, { ...run, archived: false, live: true });
-  return [...runs.values()];
+  return [...runs.values()].map((summary) => {
+    const metadata = liveIndex.get(summary.metadata.uid) || summary.metadata;
+    const live = liveIndex.has(metadata.uid) || !!summary.metadata.resourceVersion;
+    return {
+      ...summary,
+      metadata,
+      spec: summary.spec || {},
+      live,
+      archived: !live,
+      storageState:
+        storage.get(metadata.uid) ||
+        metadata.annotations?.[STORAGE_STATE] ||
+        (metadata.annotations?.['pipelines.kubeflow.org/parameters'] || live
+          ? 'AVAILABLE'
+          : 'ARCHIVED'),
+    };
+  });
 }
 export async function getUiRun(
   namespace: string,
@@ -82,38 +134,158 @@ export async function getUiRun(
   const runs = await listUiRuns(namespace, signal);
   const run = runs.find((run) => run.metadata.uid === uid);
   if (!run) throw new Error('Run not found in this namespace. It may have been deleted.');
-  return { ...(await getArgoWorkflow(run, signal)), live: run.live };
+  return {
+    ...(await getArgoWorkflow(run, signal)),
+    live: run.live,
+    storageState: run.storageState,
+  };
+}
+async function setRunStorage(run: ArgoWorkflow, storageState: string) {
+  const root = `/kubernetes/api/v1/namespaces/${enc(run.metadata.namespace)}/configmaps`;
+  const name = `run-${run.metadata.uid}`;
+  let record: NativeResource | undefined;
+  try {
+    record = await (await argoRequest(`${root}/${enc(name)}`)).json();
+  } catch (error) {
+    if (!(error instanceof ArgoRequestError) || error.status !== 404) throw error;
+  }
+  if (record) {
+    if (record.data?.runId !== run.metadata.uid)
+      throw new Error('Run-state identity does not match.');
+    if (record.data.storageState === storageState) return;
+    await argoRequest(`${root}/${enc(name)}`, undefined, {
+      method: 'PUT',
+      body: JSON.stringify({ ...record, data: { ...record.data, storageState } }),
+    });
+  } else {
+    await argoRequest(root, undefined, {
+      method: 'POST',
+      body: JSON.stringify({
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
+        metadata: {
+          name,
+          namespace: run.metadata.namespace,
+          labels: { 'pipelines.kubeflow.org/resource': 'run-state' },
+        },
+        data: { runId: run.metadata.uid, storageState },
+      }),
+    });
+  }
 }
 export async function archiveRun(run: ArgoWorkflow) {
   if (!['Succeeded', 'Failed', 'Error'].includes(run.status?.phase || ''))
     throw new Error('Only completed runs can be archived.');
-  // Verify a durable archive exists before removing the live CR (and its pods).
-  const archived = await (
-    await argoRequest(
-      `/argo/api/v1/archived-workflows/${enc(run.metadata.uid)}?namespace=${enc(run.metadata.namespace)}`,
-    )
-  ).json();
-  if (archived.metadata?.uid !== run.metadata.uid)
-    throw new Error('Argo has not archived this run yet. Try again shortly.');
+  await setRunStorage(run, 'ARCHIVED');
+}
+export async function restoreRun(run: ArgoWorkflow) {
+  const experimentId = run.metadata.labels?.[EXPERIMENT];
+  if (experimentId) {
+    const experiment = (await listResources(run.metadata.namespace, 'experiments')).find(
+      (resource) => resourceMatches(resource, experimentId),
+    );
+    if (!experiment) throw new Error('Experiment not found; cannot restore its run.');
+    if (experiment.data?.storageState === 'ARCHIVED')
+      throw new Error('Unarchive the experiment first to allow the run to be restored.');
+  }
+  await setRunStorage(run, 'AVAILABLE');
+}
+export async function setExperimentStorage(
+  namespace: string,
+  experiment: NativeResource,
+  storageState: string,
+) {
+  if (!experiment.metadata.uid || !experiment.metadata.resourceVersion)
+    throw new Error('Refresh the experiment before updating it.');
+  if (experiment.metadata.namespace && experiment.metadata.namespace !== namespace)
+    throw new Error('Experiment namespace does not match.');
+  if (storageState === 'ARCHIVED') {
+    const identities = new Set([experiment.metadata.uid, experiment.metadata.name]);
+    // Complete authorization/list checks before any mutation. Suspension precedes
+    // child archival, and publishing experiment state is the final step.
+    const [schedules, initialRuns] = await Promise.all([
+      listResources(namespace, 'cron-workflows'),
+      listUiRuns(namespace),
+    ]);
+    const associatedSchedules = schedules.filter(
+      (schedule) =>
+        schedule.metadata.namespace === namespace &&
+        identities.has(schedule.spec?.workflowMetadata?.labels?.[EXPERIMENT]),
+    );
+    for (const schedule of associatedSchedules) {
+      if (schedule.spec?.suspend) continue;
+      if (!schedule.metadata.uid || !schedule.metadata.resourceVersion)
+        throw new Error('Refresh the recurring run before archiving its experiment.');
+      try {
+        await setScheduleSuspended(namespace, schedule, true);
+      } catch (error) {
+        if (!(error instanceof ArgoRequestError) || error.status !== 404) throw error;
+      }
+    }
+    // Re-list after suspension to include runs created while those requests ran.
+    const runs = associatedSchedules.length ? await listUiRuns(namespace) : initialRuns;
+    for (const run of runs) {
+      if (
+        run.metadata.namespace === namespace &&
+        identities.has(run.metadata.labels?.[EXPERIMENT] || '')
+      )
+        await setRunStorage(run, 'ARCHIVED');
+    }
+  }
   await argoRequest(
-    `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${enc(run.metadata.namespace)}/workflows/${enc(run.metadata.name)}`,
+    `/kubernetes/api/v1/namespaces/${enc(namespace)}/configmaps/${enc(experiment.metadata.name)}`,
     undefined,
     {
+      method: 'PUT',
+      body: JSON.stringify({ ...experiment, data: { ...experiment.data, storageState } }),
+    },
+  );
+}
+export async function deleteArchivedRun(run: ArgoWorkflow) {
+  const root = `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${enc(run.metadata.namespace)}/workflows/${enc(run.metadata.name)}`;
+  let live: ArgoWorkflow | undefined;
+  try {
+    live = await (await argoRequest(root)).json();
+  } catch (error) {
+    if (!(error instanceof ArgoRequestError) || error.status !== 404) throw error;
+  }
+  if (live) {
+    if (live.metadata.uid !== run.metadata.uid)
+      throw new Error('Workflow name was reused; refresh before deleting.');
+    await argoRequest(root, undefined, {
       method: 'DELETE',
       body: JSON.stringify({
         apiVersion: 'v1',
         kind: 'DeleteOptions',
         preconditions: { uid: run.metadata.uid },
       }),
-    },
-  );
-}
-export async function deleteArchivedRun(run: ArgoWorkflow) {
-  await argoRequest(
-    `/argo/api/v1/archived-workflows/${enc(run.metadata.uid)}?namespace=${enc(run.metadata.namespace)}`,
-    undefined,
-    { method: 'DELETE' },
-  );
+    });
+  }
+  try {
+    await argoRequest(
+      `/argo/api/v1/archived-workflows/${enc(run.metadata.uid)}?namespace=${enc(run.metadata.namespace)}`,
+      undefined,
+      { method: 'DELETE' },
+    );
+  } catch (error) {
+    if (!(error instanceof ArgoRequestError) || error.status !== 404) throw error;
+  }
+  const statePath = `/kubernetes/api/v1/namespaces/${enc(run.metadata.namespace)}/configmaps/${enc(`run-${run.metadata.uid}`)}`;
+  try {
+    const state: NativeResource = await (await argoRequest(statePath)).json();
+    if (state.data?.runId !== run.metadata.uid || !state.metadata.uid)
+      throw new Error('Run-state identity does not match.');
+    await argoRequest(statePath, undefined, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        apiVersion: 'v1',
+        kind: 'DeleteOptions',
+        preconditions: { uid: state.metadata.uid },
+      }),
+    });
+  } catch (error) {
+    if (!(error instanceof ArgoRequestError) || error.status !== 404) throw error;
+  }
 }
 export async function deleteNativeResource(namespace: string, resource: NativeResource) {
   if (!resource.metadata.uid)
@@ -124,20 +296,20 @@ export async function deleteNativeResource(namespace: string, resource: NativeRe
       : resource.kind === 'CronWorkflow'
         ? 'cronworkflows'
         : undefined;
-  if (!plural) throw new Error('Unsupported resource kind.');
-  await argoRequest(
-    `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${enc(namespace)}/${plural}/${enc(resource.metadata.name)}`,
-    undefined,
-    {
-      method: 'DELETE',
-      body: JSON.stringify({
-        apiVersion: 'v1',
-        kind: 'DeleteOptions',
-        propagationPolicy: 'Orphan',
-        preconditions: { uid: resource.metadata.uid },
-      }),
-    },
-  );
+  if (!plural && resource.kind !== 'ConfigMap') throw new Error('Unsupported resource kind.');
+  const path =
+    resource.kind === 'ConfigMap'
+      ? `/kubernetes/api/v1/namespaces/${enc(namespace)}/configmaps/${enc(resource.metadata.name)}`
+      : `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${enc(namespace)}/${plural}/${enc(resource.metadata.name)}`;
+  await argoRequest(path, undefined, {
+    method: 'DELETE',
+    body: JSON.stringify({
+      apiVersion: 'v1',
+      kind: 'DeleteOptions',
+      propagationPolicy: 'Orphan',
+      preconditions: { uid: resource.metadata.uid },
+    }),
+  });
 }
 export async function listVersions(namespace: string, signal?: AbortSignal) {
   return listResources(namespace, 'workflow-templates', signal);
@@ -152,6 +324,7 @@ export async function downloadArtifact(run: ArgoWorkflow, node: ArgoNode, port: 
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 export async function taskLogs(run: ArgoWorkflow, node: ArgoNode, signal?: AbortSignal) {
+  node = componentPod(run, node);
   if (node.outputs?.artifacts?.some((artifact) => artifact.name === 'main-logs'))
     return (await (await argoRequest(argoArtifactUrl(run, node, 'main-logs'), signal)).text())
       .split('\n')

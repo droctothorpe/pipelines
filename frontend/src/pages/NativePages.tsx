@@ -29,6 +29,10 @@ import { useInventory, useArtifactInventory } from 'src/lib/NativeQueries';
 import type { NativeResource } from 'src/lib/ArgoResources';
 import {
   archiveRun,
+  restoreRun,
+  isRunArchived,
+  resourceId,
+  resourceMatches,
   deleteArchivedRun,
   deleteNativeResource,
   displayName,
@@ -83,11 +87,16 @@ export function runRows(
   experiments: NativeResource[],
 ): NativeRow[] {
   return runs.map((run) => {
-    const version = versions.find(
-      (version) => version.metadata.name === run.spec.workflowTemplateRef?.name,
+    const version = versions.find((version) =>
+      resourceMatches(
+        version,
+        run.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
+          run.spec.workflowTemplateRef?.name ||
+          run.metadata.annotations?.['pipelines.kubeflow.org/workflow-template'],
+      ),
     );
     const experimentName = run.metadata.labels?.[EXPERIMENT];
-    const experiment = experiments.find((exp) => exp.metadata.name === experimentName);
+    const experiment = experiments.find((exp) => resourceMatches(exp, experimentName));
     const started = run.status?.startedAt || run.metadata.creationTimestamp;
     const end = run.status?.finishedAt;
     const elapsed = started
@@ -199,6 +208,7 @@ export function NativeListPage({
   const [selected, setSelected] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
   const versions = inventory.versions.data || [],
+    pipelines = inventory.pipelines.data || [],
     experiments = inventory.experiments.data || [],
     runs = inventory.runs.data || [],
     schedules = inventory.schedules.data || [];
@@ -213,6 +223,8 @@ export function NativeListPage({
   const groups = new Map<string, NativeResource[]>();
   for (const version of versions)
     groups.set(pipelineId(version), [...(groups.get(pipelineId(version)) || []), version]);
+  for (const pipeline of pipelines)
+    if (!groups.has(resourceId(pipeline))) groups.set(resourceId(pipeline), []);
   const title = {
     pipelines: 'Pipelines',
     experiments: 'Experiments',
@@ -225,37 +237,45 @@ export function NativeListPage({
     actions: ToolbarActionMap = {};
   const selectedRuns = runs.filter((run) => selected.includes(run.metadata.uid));
   const none = !selected.length;
-  const unavailable = (title: string, reason: string) =>
-    action(title, () => {}, { disabled: true, disabledTitle: reason });
   const confirmRuns = (deleting: boolean) =>
     confirm({
       title: `${deleting ? 'Delete' : 'Archive'} ${selectedRuns.length} run(s)?`,
       content: deleting
         ? 'Permanently remove these runs from the Argo archive. Stored artifacts are not deleted.'
-        : 'Remove the completed live workflows and their pods after verifying their durable Argo archives. Runs and artifacts remain accessible from Archived.',
+        : 'Move these runs to Archived. Their workflows, logs and artifacts are preserved.',
       action: () =>
         complete(() => Promise.all(selectedRuns.map(deleting ? deleteArchivedRun : archiveRun))),
     });
   if (kind === 'pipelines') {
     columns = pipelineColumns;
-    rows = shared
-      ? []
-      : [...groups].map(([id, entries]) => {
-          const version = [...entries].sort((a, b) =>
-            (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
-          )[0];
-          return {
-            id,
-            name: displayName(version),
-            created: version.metadata.creationTimestamp,
-            expandState: expanded.includes(id) ? ExpandState.EXPANDED : ExpandState.COLLAPSED,
-            otherFields: [
-              link(pipelineHref(version), displayName(version)),
-              description(version),
-              formatDateString(version.metadata.creationTimestamp),
-            ],
-          };
-        });
+    rows = [...groups]
+      .filter(
+        ([id]) =>
+          !shared ||
+          pipelines.some(
+            (pipeline) => resourceId(pipeline) === id && pipeline.data?.shared === 'true',
+          ),
+      )
+      .map(([id, entries]) => {
+        const version = [...entries].sort((a, b) =>
+          (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
+        )[0];
+        const record = pipelines.find((pipeline) => resourceId(pipeline) === id) || version;
+        return {
+          id,
+          name: displayName(record),
+          created: record.metadata.creationTimestamp,
+          expandState: expanded.includes(id) ? ExpandState.EXPANDED : ExpandState.COLLAPSED,
+          otherFields: [
+            link(
+              version ? pipelineHref(version) : `/pipelines/details/${enc(id)}`,
+              displayName(record),
+            ),
+            description(record),
+            formatDateString(record.metadata.creationTimestamp),
+          ],
+        };
+      });
     actions = {
       upload: createAction(
         'Upload pipeline',
@@ -275,9 +295,15 @@ export function NativeListPage({
             action: () =>
               complete(() =>
                 Promise.all(
-                  selected
-                    .flatMap((id) => groups.get(id) || [])
-                    .map((version) => deleteNativeResource(namespace, version)),
+                  selected.map(async (id) => {
+                    await Promise.all(
+                      (groups.get(id) || []).map((version) =>
+                        deleteNativeResource(namespace, version),
+                      ),
+                    );
+                    const record = pipelines.find((pipeline) => resourceId(pipeline) === id);
+                    if (record) await deleteNativeResource(namespace, record);
+                  }),
                 ),
               ),
           }),
@@ -291,15 +317,16 @@ export function NativeListPage({
   } else if (kind === 'runs') {
     columns = runColumns;
     rows = runRows(
-      runs.filter((run) => (archived ? !run.live : run.live)),
+      runs.filter((run) => isRunArchived(run) === archived),
       versions,
       experiments,
     );
     actions = archived
       ? {
-          restore: unavailable(
+          restore: action(
             'Restore',
-            'Argo archives are read-only. Clone a run to start a new one.',
+            () => complete(() => Promise.all(selectedRuns.map(restoreRun))).catch(fail),
+            { disabled: none, id: 'restoreBtn' },
           ),
           delete: action('Delete', () => confirmRuns(true), {
             disabled: none,
@@ -338,84 +365,89 @@ export function NativeListPage({
     columns = [
       { label: 'Experiment name', flex: 1, sortKey: 'name', customRenderer: cell },
       { label: 'Description', flex: 2 },
-      { label: 'Last 5 runs', flex: 1, sortKey: 'last_run_created_at', customRenderer: cell },
+      ...(!archived
+        ? [{ label: 'Last 5 runs', flex: 1, sortKey: 'last_run_created_at', customRenderer: cell }]
+        : []),
     ];
-    rows = archived
-      ? []
-      : experiments.map((exp) => ({
-          id: exp.metadata.name,
-          name: displayName(exp),
-          created: exp.metadata.creationTimestamp,
-          sortValues: {
-            last_run_created_at:
-              runs
-                .filter((run) => run.metadata.labels?.[EXPERIMENT] === exp.metadata.name)
-                .map((run) => run.metadata.creationTimestamp || '')
-                .sort()
-                .at(-1) || '',
-          },
-          expandState: expanded.includes(exp.metadata.name)
-            ? ExpandState.EXPANDED
-            : ExpandState.COLLAPSED,
-          otherFields: [
-            link(experimentHref(exp.metadata.name), displayName(exp)),
-            description(exp),
-            expanded.includes(exp.metadata.name) ? null : (
-              <div className={commonCss.flex}>
-                {runs
-                  .filter(
-                    (run) => run.live && run.metadata.labels?.[EXPERIMENT] === exp.metadata.name,
-                  )
-                  .sort((a, b) =>
-                    (b.metadata.creationTimestamp || '').localeCompare(
-                      a.metadata.creationTimestamp || '',
-                    ),
-                  )
-                  .slice(0, 5)
-                  .map((run) => (
-                    <Link
-                      key={run.metadata.uid}
-                      to={runHref(run)}
-                      style={{ marginRight: 8 }}
-                      title={displayName(run)}
-                    >
-                      {statusToIcon(runState(run))}
-                    </Link>
-                  ))}
-              </div>
-            ),
-          ],
-        }));
-    actions = {
-      create: createAction(
-        'Create experiment',
-        () => navigate('/experiments/new'),
-        'newExperimentBtn',
-        185,
-      ),
-      compare: action(
-        'Compare runs',
-        () => navigate(`/compare?runlist=${selected.map(enc).join(',')}`),
-        {
-          disabled: selected.length < 2 || selected.length > 5,
-          style: { minWidth: 125 },
-          id: 'compareBtn',
+    rows = experiments
+      .filter((exp) => (exp.data?.storageState === 'ARCHIVED') === archived)
+      .map((exp) => ({
+        id: resourceId(exp),
+        name: displayName(exp),
+        created: exp.metadata.creationTimestamp,
+        sortValues: {
+          last_run_created_at:
+            runs
+              .filter((run) => resourceMatches(exp, run.metadata.labels?.[EXPERIMENT]))
+              .map((run) => run.metadata.creationTimestamp || '')
+              .sort()
+              .at(-1) || '',
         },
-      ),
-      clone: action('Clone run', () => navigate(`/runs/new?cloneFromRun=${enc(selected[0])}`), {
-        disabled: selected.length !== 1,
-        style: { minWidth: 100 },
-        id: 'cloneBtn',
-      }),
-      archive: action('Archive', () => confirmRuns(false), {
-        disabled:
-          none ||
-          selectedRuns.some(
-            (run) => !['Succeeded', 'Failed', 'Error'].includes(run.status?.phase || ''),
+        expandState: expanded.includes(resourceId(exp))
+          ? ExpandState.EXPANDED
+          : ExpandState.COLLAPSED,
+        otherFields: [
+          link(experimentHref(resourceId(exp)), displayName(exp)),
+          description(exp),
+          expanded.includes(resourceId(exp)) ? null : (
+            <div className={commonCss.flex}>
+              {runs
+                .filter(
+                  (run) =>
+                    !isRunArchived(run) && resourceMatches(exp, run.metadata.labels?.[EXPERIMENT]),
+                )
+                .sort((a, b) =>
+                  (b.metadata.creationTimestamp || '').localeCompare(
+                    a.metadata.creationTimestamp || '',
+                  ),
+                )
+                .slice(0, 5)
+                .map((run) => (
+                  <Link
+                    key={run.metadata.uid}
+                    to={runHref(run)}
+                    style={{ marginRight: 8 }}
+                    title={displayName(run)}
+                  >
+                    {statusToIcon(runState(run))}
+                  </Link>
+                ))}
+            </div>
           ),
-        id: 'archiveRunsBtn',
-      }),
-    };
+        ].slice(0, archived ? 2 : 3),
+      }));
+    actions = archived
+      ? {}
+      : {
+          create: createAction(
+            'Create experiment',
+            () => navigate('/experiments/new'),
+            'newExperimentBtn',
+            185,
+          ),
+          compare: action(
+            'Compare runs',
+            () => navigate(`/compare?runlist=${selected.map(enc).join(',')}`),
+            {
+              disabled: selected.length < 2 || selected.length > 5,
+              style: { minWidth: 125 },
+              id: 'compareBtn',
+            },
+          ),
+          clone: action('Clone run', () => navigate(`/runs/new?cloneFromRun=${enc(selected[0])}`), {
+            disabled: selected.length !== 1,
+            style: { minWidth: 100 },
+            id: 'cloneBtn',
+          }),
+          archive: action('Archive', () => confirmRuns(false), {
+            disabled:
+              none ||
+              selectedRuns.some(
+                (run) => !['Succeeded', 'Failed', 'Error'].includes(run.status?.phase || ''),
+              ),
+            id: 'archiveRunsBtn',
+          }),
+        };
   } else if (kind === 'schedules') {
     columns = [
       { label: 'Recurring Run Name', flex: 1.5, sortKey: 'name', customRenderer: cell },
@@ -502,11 +534,7 @@ export function NativeListPage({
             }}
           />
         )}
-        {shared && (
-          <Alert severity='info'>
-            Pipelines are namespace-scoped. Cross-namespace sharing is not configured.
-          </Alert>
-        )}
+
         {kind === 'artifacts' && artifacts.data?.truncated && (
           <Alert severity='info'>
             This list covers the 50 most recent runs. Older artifacts remain accessible from their
@@ -562,14 +590,27 @@ export function NativeListPage({
                 ) : (
                   <NativeTable
                     rows={runRows(
-                      runs.filter((run) => run.metadata.labels?.[EXPERIMENT] === row.id),
+                      runs.filter(
+                        (run) =>
+                          isRunArchived(run) === archived &&
+                          resourceMatches(
+                            experiments.find((exp) => resourceId(exp) === row.id)!,
+                            run.metadata.labels?.[EXPERIMENT],
+                          ),
+                      ),
                       versions,
                       experiments,
-                    )}
-                    columns={runColumns}
-                    selected={selected}
-                    select={setSelected}
+                    ).map((run) => ({
+                      ...run,
+                      otherFields: run.otherFields.filter((_, index) => index !== 3),
+                    }))}
+                    columns={runColumns.filter((column) => column.label !== 'Experiment')}
+                    selected={archived ? [] : selected}
+                    select={archived ? undefined : setSelected}
                     filterLabel='Filter runs'
+                    noFilterBox
+                    disableSorting
+                    emptyMessage={archived ? 'No archived runs found.' : 'No available runs found.'}
                   />
                 )
               }
@@ -594,7 +635,7 @@ export function NativePipelineDetails() {
       (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
     );
   const version = versionId
-    ? versions.find((version) => version.metadata.name === versionId)
+    ? versions.find((version) => resourceMatches(version, versionId))
     : versions[0];
   let view: ReturnType<typeof argoStaticView> | undefined, graphError: unknown;
   try {

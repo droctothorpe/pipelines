@@ -1,7 +1,8 @@
 // Copyright 2026 The Kubeflow Authors
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
 
@@ -84,10 +85,39 @@ async function mount(browser, entry, inventory = {}) {
       `Retired backend request: ${url.pathname}`,
     );
     assert.equal(request.headers().authorization, `Bearer ${token}`);
+    const handled = await inventory.handleRequest?.(request, url);
+    if (handled) return route.fulfill(handled);
     let body = { items: [] };
-    if (url.pathname.includes('/kubernetes/apis/') && url.pathname.endsWith('/workflows'))
-      body = { items: inventory.runs || [] };
-    else if (url.pathname.endsWith('/workflow-templates/team'))
+    if (url.pathname === '/kubernetes/apis/argoproj.io/v1alpha1/namespaces/team/workflows') {
+      assert.ok(request.headers().accept.includes('as=PartialObjectMetadataList'));
+      body = {
+        items: (inventory.runs || []).map((run) => ({
+          metadata: { resourceVersion: '1', ...run.metadata },
+        })),
+      };
+    } else if (url.pathname === '/argo/api/v1/workflows/team') {
+      assert.equal(
+        url.searchParams.get('listOptions.fieldSelector'),
+        'ext.showRemainingItemCount=true',
+      );
+      assert.ok(url.searchParams.get('fields').includes('items.status.phase'));
+      assert.ok(!url.searchParams.get('fields').includes('items.status.nodes'));
+      body = {
+        items: (inventory.runs || []).map((run) => ({
+          metadata: { resourceVersion: '1', ...run.metadata },
+          spec: {
+            shutdown: run.spec?.shutdown,
+            workflowTemplateRef: run.spec?.workflowTemplateRef,
+          },
+          status: {
+            phase: run.status?.phase,
+            startedAt: run.status?.startedAt,
+            finishedAt: run.status?.finishedAt,
+            message: run.status?.message,
+          },
+        })),
+      };
+    } else if (url.pathname.endsWith('/workflow-templates/team'))
       body = { items: inventory.versions || [] };
     else if (url.pathname.includes('/workflows/team/'))
       body =
@@ -241,6 +271,201 @@ test(
       await page.getByRole('button', { name: 'Detail', exact: true }).click();
       await page.getByText('uid-one', { exact: true }).waitFor();
       assert.ok(!requests.some((path) => path.endsWith('worker-json.js')));
+      assert.deepEqual(errors, []);
+      await page.close();
+    } finally {
+      await browser.close();
+    }
+  },
+);
+
+test(
+  'production experiment archival refreshes children without stopping runs',
+  { timeout: 60000 },
+  async () => {
+    const resource = 'pipelines.kubeflow.org/resource';
+    const experimentLabel = 'pipelines.kubeflow.org/experiment';
+    const maps = new Map([
+      [
+        'experiment-map',
+        {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: {
+            name: 'experiment-map',
+            uid: 'experiment-id',
+            namespace: 'team',
+            resourceVersion: '1',
+            labels: { [resource]: 'experiment' },
+          },
+          data: {
+            displayName: 'Archive verification',
+            description: 'Owned test fixture; no real cluster requests.',
+            storageState: 'AVAILABLE',
+          },
+        },
+      ],
+    ]);
+    let schedule = {
+      apiVersion: 'argoproj.io/v1alpha1',
+      kind: 'CronWorkflow',
+      metadata: {
+        name: 'training-daily',
+        uid: 'schedule-id',
+        namespace: 'team',
+        resourceVersion: '1',
+      },
+      spec: {
+        suspend: false,
+        workflowMetadata: { labels: { [experimentLabel]: 'experiment-id' } },
+      },
+    };
+    const run = {
+      metadata: {
+        name: 'training-run',
+        uid: 'run-id',
+        namespace: 'team',
+        creationTimestamp: '2026-11-20T11:59:00Z',
+        labels: { [experimentLabel]: 'experiment-id' },
+      },
+      spec: {},
+      status: { phase: 'Running' },
+    };
+    const writes = [];
+    const json = (body, status = 200) => ({
+      status,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+    const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+    try {
+      const { page, errors } = await mount(browser, 'argo.html', {
+        runs: [run],
+        handleRequest: async (request, url) => {
+          const method = request.method(),
+            path = url.pathname;
+          if (method !== 'GET') writes.push({ method, path });
+          if (path === '/argo/api/v1/cron-workflows/team') return json({ items: [schedule] });
+          if (path === '/argo/api/v1/cron-workflows/team/training-daily' && method === 'PUT') {
+            const body = request.postDataJSON().cronWorkflow;
+            assert.equal(body.metadata.uid, schedule.metadata.uid);
+            assert.equal(body.metadata.resourceVersion, schedule.metadata.resourceVersion);
+            schedule = {
+              ...body,
+              metadata: {
+                ...body.metadata,
+                resourceVersion: String(Number(body.metadata.resourceVersion) + 1),
+              },
+            };
+            return json(schedule);
+          }
+          const root = '/kubernetes/api/v1/namespaces/team/configmaps';
+          if (path === root) {
+            if (method === 'POST') {
+              const body = request.postDataJSON();
+              body.metadata.uid = 'state-id';
+              body.metadata.resourceVersion = '1';
+              maps.set(body.metadata.name, body);
+              return json(body, 201);
+            }
+            const selector = url.searchParams.get('labelSelector') || '';
+            const [key, value] = selector.split('=');
+            return json({
+              items: [...maps.values()].filter(
+                (item) => !selector || item.metadata.labels?.[key] === value,
+              ),
+            });
+          }
+          if (path.startsWith(root + '/')) {
+            const name = decodeURIComponent(path.slice(root.length + 1));
+            const stored = maps.get(name);
+            if (!stored) return json({}, 404);
+            if (method === 'PUT') {
+              const body = request.postDataJSON();
+              assert.equal(body.metadata.uid, stored.metadata.uid);
+              assert.equal(body.metadata.resourceVersion, stored.metadata.resourceVersion);
+              body.metadata.resourceVersion = String(Number(body.metadata.resourceVersion) + 1);
+              maps.set(name, body);
+              return json(body);
+            }
+            return json(stored);
+          }
+          return undefined;
+        },
+      });
+      await page.clock.setFixedTime(new Date('2026-11-20T12:00:00Z'));
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.locator('#experimentsBtn').click();
+      await page.getByRole('link', { name: 'Archive verification', exact: true }).click();
+      await page.getByText('1 active', { exact: true }).waitFor();
+      await page.getByRole('link', { name: 'training-run', exact: true }).waitFor();
+      const evidence = process.env.KFP_UI_EVIDENCE_DIR;
+      if (evidence) {
+        await mkdir(evidence, { recursive: true });
+        await page.screenshot({
+          path: join(evidence, 'experiment-before-archive.png'),
+          animations: 'disabled',
+        });
+      }
+      await page.locator('#archiveBtn').click();
+      await page
+        .getByText('Archive this experiment and its runs, and disable recurring runs.', {
+          exact: false,
+        })
+        .waitFor();
+      if (evidence)
+        await page.screenshot({
+          path: join(evidence, 'experiment-archive-confirmation.png'),
+          animations: 'disabled',
+        });
+      await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await page.getByRole('button', { name: 'Restore', exact: true }).waitFor();
+      await page.getByText('0 active', { exact: true }).waitFor();
+      await page.getByRole('link', { name: 'training-run', exact: true }).waitFor();
+      assert.equal(maps.get('experiment-map').data.storageState, 'ARCHIVED');
+      assert.equal(maps.get('run-run-id').data.storageState, 'ARCHIVED');
+      assert.equal(schedule.spec.suspend, true);
+      assert.equal(run.status.phase, 'Running');
+      assert.equal(run.spec.shutdown, undefined);
+      if (evidence)
+        await page.screenshot({
+          path: join(evidence, 'experiment-after-archive.png'),
+          animations: 'disabled',
+        });
+      await page.locator('#experimentsBtn').click();
+      await page.getByRole('button', { name: 'Archived', exact: true }).click();
+      await page.getByRole('link', { name: 'Archive verification', exact: true }).waitFor();
+      assert.equal(
+        await page.getByRole('button', { name: 'Create experiment', exact: true }).count(),
+        0,
+      );
+      assert.equal(await page.getByText('Last 5 runs', { exact: true }).count(), 0);
+      await page.getByRole('button', { name: 'Expand', exact: true }).click();
+      await page.getByRole('link', { name: 'training-run', exact: true }).waitFor();
+      assert.equal(await page.locator('input[type="checkbox"]').count(), 0);
+      assert.equal(await page.locator('[data-row-id="run-id"]').getAttribute('tabindex'), '-1');
+      assert.equal(await page.getByLabel('Filter runs', { exact: true }).count(), 0);
+      if (evidence)
+        await page.screenshot({
+          path: join(evidence, 'archived-experiments-expanded.png'),
+          animations: 'disabled',
+        });
+      await page.getByRole('link', { name: 'Archive verification', exact: true }).click();
+      await page.locator('#archiveBtn').click();
+      await page
+        .getByText('Its runs stay archived and recurring runs stay disabled.', { exact: false })
+        .waitFor();
+      await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await page.getByRole('button', { name: 'Archive', exact: true }).waitFor();
+      await page.getByText('No available runs found.', { exact: true }).waitFor();
+      assert.equal(maps.get('run-run-id').data.storageState, 'ARCHIVED');
+      assert.equal(schedule.spec.suspend, true);
+      await page.getByRole('button', { name: 'Archived', exact: true }).click();
+      await page.locator('#refreshBtn').click();
+      await page.getByRole('link', { name: 'training-run', exact: true }).waitFor();
+      assert.ok(
+        !writes.some(({ method, path }) => method === 'DELETE' || path.endsWith('/terminate')),
+      );
       assert.deepEqual(errors, []);
       await page.close();
     } finally {
