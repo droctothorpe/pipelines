@@ -11,6 +11,7 @@ import datetime
 import hashlib
 import json
 import re
+import warnings
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -72,6 +73,7 @@ class NativeBackend:
         self._user_namespace = namespace
         self._known_namespaces = {}
         self._known_workflows = {}
+        self._archive_warned = False
 
     def _namespace(self, namespace=None):
         return (
@@ -165,7 +167,9 @@ class NativeBackend:
         """
         latest = {}
         try:
-            runs = self._workflow_resources(namespace).values()
+            runs = self._workflow_resources(
+                namespace, tolerate_archive=True
+            ).values()
         except models.ApiException:
             return latest
         for run in runs:
@@ -918,19 +922,40 @@ class NativeBackend:
             for resource in self._maps('run-state', namespace)
         }
 
-    def _workflow_resources(self, namespace):
+    def _workflow_resources(self, namespace, tolerate_archive=False):
+        """Live and archived workflows by UID.
+
+        Listing may tolerate an unreachable archive; mutations that must
+        reach every run, such as experiment archival, must not.
+        """
         live = self.transport.collection(
             f'/kubernetes/apis/argoproj.io/v1alpha1/namespaces/{segment(namespace)}/workflows',
             params={'labelSelector': PIPELINE},
             kubernetes=True,
         )
-        archived = self.transport.collection(
-            '/argo/api/v1/archived-workflows',
-            params={
-                'namespace': namespace,
-                'listOptions.labelSelector': PIPELINE,
-            },
-        )
+        try:
+            archived = self.transport.collection(
+                '/argo/api/v1/archived-workflows',
+                params={
+                    'namespace': namespace,
+                    'listOptions.labelSelector': PIPELINE,
+                },
+            )
+        except models.ApiException as error:
+            # A client authenticating directly against Kubernetes has no Argo
+            # endpoint for the archive (C18); the cluster's live workflows are
+            # still a faithful inventory of what it holds.
+            if not tolerate_archive:
+                raise
+            if not self._archive_warned:
+                warnings.warn(
+                    'Archived runs are not listed: the Argo archive is '
+                    f'unavailable ({error.status} {error.reason}). Use a native '
+                    'endpoint with Argo access for full run history.',
+                    stacklevel=3,
+                )
+                self._archive_warned = True
+            archived = []
         return {
             resource['metadata']['uid']: resource
             for resource in archived + live
@@ -1005,7 +1030,7 @@ class NativeBackend:
         if experiment_id:
             experiment = self._find_map('experiment', experiment_id, namespace)
             namespace = experiment['metadata']['namespace']
-        merged = self._workflow_resources(namespace)
+        merged = self._workflow_resources(namespace, tolerate_archive=True)
         states = self._run_states(namespace)
         values = [
             self._run(resource, states.get(uid, 'AVAILABLE'))
