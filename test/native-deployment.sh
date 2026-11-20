@@ -57,4 +57,7 @@ export ARGO_CONTEXT="$context" ARGO_NAMESPACE="$namespace"
 export ARGO_VERSION_NAME
 ARGO_VERSION_NAME=$(uv run python -c "import yaml; print(yaml.safe_load(open('/tmp/native-version.yaml'))['metadata']['name'])")
 export PLAYWRIGHT_CHANNEL=${PLAYWRIGHT_CHANNEL:-chromium}
-node --test frontend/scripts/argo-deployment.smoke.mjs
+# The live browser suite shares the cluster and its SDK-created fixtures, then
+# the deployment acceptance test runs alone because it restarts services.
+(cd frontend && npm run test:e2e)
+node --test frontend/e2e/deployment.test.mjs

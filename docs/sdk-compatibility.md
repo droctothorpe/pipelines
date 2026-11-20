@@ -176,7 +176,7 @@ uv run --python 3.11 --isolated --frozen --extra test python -m pytest -q \
 
 The live programs require `KFP_TEST_TOKEN` and optionally `KFP_TEST_HOST` and
 `KFP_TEST_NAMESPACE`. They retain their runs and artifacts. The read-only browser
-check `frontend/scripts/component-wrapper.smoke.mjs` verifies the component's
+check `frontend/e2e/component-wrapper.test.mjs` verifies the component's
 error, task presentation and underlying pod-log access. These checks do not prove
 all cross-group continuation cases, retry combinations or workspace modes.
 
@@ -244,7 +244,7 @@ Argo-only details rather than incorrectly reporting an empty task list.
 Markdown artifacts now use the stock renderer and installed parser. Scoped document
 styles restore list markers/table spacing under the application's CSS reset. Raw
 HTML is disabled, unsafe link schemes are rejected and external/active-format images
-are blocked. `frontend/scripts/markdown.smoke.mjs` verifies formatting and the absence
+are blocked. `frontend/e2e/markdown.test.mjs` verifies formatting and the absence
 of script execution/tracking requests against a real produced artifact.
 
 ### Artifact-list staging
@@ -273,7 +273,7 @@ component service accounts and reader mutation permissions remain unchanged.
 `test/e2e/test_artifact_lists.py` covers files, directories, original cached
 sources, empty lists, nested loops/conditions/pipelines, HTTPS imports and missing
 objects. A 256-artifact cached-source run succeeded with just one new consumer pod.
-`frontend/scripts/artifact-list-staging.smoke.mjs` verifies UI submission, successful
+`frontend/e2e/artifact-list.test.mjs` verifies UI submission, successful
 execution and immutable version storage. An SDK-created recurring run also completed
 with staging; its test schedule was then disabled.
 

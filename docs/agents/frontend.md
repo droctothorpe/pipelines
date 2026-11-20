@@ -9,7 +9,11 @@ The Router asks for a namespace bearer token unless `/config.json` reports a
 single-user proxy; keep that fallback so older proxies and offline bundles still
 prompt. Task logs are an async generator: running tasks stream Argo Server's
 newline-delimited log endpoint with `follow`, finished tasks read the archived
-`main-logs` artifact; keep both paths and never reintroduce a tail limit. Use the pinned Node/npm versions and `npm run test:ci`. Rebuild the checked-in
+`main-logs` artifact; keep both paths and never reintroduce a tail limit. Use the pinned Node/npm versions and `npm run test:ci`. Live browser tests live in
+`frontend/e2e/` (node:test plus Playwright, shared setup in `live.mjs`, SDK-made
+fixtures through `test/e2e/fixtures.py`); `npm run test:e2e` runs them in parallel
+against a deployed installation and `deployment.test.mjs` runs alone afterwards
+because it restarts services. Add a UI journey there, not as a one-off script. Rebuild the checked-in
 SDK viewer assets after changing shared widgets. The native production-bundle
 smoke checks endpoint boundaries and credentials; the deployment smoke uses real
 namespace-scoped tokens and checks denied mutations.

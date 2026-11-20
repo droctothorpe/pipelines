@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 
 const context = process.env.ARGO_CONTEXT || 'orbstack';
 const namespace = process.env.ARGO_NAMESPACE || 'kfp-argo';
-const origin = process.env.ARGO_UI_URL || 'http://127.0.0.1:3003';
+const origin = process.env.ARGO_UI_URL || process.env.KFP_TEST_HOST || 'http://127.0.0.1:3003';
 const editor = process.env.ARGO_EDITOR_TOKEN,
   reader = process.env.ARGO_READER_TOKEN;
 let versionName = process.env.ARGO_VERSION_NAME;
@@ -148,13 +148,11 @@ test(
       await page.locator('#pipelinesBtn').click();
       await page.getByRole('button', { name: 'Upload pipeline', exact: true }).click();
       await page.getByLabel('Pipeline Name', { exact: false }).fill(`verification-${hash}`);
-      await page
-        .locator('input[type=file]')
-        .setInputFiles({
-          name: 'verification.yaml',
-          mimeType: 'application/yaml',
-          buffer: Buffer.from(JSON.stringify(fresh)),
-        });
+      await page.locator('input[type=file]').setInputFiles({
+        name: 'verification.yaml',
+        mimeType: 'application/yaml',
+        buffer: Buffer.from(JSON.stringify(fresh)),
+      });
       const uploaded = await saveResponse(page, '/workflow-templates/', () =>
         page.getByRole('button', { name: 'Create', exact: true }).click(),
       );
@@ -279,7 +277,12 @@ test(
       await page.waitForURL(/#\/recurringrun\/details\//);
       await page.getByRole('button', { name: 'Disable', exact: true }).click();
       await page.getByRole('button', { name: 'Enable', exact: true }).waitFor();
-      await waitFor(async () => (await json(`/argo/api/v1/cron-workflows/${namespace}/${cron.metadata.name}`)).spec.suspend === true, 'schedule explicitly disabled after default-enabled creation');
+      await waitFor(
+        async () =>
+          (await json(`/argo/api/v1/cron-workflows/${namespace}/${cron.metadata.name}`)).spec
+            .suspend === true,
+        'schedule explicitly disabled after default-enabled creation',
+      );
       await page.reload();
       await connect(page, editor);
       await page.getByText('Native schedule ' + hash, { exact: true }).waitFor();
@@ -368,8 +371,22 @@ test(
       await page.getByRole('button', { name: 'Archive', exact: true }).click();
       await page.getByRole('button', { name: 'Confirm', exact: true }).click();
       await page.waitForURL(/#\/archive\/runs/);
-      assert.equal((await json(`/kubernetes/api/v1/namespaces/${namespace}/configmaps/run-${first.metadata.uid}`)).data.storageState, 'ARCHIVED');
-      assert.equal((await json(`/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${namespace}/workflows/${first.metadata.name}`)).metadata.uid, first.metadata.uid);
+      assert.equal(
+        (
+          await json(
+            `/kubernetes/api/v1/namespaces/${namespace}/configmaps/run-${first.metadata.uid}`,
+          )
+        ).data.storageState,
+        'ARCHIVED',
+      );
+      assert.equal(
+        (
+          await json(
+            `/kubernetes/apis/argoproj.io/v1alpha1/namespaces/${namespace}/workflows/${first.metadata.name}`,
+          )
+        ).metadata.uid,
+        first.metadata.uid,
+      );
       // Simulate subsequent controller TTL/GC only for this test-owned workflow.
       kubectl(['delete', 'workflow', first.metadata.name]);
       const archived = await json(archivePath),

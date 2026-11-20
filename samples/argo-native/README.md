@@ -230,7 +230,7 @@ cd frontend
 ARGO_EDITOR_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=2h)" \
 ARGO_READER_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-reader --duration=2h)" \
 ARGO_VERSION_NAME=YOUR_COMPILED_WORKFLOW_TEMPLATE \
-node --test scripts/argo-deployment.smoke.mjs
+npm run test:e2e && node --test e2e/deployment.test.mjs
 ```
 
 This uses a fresh headless Chrome context and real APIs. It verifies UI upload and
