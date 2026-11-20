@@ -141,3 +141,22 @@ def verify(client):
             }
         )
     return report
+
+
+@dsl.component
+def maybe(fail: bool) -> str:
+    if fail:
+        raise RuntimeError('deliberate failure')
+    return 'ok'
+
+
+@dsl.pipeline(name='container-tolerant-compatibility')
+def tolerant_pipeline(fail: bool = True) -> str:
+    """A raw container consumes a possibly failed producer: IfPresent decides."""
+    source = maybe(fail=fail).set_caching_options(False)
+    return (
+        capture(value=source.output)
+        .ignore_upstream_failure()
+        .set_caching_options(False)
+        .output
+    )
