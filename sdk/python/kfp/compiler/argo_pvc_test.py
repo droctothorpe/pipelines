@@ -1,12 +1,13 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from kubernetes.client import ApiException
 
-from kfp.compiler.argo_pvc import execute
+from kfp.compiler.argo_pvc import decode, execute
 
 
 @pytest.mark.parametrize('storage_class', [None, '', 'standard'])
@@ -69,3 +70,41 @@ def test_delete_is_uid_safe_and_absence_is_idempotent():
     )
     execute('delete', {'pvc_name': 'claim'}, 'team', api)
     api.delete_namespaced_persistent_volume_claim.assert_not_called()
+
+
+def test_decode_only_json_decodes_the_parameters_the_compiler_encoded():
+    """Regression: nullable PVC inputs arrive JSON-encoded (`"-my-pvc"`, `null`)
+    while required strings stay raw; the stub previously used the quoted text
+    as the claim name (samples/core/kubernetes_pvc)."""
+    raw = json.dumps(
+        [
+            {'name': 'access_modes', 'value': '["ReadWriteOnce"]'},
+            {'name': 'size', 'value': '5Gi'},
+            {'name': 'pvc_name_suffix', 'value': '"-my-pvc"'},
+            {'name': 'pvc_name', 'value': 'null'},
+            {'name': 'storage_class_name', 'value': '"standard"'},
+            {'name': 'annotations', 'value': '{"team": "a"}'},
+        ]
+    )
+    encoded = json.dumps(
+        [
+            'access_modes',
+            'annotations',
+            'pvc_name',
+            'pvc_name_suffix',
+            'storage_class_name',
+        ]
+    )
+    assert decode(raw, encoded) == {
+        'access_modes': ['ReadWriteOnce'],
+        'size': '5Gi',
+        'pvc_name_suffix': '-my-pvc',
+        'pvc_name': None,
+        'storage_class_name': 'standard',
+        'annotations': {'team': 'a'},
+    }
+    # A required (non-nullable) name bound from an upstream output stays raw,
+    # even when it would parse as JSON.
+    assert decode(json.dumps([{'name': 'pvc_name', 'value': '123'}]), '[]') == {
+        'pvc_name': '123'
+    }
