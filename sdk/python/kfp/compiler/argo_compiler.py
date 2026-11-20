@@ -631,10 +631,8 @@ class _Compiler:
                 contract['inputs'][name] = declaration
                 continue
             if argo_continuation.optional_after_failure(task, name, port):
-                if '--executor_input' not in (container.args or []):
-                    raise ValueError(
-                        'Failure-tolerant container inputs need an explicit non-None default.'
-                    )
+                # Python components read the flag through the bridge; raw
+                # containers get it as the IfPresent condition in their argv.
                 declaration['presenceParameter'] = 'kfp-present-' + name
                 inputs['parameters'].append(
                     {'name': declaration['presenceParameter']}
@@ -974,7 +972,10 @@ class _Compiler:
             and (
                 any(
                     argo_parameters.nullable(port)
-                    for port in (spec.inputs or {}).values()
+                    or argo_continuation.optional_after_failure(
+                        task, name, port
+                    )
+                    for name, port in (spec.inputs or {}).items()
                 )
                 or (
                     any(
@@ -991,6 +992,13 @@ class _Compiler:
             for name, port in (spec.inputs or {}).items():
                 if name not in contract['inputs']:
                     presence[name] = False
+                elif argo_continuation.optional_after_failure(task, name, port):
+                    # Absent once its producer failed, whatever value was forwarded.
+                    presence[name] = (
+                        'inputs.parameters['
+                        + _json('kfp-present-' + name)
+                        + "] == 'true'"
+                    )
                 elif port.is_artifact_list:
                     presence[name] = (
                         'len(fromJSON(inputs.parameters['

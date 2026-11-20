@@ -727,6 +727,67 @@ def test_mixed_tolerance_of_an_outside_after_target_is_rejected(tmp_path):
         compiler.Compiler().compile(pipeline, str(tmp_path / 'mixed.yaml'))
 
 
+def test_raw_container_failure_tolerance_uses_the_presence_flag(tmp_path):
+    """C05: a raw container with an IfPresent input fed by a producer it
+    tolerates failing no longer needs an explicit default; the presence flag
+    becomes the IfPresent condition."""
+
+    @dsl.container_component
+    def capture(report: dsl.OutputPath(str), value: str = None):
+        return dsl.ContainerSpec(
+            image='busybox:1.37',
+            command=['sh', '-c', 'printf "%s" "$*" > "$0"'],
+            args=[
+                report,
+                dsl.IfPresentPlaceholder(
+                    input_name='value',
+                    then=['--value', value],
+                    else_=['--absent'],
+                ),
+            ],
+        )
+
+    @dsl.component(base_image='python:3.11', install_kfp_package=False)
+    def maybe(fail: bool) -> str:
+        if fail:
+            raise RuntimeError('deliberate failure')
+        return 'ok'
+
+    @dsl.pipeline(name='container-tolerant')
+    def tolerant_pipeline(fail: bool = True) -> str:
+        source = maybe(fail=fail)
+        return capture(value=source.output).ignore_upstream_failure().output
+
+    path = tmp_path / 'tolerant.yaml'
+    compiler.Compiler().compile(
+        tolerant_pipeline, str(path), resource_kind='Workflow'
+    )
+    templates = yaml.safe_load(path.read_text())['spec']['templates']
+    consumer = next(
+        t
+        for t in templates
+        if t.get('container', {}).get('image') == 'busybox:1.37'
+    )
+    assert 'kfp-present-value' in [
+        p['name'] for p in consumer['inputs']['parameters']
+    ]
+    assert (
+        'inputs.parameters["kfp-present-value"] == \'true\''
+        in consumer['podSpecPatch']
+    )
+    dag = next(t for t in templates if 'dag' in t)
+    task = next(
+        item for item in dag['dag']['tasks'] if item['name'] == 'capture'
+    )
+    flag = next(
+        p['value']
+        for p in task['arguments']['parameters']
+        if p['name'] == 'kfp-present-value'
+    )
+    assert flag == '{{=tasks["maybe"].status == \'Succeeded\'}}'
+    assert 'maybe.Failed' in task['depends']
+
+
 def test_ignore_upstream_failure_supplies_final_status(tmp_path):
     @dsl.component
     def cleanup(status: dsl.PipelineTaskFinalStatus):

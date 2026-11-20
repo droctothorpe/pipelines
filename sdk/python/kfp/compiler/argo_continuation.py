@@ -34,6 +34,7 @@ def arguments(task, arguments):
         return needed
     from kfp.compiler.argo_compiler import _json, _kind
     from kfp.compiler.argo_groups import _expression_reference
+    from kfp.compiler.argo_parameters import nullable
     from kfp.dsl.argo_runtime import serialize
 
     parameters = {p['name']: p for p in arguments.get('parameters', [])}
@@ -75,9 +76,14 @@ def arguments(task, arguments):
         ):
             item = parameters[key]
             source = _expression_reference(item['value'])
+            # Nullable inputs carry None as the literal `null`; other inputs
+            # without a default fall back to an empty value the presence flag
+            # tells the consumer to ignore.
             fallback = (
                 serialize(port.default, _kind(port))
                 if parameter and port.default is not None
+                else 'null'
+                if parameter and nullable(port)
                 else ''
             )
             # Argo checks missing references before evaluating a ternary; ?? guards that lookup.

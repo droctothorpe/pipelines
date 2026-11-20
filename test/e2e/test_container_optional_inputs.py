@@ -8,7 +8,7 @@ import json
 import pytest
 
 from e2e import support
-from e2e.pipelines.container_optional_inputs import pipeline
+from e2e.pipelines.container_optional_inputs import pipeline, tolerant_pipeline
 
 
 def argv(done, name):
@@ -66,3 +66,21 @@ def test_if_present_argv_matches_stock(client, record, value, values):
         tail = staged[1:]
     assert tail == (['--absent'] if value is None else ['--value', value])
     record(run_id=submitted.run_id, value=value, argv=actual, state=done.state)
+
+
+@pytest.mark.full
+@pytest.mark.parametrize(
+    'fail', [True, False], ids=['producer-failed', 'producer-succeeded']
+)
+def test_raw_container_tolerates_a_failed_producer(client, record, fail):
+    """C05: the IfPresent branch follows the producer's outcome; no default needed."""
+    submitted, done = support.run_pipeline(
+        client, tolerant_pipeline, {'fail': fail}, timeout=300
+    )
+    assert done.state == ('FAILED' if fail else 'SUCCEEDED'), support.failures(
+        done
+    )
+    assert argv(done, 'capture') == (
+        ['--absent', 'value=absent'] if fail else ['--value', 'ok', 'value=ok']
+    )
+    record(run_id=submitted.run_id, fail=fail, state=done.state)
