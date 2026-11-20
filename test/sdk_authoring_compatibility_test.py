@@ -139,7 +139,7 @@ def test_custom_cache_key_overrides_automatic_values(tmp_path):
 
 
 def test_oneof_artifact_merge_keeps_uri_and_metadata_companions(tmp_path):
-    from sdk_compatibility.oneof import pipeline
+    from e2e.pipelines.oneof import pipeline
 
     manifest = compile_pipeline(tmp_path, pipeline)
     merged = [

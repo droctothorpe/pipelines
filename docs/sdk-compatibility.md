@@ -100,22 +100,22 @@ Runtime regression evidence:
   and still executes the embedded bridge successfully.
 - An executor-constructor regression initially failed because the older runtime
   did not accept `artifact_previews`; the bridge now handles that constructor.
-- `test/sdk_compatibility/stock_runtime.py` checks typed parameters, a staged
+- `test/e2e/stock_runtime.py` checks typed parameters, a staged
   Dataset, metadata and URI against an unmodified PyPI KFP installation.
-- `test/sdk_compatibility/default_pipeline.py` uses ordinary decorators and
+- `test/e2e/test_default_pipeline.py` uses ordinary decorators and
   `Client.create_run_from_pipeline_func`, with no image or compiler workaround.
   On OrbStack both runs succeeded; native status showed two cache misses/two pods
   initially and two cache hits/zero new pods on the second run.
 
 ```sh
-uv run python test/sdk_compatibility/stock_runtime.py prepare /tmp/kfp-stock-runtime
+uv run python test/e2e/stock_runtime.py prepare /tmp/kfp-stock-runtime
 uv run --no-project --python 3.11 --with kfp==2.17.0 python -I \
-  test/sdk_compatibility/stock_runtime.py run /tmp/kfp-stock-runtime
+  test/e2e/stock_runtime.py run /tmp/kfp-stock-runtime
 ```
 
 ### Stock sample evidence
 
-`test/sdk_compatibility/sample_corpus.py` preserves pipeline/component bodies and
+`test/e2e/corpus.py` preserves pipeline/component bodies and
 compiles definitions without executing notebook install/submission/timing cells.
 The actual stock SDK compiled 27 of 29 definitions; the initial native pass compiled
 22. The five migration regressions now have native lowering and retained tests in
@@ -123,7 +123,7 @@ The actual stock SDK compiled 27 of 29 definitions; the initial native pass comp
 validation notebook has missing imports/stale names, and the parallel-join sample
 uses an unsupported empty container decorator call.
 
-`test/sdk_compatibility/run_samples.py` separately records execution and semantic
+`test/e2e/test_samples.py` separately records execution and semantic
 checks. The per-sample results of the latest complete `samples/core` pass are in
 [core samples](core-samples.md): 25 of the 27 baseline-compilable definitions pass
 on OrbStack (three after fixes made during that pass), including all four
@@ -136,7 +136,7 @@ this is not a claim that every original notebook timing/submission cell ran.
 
 ### Failure handling and container output evidence
 
-`test/sdk_compatibility/ignore_failure.py` verifies both successful and failed
+`test/e2e/test_ignore_failure.py` verifies both successful and failed
 upstream execution, declared scalar defaults, optional `None` versus the literal
 string `"null"`, optional Dataset inputs, and `PipelineTaskFinalStatus`. It checks
 that cleanup succeeds while the failed run stays failed, including inside a
@@ -145,7 +145,7 @@ conditional group. The compiler regressions originally failed on explicit
 ternary evaluation: fallback expressions must guard absent outputs with `??`.
 Optional artifact references are resolved at Argo's optional-artifact stage.
 
-`test/sdk_compatibility/container_scalars.py` verifies all five non-string scalar
+`test/e2e/test_container_scalars.py` verifies all five non-string scalar
 types, Dataset forwarding, cache reuse, and malformed integer/boolean/list output
 failures. The ordinary container command and image are unchanged. A native DAG
 and zero-duration suspend control node validate its output; no additional pod,
@@ -193,7 +193,7 @@ expressions. None selects the absent branch; empty strings and literal `"null"`
 remain present. This adds neither a pod nor a runtime to the user image. It also
 composes with artifact-list staging's argument file and preserves other pod-patch
 settings. The BusyBox fixture in
-`test/sdk_compatibility/container_optional_inputs.py` covers ordinary and staged
+`test/e2e/test_container_optional_inputs.py` covers ordinary and staged
 consumers, including empty artifact collections. Compiler regressions, native
 offline lint and 25 pinned-expression evaluations pass; live execution is still
 blocked by the local cluster outage. Nullable Kubernetes settings need further
@@ -210,7 +210,7 @@ Explicit workspace PVC specs now lower to native `volumeClaimTemplates`. The
 workspace placeholder resolves to `/kfp-workspace`, and pod patches mount the claim
 only for tasks whose user inputs reference that path. Automatic cache keys include
 run identity for those tasks, matching the stock cache's use of resolved PVC names;
-unrelated tasks retain cross-run cache reuse. `test/sdk_compatibility/workspace.py`
+unrelated tasks retain cross-run cache reuse. `test/e2e/test_workspace.py`
 verifies file sharing, a path returned at runtime, unrelated/no-input tasks, two-run
 cache behavior and the absence of mounts on unrelated pods. Deployment-provided
 workspace access-mode defaults and workspace importer downloads remain unfinished.
@@ -219,7 +219,7 @@ workspace access-mode defaults and workspace importer downloads remain unfinishe
 `apply_to_task`. This avoids allocating external-workload resources or applying
 external-only selectors to the component pod. Runtime identity environment variables
 stay on the component. Task-local emptyDir/ephemeral volumes are not forwarded as
-shared volumes. `test/sdk_compatibility/task_config.py` checks dynamic CPU, environment
+shared volumes. `test/e2e/test_task_config.py` checks dynamic CPU, environment
 and node-selector projection with unchanged public annotations and no driver pod.
 Python workspace-volume passthrough now preserves the actual run's claim identity
 without mounting it on an external-only task. Unused workspace context remains
@@ -229,7 +229,7 @@ mixed dynamic claim declarations and raw-container structured TaskConfig remain 
 Dynamic claim Pod fields and external-only claim projection have been verified without
 claiming successful device allocation on this cluster.
 
-`test/sdk_compatibility/kubernetes_settings.py` verifies user init-containers,
+`test/e2e/test_kubernetes_settings.py` verifies user init-containers,
 emptyDir sharing, dynamic ConfigMap environment/volume names, downward API values,
 non-root identity, capability dropping, privilege-escalation prevention, seccomp,
 affinity and toleration seconds on the actual pod. Static DRA mapping is tested at
@@ -270,7 +270,7 @@ bootstrap files. Large templates use Argo's native ConfigMap offload. The deploy
 grants the controller namespace-scoped ConfigMap **create** permission for this;
 component service accounts and reader mutation permissions remain unchanged.
 
-`test/sdk_compatibility/artifact_lists.py` covers files, directories, original cached
+`test/e2e/test_artifact_lists.py` covers files, directories, original cached
 sources, empty lists, nested loops/conditions/pipelines, HTTPS imports and missing
 objects. A 256-artifact cached-source run succeeded with just one new consumer pod.
 `frontend/scripts/artifact-list-staging.smoke.mjs` verifies UI submission, successful
@@ -389,7 +389,7 @@ separating Kubernetes-only inventory is unfinished adapter work, not a fundament
 limitation of certificate authentication. The UI/proxy `host=...` connection remains
 available for those engine-specific operations.
 
-Reproducer: `test/sdk_compatibility/kube_context.py --context orbstack
+Reproducer: `test/e2e/test_kube_context.py --context orbstack
 --namespace kfp-argo --run`, or add `--service-account-token` with `KFP_TEST_TOKEN`.
 It neither prints credentials nor modifies the user's SDK context file.
 
@@ -401,7 +401,7 @@ short cutoff; unmodified Argo still creates at most one recovery run. There is n
 custom backfill dispatcher. Native semaphores limit running workflows when
 `max_concurrency > 1`; Argo may retain waiting workflows while permits are occupied.
 
-`test/sdk_compatibility/recurring.py` verifies default-enabled creation, disabling,
+`test/e2e/test_recurring.py` verifies default-enabled creation, disabling,
 re-enabling and an actual scheduled Workflow using public SDK methods. It leaves
 its owned schedule disabled. An additional disabled three-permit schedule with
 start/end dates was accepted by the real Argo API. Full outage/recovery scenarios

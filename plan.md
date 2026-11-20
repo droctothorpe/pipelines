@@ -393,7 +393,7 @@ This is not a claim of complete upstream SDK/client compatibility.
 - Nine current-image compatibility cases pass on OrbStack: nested DAGs, both
   branches, loops/collection, failed iterations, successful/failing bodies and
   cleanup, nested native-container artifact transfer, 100 KB metadata, and actual
-  retry attempts with resource requests/limits. See `verify_compatibility.py`.
+  retry attempts with resource requests/limits. Now `test/e2e/test_control_flow.py`.
 - The deployed browser test passed after fixing and retrying surfaced problems.
   It covers UI version upload, empty experiments and filtered runs, submissions,
   actual image IDs, 3 then 2 task pods, cache producer identity, both scores,
@@ -467,7 +467,7 @@ This is not a claim of complete upstream SDK/client compatibility.
   `argo-ml-demo-p2n68`), including native preparation memoization. These are compiled
   resources, unlike the earlier handwritten demo.
 - Seven real-cluster compatibility cases passed via
-  `uv run python samples/argo-native/verify_compatibility.py --context kind-kfp-argo`:
+  the control-flow corpus (now `test/e2e/test_control_flow.py`):
   nested DAGs, both conditional branches, bounded loops and integer collection,
   failed loop iterations, successful/failing bodies and failing cleanup, and a
   BusyBox container artifact consumed by an unchanged Python component.

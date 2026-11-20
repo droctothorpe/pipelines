@@ -5,8 +5,8 @@
 import json
 
 import yaml
+from e2e.pipelines.container_optional_inputs import pipeline
 from kfp import compiler
-from sdk_compatibility.container_optional_inputs import pipeline
 
 
 def test_nullable_if_present_lowers_to_native_argument_arrays(tmp_path):

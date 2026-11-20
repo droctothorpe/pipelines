@@ -196,25 +196,30 @@ coverage and remaining provider/runtime limits.
 Run the full retained Python suite on both supported versions:
 
 ```sh
-uv run --frozen --extra test python -m pytest -q sdk/python/kfp test samples/argo-native/deploy_test.py
+uv run --frozen --extra test python -m pytest -q sdk/python/kfp test
 # Repeat with: uv run --python 3.11 --isolated --frozen --extra test python -m pytest ...
 ```
 
 `bash test/native-deployment.sh` performs the complete build/deploy/acceptance flow
-in a new disposable Kind cluster. It does not operate on the existing OrbStack stack.
+in a new disposable Kind cluster: it deploys, runs the `smoke` tier of the live
+suite under `test/e2e/`, then the browser acceptance test. It does not operate on
+the existing OrbStack stack.
 
-With the Argo CLI environment above, run the actual Kubernetes compatibility corpus:
+Against this OrbStack stack, run the live suite directly through the UI port-forward
+(see [testing](../../docs/agents/testing.md) for tiers and settings):
 
 ```sh
-uv run python samples/argo-native/verify_compatibility.py \
-  --context orbstack --namespace kfp-argo \
-  --image-digest "$(docker image inspect kfp-argo-demo:dev --format '{{.Id}}')"
+export KFP_TEST_HOST=http://127.0.0.1:3003 KFP_TEST_NAMESPACE=kfp-argo
+export KFP_TEST_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=2h)"
+KFP_TEST_IMAGE=kfp-argo-demo:dev uv run python -m pytest test/e2e -m smoke -p no:randomly
 ```
 
-The nine cases cover nested DAGs, both conditional branches, bounded loops and
-integer collection, failed loop iterations, successful/failing bodies and failing
-cleanup, a native container artifact crossing a nested pipeline boundary, large
-metadata transfer, and actual retry attempts with pod resource requests/limits. Deliberate failures are asserted, not retried into success.
+`test_control_flow.py` carries the nine control-flow cases that used to be a separate
+corpus: nested DAGs, both conditional branches, bounded loops and integer collection,
+failed loop iterations, successful/failing bodies and failing cleanup, a native
+container artifact crossing a nested pipeline boundary, large metadata transfer, and
+actual retry attempts with pod resource requests/limits. Deliberate failures are
+asserted, not retried into success.
 
 For the deployed browser test, supply a compiled WorkflowTemplate name as the base.
 It creates a new version with isolated cache keys rather than clearing existing

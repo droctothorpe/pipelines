@@ -22,7 +22,7 @@ test('SDK-created identities and archive state work through the stock UI', { tim
   const fixturePath = join(temporary, 'resources.json');
   let browser;
   try {
-    python(['test/sdk_compatibility/ui_interop.py', fixturePath]);
+    python(['test/e2e/pipelines/ui_interop.py', fixturePath]);
     const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
     browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome' });
     const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });

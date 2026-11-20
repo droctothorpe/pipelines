@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Capture public calling conventions from a fixed stock SDK revision.
 
-This records source facts, not native expectations. Regenerate only when changing
-an explicitly agreed reference revision, never to make compatibility tests pass.
+This records source facts, not native expectations. Regenerate only when
+changing an explicitly agreed reference revision, never to make
+compatibility tests pass.
 """
 
 import argparse
@@ -111,7 +112,7 @@ def main():
     parser.add_argument(
         '--output',
         type=Path,
-        default=Path('test/sdk_compatibility/stock_signatures.json'),
+        default=Path('test/data/stock_signatures.json'),
     )
     options = parser.parse_args()
     result = capture(options.ref)
