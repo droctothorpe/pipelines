@@ -788,6 +788,143 @@ def test_raw_container_failure_tolerance_uses_the_presence_flag(tmp_path):
     assert 'maybe.Failed' in task['depends']
 
 
+def _workspace_importer_pipeline(with_workspace):
+    @dsl.component(base_image='python:3.11', install_kfp_package=False)
+    def read(data: dsl.Input[dsl.Dataset]) -> str:
+        return data.path
+
+    @dsl.container_component
+    def raw(data: dsl.Input[dsl.Dataset], out: dsl.OutputPath(str)):
+        return dsl.ContainerSpec(
+            image='busybox:1.37',
+            command=['sh', '-c', 'cp "$0" "$1"'],
+            args=[data.path, out],
+        )
+
+    config = (
+        dsl.PipelineConfig(
+            workspace=dsl.WorkspaceConfig(
+                size='1Mi',
+                kubernetes=dsl.KubernetesWorkspaceConfig(
+                    pvcSpecPatch={'accessModes': ['ReadWriteOnce']}
+                ),
+            )
+        )
+        if with_workspace
+        else None
+    )
+
+    @dsl.pipeline(name='workspace-importer', pipeline_config=config)
+    def pipeline(uri: str = 's3://bucket/key'):
+        imported = dsl.importer(
+            artifact_uri=uri,
+            artifact_class=dsl.Dataset,
+            download_to_workspace=True,
+            metadata={'rows': 1},
+        )
+        read(data=imported.output)
+        raw(data=imported.output)
+
+    return pipeline
+
+
+def test_importer_download_to_workspace_stages_once_on_the_shared_volume(
+    tmp_path,
+):
+    """C07: the importer resolves without a pod, a download step copies the
+    payload to the path dsl.Artifact.path derives for workspace artifacts, and
+    consumers in the graph read it there instead of staging a copy."""
+    path = tmp_path / 'workspace.yaml'
+    compiler.Compiler().compile(
+        _workspace_importer_pipeline(True), str(path), resource_kind='Workflow'
+    )
+    templates = {
+        t['name']: t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+    }
+    outer = next(
+        t
+        for t in templates.values()
+        if t.get('metadata', {})
+        .get('annotations', {})
+        .get('pipelines.kubeflow.org/component-type')
+        == 'IMPORTER'
+    )
+    tasks = {task['name']: task for task in outer['dag']['tasks']}
+    assert tasks['download']['depends'] == 'resolve'
+    assert tasks['download']['arguments']['artifacts'] == [
+        {
+            'name': 'source',
+            'from': '{{tasks.resolve.outputs.artifacts.artifact}}',
+        }
+    ]
+    prefix = "{{='/kfp-workspace/.artifacts/' + (sprig.hasPrefix('gs://', "
+    target = tasks['download']['arguments']['parameters'][0]['value']
+    assert target.startswith(
+        prefix
+        + "tasks.resolve.outputs.parameters['kfp-uri-artifact']) ? 'gcs/' + "
+    )
+    inner = templates[tasks['resolve']['template']]
+    assert 'memoize' in inner
+    assert inner['outputs']['artifacts'][0]['fromExpression']
+    assert (
+        'string("_kfp_workspace"),true'
+        in inner['inputs']['artifacts'][-1]['raw']['data']
+    )
+    downloader = templates[tasks['download']['template']]
+    assert downloader['inputs']['parameters'] == [
+        {'name': 'target'},
+        {'name': 'kfp-workspace-strings', 'default': '["target"]'},
+    ]
+    assert (
+        downloader['container']['command'][-1] == '{{inputs.parameters.target}}'
+    )
+    assert [p['name'] for p in outer['outputs']['parameters']] == [
+        'kfp-uri-artifact',
+        'kfp-meta-artifact',
+        'kfp-metadata',
+    ]
+    python_consumer = next(
+        t
+        for t in templates.values()
+        if t.get('container', {}).get('image') == 'python:3.11'
+        and 'read' in t['name']
+    )
+    assert 'artifacts' not in python_consumer['inputs'], python_consumer[
+        'inputs'
+    ]
+    names = [p['name'] for p in python_consumer['inputs']['parameters']]
+    assert 'kfp-uri-data' in names and 'kfp-workspace-artifacts' in names
+    strings = next(
+        p['default']
+        for p in python_consumer['inputs']['parameters']
+        if p['name'] == 'kfp-workspace-strings'
+    )
+    assert 'kfp-workspace-artifacts' in strings
+    container = python_consumer['container']
+    assert '"workspace":true' in ' '.join(
+        container.get('command', []) + container.get('args', [])
+    )
+    raw_consumer = next(
+        t
+        for t in templates.values()
+        if t.get('container', {}).get('image') == 'busybox:1.37'
+    )
+    assert 'artifacts' not in raw_consumer['inputs']
+    assert raw_consumer['container']['args'][0].startswith(
+        prefix + 'inputs.parameters["kfp-uri-data"]) ? \'gcs/\' + '
+    )
+
+
+def test_importer_download_to_workspace_needs_a_workspace(tmp_path):
+    with pytest.raises(ValueError, match='requires PipelineConfig'):
+        compiler.Compiler().compile(
+            _workspace_importer_pipeline(False),
+            str(tmp_path / 'x.yaml'),
+            resource_kind='Workflow',
+        )
+
+
 def test_ignore_upstream_failure_supplies_final_status(tmp_path):
     @dsl.component
     def cleanup(status: dsl.PipelineTaskFinalStatus):

@@ -160,6 +160,26 @@ class _Compiler:
             channel, self.graph_context[1], self.staged_graph_inputs
         )
 
+    def workspace_import(self, channel):
+        """True when the artifact comes from an importer in the same graph that
+        downloads into the shared workspace."""
+        if (
+            self.workspace is None
+            or not isinstance(channel, pipeline_channel.PipelineArtifactChannel)
+            or not channel.task_name
+        ):
+            return False
+        graph = self.graph_context[1]
+        producer = (
+            graph.pipeline.tasks.get(channel.task_name) if graph else None
+        )
+        importer = (
+            producer.component_spec.implementation.importer
+            if producer
+            else None
+        )
+        return bool(importer and importer.download_to_workspace)
+
     def nullable_source(self, channel):
         return argo_parameters.source_nullable(channel, *self.graph_context)
 
@@ -598,6 +618,7 @@ class _Compiler:
             'outputs': {},
         }
         replacements = {}
+        workspace_inputs = False
         for name, port in (spec.inputs or {}).items():
             if (
                 port.optional
@@ -690,8 +711,30 @@ class _Compiler:
                     path='/tmp/kfp/inputs/' + name,
                     metadataPath='/tmp/kfp/inputs/' + name + '.json',
                 )
+                path_reference = declaration['path']
+                if self.workspace_import(task.inputs.get(name)):
+                    # The importer already placed the payload on the shared
+                    # workspace; read it there instead of staging a second copy.
+                    from kfp.compiler.argo_importer import workspace_target
+
+                    inputs['artifacts'] = [
+                        item
+                        for item in inputs['artifacts']
+                        if item['name'] not in (name, name + '-metadata')
+                    ]
+                    declaration['workspace'] = True
+                    workspace_inputs = True
+                    path_reference = (
+                        '{{='
+                        + workspace_target(
+                            'inputs.parameters['
+                            + _json('kfp-uri-' + name)
+                            + ']'
+                        )
+                        + '}}'
+                    )
                 replacements[f"{{{{$.inputs.artifacts['{name}'].path}}}}"] = (
-                    declaration['path']
+                    path_reference
                 )
                 replacements[f"{{{{$.inputs.artifacts['{name}'].uri}}}}"] = (
                     _ref('inputs.parameters', 'kfp-uri-' + name)
@@ -1030,6 +1073,14 @@ class _Compiler:
                 and structures.spec_type_is_parameter(port.type)
                 and _kind(port) == 'String'
             ]
+            if workspace_inputs:
+                inputs['parameters'].append(
+                    {
+                        'name': 'kfp-workspace-artifacts',
+                        'default': '/kfp-workspace',
+                    }
+                )
+                strings.append('kfp-workspace-artifacts')
             inputs['parameters'].append(
                 {'name': 'kfp-workspace-strings', 'default': _json(strings)}
             )

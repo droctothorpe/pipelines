@@ -326,6 +326,10 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
             and port['type'] != 'system.Artifact@0.0.1'
         ):
             raise ValueError(f'Artifact type mismatch for {name!r}.')
+        if not port.get('workspace'):
+            # A staged copy was downloaded for this pod, so the SDK must not
+            # rebase the path onto a workspace this pod may not mount.
+            metadata['metadata'].pop('_kfp_workspace', None)
         references.append(
             {
                 'port': name,
@@ -339,7 +343,9 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
                     'name': metadata['port'],
                     'uri': metadata['uri'],
                     'metadata': metadata['metadata'],
-                    'path': port['path'],
+                    # Without a staged copy, dsl.Artifact.path derives the
+                    # workspace location from the URI and _kfp_workspace.
+                    'path': '' if port.get('workspace') else port['path'],
                     'type': {'schemaTitle': metadata['type'].split('@')[0]},
                 }
             ]
@@ -496,7 +502,8 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
 
 
 def main():
-    """Run the embedded bridge with the ordinary SDK component-loader arguments."""
+    """Run the embedded bridge with the ordinary SDK component-loader
+    arguments."""
     import argparse
     import logging
     import sys

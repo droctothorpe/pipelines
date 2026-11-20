@@ -90,3 +90,64 @@ def test_importer_metadata_and_cache_choice(
                 bool(consumer.get('memoizationStatus', {}).get('hit')) is reuse
             )
         record(run_id=submitted.run_id, reuse=reuse, iteration=iteration)
+
+
+@dsl.component
+def check_workspace(data: dsl.Input[dsl.Dataset], expected: int) -> str:
+    from pathlib import Path
+
+    assert data.path.startswith('/kfp-workspace/.artifacts/s3/'), data.path
+    assert int(Path(data.path).read_text()) == expected
+    assert not Path('/tmp/kfp/inputs/data').exists(), (
+        'the payload must not be staged a second time'
+    )
+    assert data.metadata['_kfp_workspace'] is True, data.metadata
+    assert data.metadata['rows'] == expected
+    return data.path
+
+
+@dsl.pipeline(
+    name='native-importer-workspace',
+    pipeline_config=dsl.PipelineConfig(
+        workspace=dsl.WorkspaceConfig(
+            size='1Mi',
+            kubernetes=dsl.KubernetesWorkspaceConfig(
+                pvcSpecPatch={
+                    'accessModes': ['ReadWriteOnce'],
+                    'storageClassName': 'standard',
+                }
+            ),
+        )
+    ),
+)
+def workspace_pipeline(uri: str, rows: int = 37):
+    imported = dsl.importer(
+        artifact_uri=uri,
+        artifact_class=dsl.Dataset,
+        download_to_workspace=True,
+        metadata={'rows': rows},
+    )
+    check_workspace(data=imported.output, expected=rows)
+
+
+@pytest.mark.full
+def test_importer_downloads_into_the_workspace(client, record, dataset_uri):
+    """C07: the payload lands at stock's workspace path once and the consumer
+    reads it from the shared volume."""
+    submitted, done = support.run_pipeline(
+        client, workspace_pipeline, {'uri': dataset_uri}, timeout=300
+    )
+    raw = support.workflow(client, done)
+    assert done.state == 'SUCCEEDED', support.phases(raw)
+    path = support.node_output(support.node(raw, 'check-workspace'), 'Output')
+    assert path == '/kfp-workspace/.artifacts/' + dataset_uri.replace(
+        '://', '/', 1
+    )
+    pods = support.pods(client, raw)
+    mounted = [
+        p
+        for p in pods
+        if any(v['name'] == 'kfp-workspace' for v in p['spec']['volumes'])
+    ]
+    assert len(mounted) == 2, [p['metadata']['name'] for p in pods]
+    record(run_id=submitted.run_id, path=path, pods=len(pods))

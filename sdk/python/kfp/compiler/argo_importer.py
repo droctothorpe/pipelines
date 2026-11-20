@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Import external artifact references using native DAG outputs, without a pod."""
+"""Import external artifact references using native DAG outputs, without a
+pod."""
 
 import hashlib
 import re
@@ -10,14 +11,144 @@ from kfp.compiler.argo_compiler import _json, _kind
 from kfp.dsl.argo_runtime import SCHEMA
 
 PLACEHOLDER = re.compile(r"\{\{\$.inputs.parameters\['([^']+)'\]\}\}")
+WORKSPACE_ARTIFACTS = '/kfp-workspace/.artifacts/'
+
+
+def workspace_target(uri):
+    """Argo expression for the path dsl.Artifact.path derives for a
+    workspace-resident artifact: the SDK's local mount prefix for gs://, s3://
+    and minio:// URIs, the URI itself otherwise, under the workspace artifacts
+    root."""
+    local = (
+        "(sprig.hasPrefix('gs://', U) ? 'gcs/' + sprig.trimPrefix('gs://', U) : "
+        "(sprig.hasPrefix('s3://', U) || sprig.hasPrefix('minio://', U)) ? "
+        "sprig.replace('://', '/', U) : U)"
+    ).replace('U', uri)
+    return "'" + WORKSPACE_ARTIFACTS + "' + " + local
+
+
+def _with_download(compiler, template, name, declared):
+    """Run the podless resolution, then copy the chosen payload onto the shared
+    workspace.
+
+    Consumers compiled against this importer read it there.
+    """
+    from kfp.dsl.component_factory import _DEFAULT_BASE_IMAGE
+
+    image = _DEFAULT_BASE_IMAGE
+    digest = compiler.options.image_digests.get(image)
+    if digest:
+        from kfp.compiler.argo_compiler import local_image_reference
+
+        image = local_image_reference(image, digest)
+    downloader = compiler._template_name(name + '-download')
+    compiler.templates.append(
+        {
+            'name': downloader,
+            'inputs': {
+                'artifacts': [{'name': 'source', 'path': '/tmp/kfp/import'}],
+                'parameters': [
+                    {'name': 'target'},
+                    # Names the parameter whose value proves this pod needs the
+                    # workspace mount; see argo_workspace.NEEDS_WORKSPACE.
+                    {'name': 'kfp-workspace-strings', 'default': '["target"]'},
+                ],
+            },
+            'container': {
+                'image': image,
+                'command': [
+                    'sh',
+                    '-c',
+                    'mkdir -p "$(dirname "$2")" && rm -rf "$2" && cp -R "$1" "$2"',
+                    'kfp-import',
+                    '/tmp/kfp/import',
+                    '{{inputs.parameters.target}}',
+                ],
+            },
+        }
+    )
+    resolved = template['name']
+    template['metadata'] = {}
+    outer = {
+        'name': name,
+        'metadata': {
+            'annotations': {'pipelines.kubeflow.org/component-type': 'IMPORTER'}
+        },
+        'inputs': {'parameters': [{'name': key} for key in declared]},
+        'dag': {
+            'tasks': [
+                {
+                    'name': 'resolve',
+                    'template': resolved,
+                    'arguments': {
+                        'parameters': [
+                            {
+                                'name': key,
+                                'value': '{{inputs.parameters.' + key + '}}',
+                            }
+                            for key in declared
+                        ]
+                    },
+                },
+                {
+                    'name': 'download',
+                    'template': downloader,
+                    'depends': 'resolve',
+                    'arguments': {
+                        'artifacts': [
+                            {
+                                'name': 'source',
+                                'from': '{{tasks.resolve.outputs.artifacts.artifact}}',
+                            }
+                        ],
+                        'parameters': [
+                            {
+                                'name': 'target',
+                                'value': '{{='
+                                + workspace_target(
+                                    "tasks.resolve.outputs.parameters['kfp-uri-artifact']"
+                                )
+                                + '}}',
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+        'outputs': {
+            'artifacts': [
+                {
+                    'name': key,
+                    'from': '{{tasks.resolve.outputs.artifacts.' + key + '}}',
+                }
+                for key in ('artifact', 'artifact-metadata')
+            ],
+            'parameters': [
+                {
+                    'name': key,
+                    'valueFrom': {
+                        'parameter': '{{tasks.resolve.outputs.parameters.'
+                        + key
+                        + '}}'
+                    },
+                }
+                for key in (
+                    'kfp-uri-artifact',
+                    'kfp-meta-artifact',
+                    'kfp-metadata',
+                )
+            ],
+        },
+    }
+    compiler.templates.append(outer)
 
 
 def compile_importer(compiler, task):
     spec = task.component_spec
     importer = spec.implementation.importer
-    if importer.download_to_workspace:
+    if importer.download_to_workspace and compiler.workspace is None:
         raise ValueError(
-            'Importer workspace downloads require workspace volume lowering.'
+            'Importer download_to_workspace requires PipelineConfig(workspace=...).'
         )
     literal = task.inputs.get('uri')
     if isinstance(literal, str) and urlsplit(literal).scheme not in (
@@ -31,7 +162,9 @@ def compile_importer(compiler, task):
         )
     name = compiler._template_name(task.name)
     template = {
-        'name': name,
+        'name': compiler._template_name(task.name + '-import')
+        if importer.download_to_workspace
+        else name,
         'metadata': {
             'annotations': {'pipelines.kubeflow.org/component-type': 'IMPORTER'}
         },
@@ -90,7 +223,17 @@ def compile_importer(compiler, task):
         + ',uri:'
         + uri
         + ',metadata:'
-        + expression(importer.metadata or {})
+        + expression(
+            {
+                **(importer.metadata or {}),
+                # Stock marks workspace-resident artifacts this way.
+                **(
+                    {'_kfp_workspace': True}
+                    if importer.download_to_workspace
+                    else {}
+                ),
+            }
+        )
         + ',inputs:[]}'
     )
     # Importers have no metadata file in object storage; their raw companion
@@ -187,4 +330,15 @@ def compile_importer(compiler, task):
             + '))}}',
             'cache': {'configMap': {'name': compiler.options.cache_config_map}},
         }
+    if importer.download_to_workspace:
+        _with_download(
+            compiler,
+            template,
+            name,
+            [
+                item['name']
+                for item in inputs['parameters']
+                if item['name'] in spec.inputs
+            ],
+        )
     return name
