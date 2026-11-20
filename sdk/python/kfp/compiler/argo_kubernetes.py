@@ -5,7 +5,7 @@
 import copy
 import json
 
-from kfp.compiler.argo_structured import CLAIM_REFS, CLAIMS, MARKER
+from kfp.compiler.argo_structured import CLAIM_REFS, CLAIMS, MARKER, MERGE
 from kfp.dsl.types import type_utils
 
 
@@ -214,34 +214,40 @@ def lower(task, template, config):
             raise ValueError('Init container names must be unique.')
         template.setdefault('initContainers', []).append(entry)
     node_affinities = config.pop('nodeAffinity', [])
+    static, dynamic = [], []
     for value in node_affinities:
         if not any(
             value.get(key)
             for key in ('nodeAffinityJson', 'matchExpressions', 'matchFields')
         ):
             continue
-        target = template.setdefault('affinity', {}).setdefault(
-            'nodeAffinity', {}
-        )
         if value.get('nodeAffinityJson'):
             node = structured(task, value['nodeAffinityJson'])
             if MARKER in node:
-                if len(node_affinities) != 1:
-                    raise ValueError(
-                        'Mixed dynamic node affinity terms need merged structured lowering.'
-                    )
-                template['affinity']['nodeAffinity'] = node
+                dynamic.append(node)
                 continue
-            for key, item in node.items():
-                if key == 'requiredDuringSchedulingIgnoredDuringExecution':
-                    target.setdefault(key, {}).setdefault(
-                        'nodeSelectorTerms', []
-                    ).extend(item.get('nodeSelectorTerms', []))
-                elif key == 'preferredDuringSchedulingIgnoredDuringExecution':
-                    target.setdefault(key, []).extend(item)
-                else:
-                    raise ValueError('Unknown node affinity field.')
-        else:
+            value = {'nodeAffinityJson': node}
+        static.append(value)
+    if dynamic and not static and len(dynamic) == 1:
+        template.setdefault('affinity', {})['nodeAffinity'] = dynamic[0]
+    elif static or dynamic:
+        target = template.setdefault('affinity', {}).setdefault(
+            'nodeAffinity', {}
+        )
+        for value in static:
+            if 'nodeAffinityJson' in value:
+                for key, item in value['nodeAffinityJson'].items():
+                    if key == 'requiredDuringSchedulingIgnoredDuringExecution':
+                        target.setdefault(key, {}).setdefault(
+                            'nodeSelectorTerms', []
+                        ).extend(item.get('nodeSelectorTerms', []))
+                    elif (
+                        key == 'preferredDuringSchedulingIgnoredDuringExecution'
+                    ):
+                        target.setdefault(key, []).extend(item)
+                    else:
+                        raise ValueError('Unknown node affinity field.')
+                continue
             term = {
                 key: copy.deepcopy(value[key])
                 for key in ('matchExpressions', 'matchFields')
@@ -255,49 +261,91 @@ def lower(task, template, config):
                 target.setdefault(
                     'requiredDuringSchedulingIgnoredDuringExecution', {}
                 ).setdefault('nodeSelectorTerms', []).append(term)
+        if dynamic:
+            # Stock resolves the JSON term at run time and appends its required
+            # and preferred terms to the static ones; a null value adds nothing.
+            bindings = [node[MARKER] for node in dynamic]
+            target['requiredDuringSchedulingIgnoredDuringExecution'] = {
+                MERGE: {
+                    'static': target.get(
+                        'requiredDuringSchedulingIgnoredDuringExecution', {}
+                    ).get('nodeSelectorTerms', []),
+                    'dynamic': bindings,
+                    'path': [
+                        'requiredDuringSchedulingIgnoredDuringExecution',
+                        'nodeSelectorTerms',
+                    ],
+                    'wrap': 'nodeSelectorTerms',
+                }
+            }
+            target['preferredDuringSchedulingIgnoredDuringExecution'] = {
+                MERGE: {
+                    'static': target.get(
+                        'preferredDuringSchedulingIgnoredDuringExecution', []
+                    ),
+                    'dynamic': bindings,
+                    'path': ['preferredDuringSchedulingIgnoredDuringExecution'],
+                }
+            }
     resource_claims = config.pop('podResourceClaims', [])
+    existing = template.get('resourceClaims')
+    existing = existing if isinstance(existing, list) else []
+    claims, dynamic = list(existing), []
     for value in resource_claims:
         if 'resourceClaimJson' in value:
             declaration = value['resourceClaimJson']
             if 'constant' not in declaration.get('runtimeValue', {}):
-                if len(resource_claims) != 1:
-                    raise ValueError(
-                        'Mixed dynamic resource claim declarations need merged structured lowering.'
-                    )
-                binding = parameter(task, declaration, require_string=False)
-                template['resourceClaims'] = {CLAIMS: binding}
-                container.setdefault('resources', {})['claims'] = {
-                    CLAIM_REFS: binding
-                }
+                dynamic.append(
+                    parameter(task, declaration, require_string=False)
+                )
                 continue
-            claims = parameter(task, declaration)
-            if claims is None:
+            resolved = parameter(task, declaration)
+            if resolved is None:
                 continue
-            claims = claims if isinstance(claims, list) else [claims]
+            resolved = resolved if isinstance(resolved, list) else [resolved]
         else:
-            claims = [
+            resolved = [
                 {
                     'resourceClaimTemplateName': value.get(
                         'resourceClaimTemplateName'
                     )
                 }
             ]
-        for claim in claims:
+        for claim in resolved:
             name = claim.get('resourceClaimTemplateName')
             if not isinstance(name, str) or not name:
                 raise ValueError(
                     'Resource claims require a non-empty resourceClaimTemplateName.'
                 )
-            if any(
-                c['name'] == name for c in template.get('resourceClaims', [])
-            ):
+            if any(c['name'] == name for c in claims):
                 raise ValueError('Duplicate resource claim name.')
-            template.setdefault('resourceClaims', []).append(
-                {**claim, 'name': name}
-            )
-            container.setdefault('resources', {}).setdefault(
-                'claims', []
-            ).append({'name': name})
+            claims.append({**claim, 'name': name})
+    added = claims[len(existing) :]
+    references = [{'name': claim['name']} for claim in added]
+    if dynamic and not claims and len(dynamic) == 1:
+        template['resourceClaims'] = {CLAIMS: dynamic[0]}
+        container.setdefault('resources', {})['claims'] = {
+            CLAIM_REFS: dynamic[0]
+        }
+    elif dynamic:
+        # Static claims first, then each resolved JSON declaration, as stock
+        # appends them; a null declaration adds nothing.
+        template['resourceClaims'] = {
+            MERGE: {'static': claims, 'dynamic': dynamic, 'items': CLAIMS}
+        }
+        resources = container.setdefault('resources', {})
+        resources['claims'] = {
+            MERGE: {
+                'static': list(resources.get('claims') or []) + references,
+                'dynamic': dynamic,
+                'items': CLAIM_REFS,
+            }
+        }
+    elif added:
+        template['resourceClaims'] = claims
+        container.setdefault('resources', {}).setdefault('claims', []).extend(
+            references
+        )
     for value in config.pop('podAffinity', []):
         target = template.setdefault('affinity', {}).setdefault(
             'podAntiAffinity' if value.get('anti') else 'podAffinity', {}

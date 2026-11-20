@@ -81,6 +81,14 @@ def pipeline(
     kubernetes.set_security_context(
         task, run_as_user=1000, run_as_group=1000, run_as_non_root=True
     )
+    # A static required term and a dynamic preferred term merge the way
+    # stock's driver appends them (inventory C10).
+    kubernetes.add_node_affinity(
+        task,
+        match_expressions=[
+            {'key': 'kubernetes.io/os', 'operator': 'In', 'values': ['linux']}
+        ],
+    )
     kubernetes.add_node_affinity_json(task, affinity)
     kubernetes.add_toleration_json(task, toleration)
 
@@ -130,4 +138,24 @@ def test_settings_reach_the_pod(client, record, config_map):
         t.get('key') == 'compatibility-fixture' and t['tolerationSeconds'] == 60
         for t in pods[0]['spec']['tolerations']
     )
+    node_affinity = pods[0]['spec']['affinity']['nodeAffinity']
+    assert node_affinity['requiredDuringSchedulingIgnoredDuringExecution'] == {
+        'nodeSelectorTerms': [
+            {
+                'matchExpressions': [
+                    {
+                        'key': 'kubernetes.io/os',
+                        'operator': 'In',
+                        'values': ['linux'],
+                    }
+                ]
+            }
+        ]
+    }
+    assert [
+        p['weight']
+        for p in node_affinity[
+            'preferredDuringSchedulingIgnoredDuringExecution'
+        ]
+    ] == [50]
     record(run_id=submitted.run_id, state=done.state, config_map=config_map)
