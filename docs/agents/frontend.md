@@ -7,7 +7,9 @@ browser adapters replace the retired REST API clients. Both `index.html` and
 
 The Router asks for a namespace bearer token unless `/config.json` reports a
 single-user proxy; keep that fallback so older proxies and offline bundles still
-prompt. Use the pinned Node/npm versions and `npm run test:ci`. Rebuild the checked-in
+prompt. Task logs are an async generator: running tasks stream Argo Server's
+newline-delimited log endpoint with `follow`, finished tasks read the archived
+`main-logs` artifact; keep both paths and never reintroduce a tail limit. Use the pinned Node/npm versions and `npm run test:ci`. Rebuild the checked-in
 SDK viewer assets after changing shared widgets. The native production-bundle
 smoke checks endpoint boundaries and credentials; the deployment smoke uses real
 namespace-scoped tokens and checks denied mutations.

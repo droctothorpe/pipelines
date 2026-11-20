@@ -1,6 +1,6 @@
 // Copyright 2026 The Kubeflow Authors
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, CircularProgress } from '@mui/material';
@@ -30,7 +30,8 @@ import {
   displayName,
   runState,
   retryRun,
-  taskLogs,
+  streamTaskLogs,
+  type TaskLogSource,
   enc,
   downloadArtifact,
 } from 'src/lib/NativeUi';
@@ -267,12 +268,11 @@ function Task({
     queryFn: ({ signal }) => getArgoMetadata(run, node, signal),
     enabled: !!hasArgoMetadata(node),
   });
-  const logs = useQuery({
-    queryKey: ['native', run.metadata.namespace, run.metadata.uid, node.id, 'logs'],
-    queryFn: ({ signal }) => taskLogs(run, node, signal),
-    enabled: !artifactPort && tab === 2 && !node.memoizationStatus?.hit && node.type !== 'Importer',
-    retry: false,
-  });
+  const logs = useTaskLogs(
+    run,
+    node,
+    !artifactPort && tab === 2 && !node.memoizationStatus?.hit && node.type !== 'Importer',
+  );
   if (artifactPort) return <NativeArtifactContent run={run} node={node} port={artifactPort} />;
   return (
     <div className={commonCss.page}>
@@ -384,14 +384,23 @@ function Task({
             </Alert>
           ) : (
             <>
-              {logs.error && <Alert severity='error'>{logs.error.message}</Alert>}
-              <div>
-                <Button onClick={() => void logs.refetch()}>Refresh</Button>
+              {logs.error && <Alert severity='error'>{logs.error}</Alert>}
+              <div className={commonCss.flex}>
+                <Button onClick={logs.restart}>Refresh</Button>
+                <span className={padding(10, 'l')} data-testid='log-status'>
+                  {logs.source === 'live' && !logs.done
+                    ? 'Streaming live logs'
+                    : logs.source === 'live'
+                      ? 'Live log stream ended'
+                      : logs.source === 'archive'
+                        ? 'Archived logs'
+                        : ''}
+                </span>
               </div>
-              {logs.isPending ? (
+              {!logs.source && !logs.done ? (
                 <CircularProgress aria-label='Loading logs' size={24} />
               ) : (
-                <LogViewer logLines={logs.data || []} />
+                <LogViewer logLines={logs.lines} />
               )}
             </>
           )}
@@ -399,4 +408,62 @@ function Task({
       )}
     </div>
   );
+}
+
+interface TaskLogState {
+  lines: string[];
+  source?: TaskLogSource;
+  error?: string;
+  done: boolean;
+}
+
+/**
+ * Subscribe to a task's logs while the Logs tab is open. Running tasks stream
+ * and follow; finished tasks load their archived logs. The run object refreshes
+ * every few seconds, so the subscription is keyed by identity, not by object,
+ * and is retried while the task is still running and no pod was available.
+ */
+function useTaskLogs(run: ArgoWorkflow, node: ArgoNode, enabled: boolean) {
+  const latest = useRef({ run, node });
+  latest.current = { run, node };
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<TaskLogState>({ lines: [], done: false });
+  const key = `${run.metadata.uid}/${node.id}/${attempt}`;
+  const finished = hasFinishedV2(node.phase) || !!run.status?.finishedAt;
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    setState({ lines: [], done: false });
+    (async () => {
+      try {
+        for await (const update of streamTaskLogs(
+          latest.current.run,
+          latest.current.node,
+          controller.signal,
+        )) {
+          if (controller.signal.aborted) return;
+          setState((current) => ({
+            ...current,
+            source: update.source,
+            lines: current.lines.concat(update.lines),
+          }));
+        }
+        if (!controller.signal.aborted) setState((current) => ({ ...current, done: true }));
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setState((current) => ({
+          ...current,
+          done: true,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    })();
+    return () => controller.abort();
+  }, [enabled, key]);
+  useEffect(() => {
+    if (!enabled || !state.error || finished) return;
+    const timer = setTimeout(() => setAttempt((current) => current + 1), 3000);
+    return () => clearTimeout(timer);
+  }, [enabled, state.error, finished]);
+  return { ...state, restart: () => setAttempt((current) => current + 1) };
 }

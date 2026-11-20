@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ArgoWorkflow } from './Argo';
 import { argoRunView } from './ArgoRunGraph';
 import { argoStaticView } from './ArgoGraph';
-import { taskLogs } from './NativeUi';
+import { streamTaskLogs } from './NativeUi';
 import { displayParameters } from './ArgoComponents';
 import { getTaskNodeKey, NodeTypeNames } from './v2/StaticFlow';
 
@@ -175,6 +175,8 @@ it('resolves component logs to its actual pod without changing the user-facing n
         ),
     ),
   );
-  expect(await taskLogs(run, run.status!.nodes!.produce)).toEqual(['container logs']);
+  const updates = [];
+  for await (const update of streamTaskLogs(run, run.status!.nodes!.produce)) updates.push(update);
+  expect(updates).toEqual([{ source: 'archive', lines: ['container logs'] }]);
   expect(vi.mocked(fetch).mock.calls[0][0]).toContain('/execute/main-logs');
 });
