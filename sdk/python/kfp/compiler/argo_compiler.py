@@ -1403,9 +1403,15 @@ class _Compiler:
         """
         merged = {}
         for outer in self.nested_tasks + [task]:
-            if set(outer.platform_config) - {'kubernetes'}:
-                raise ValueError(
-                    'Only kfp-kubernetes task settings have native lowering; remove unsupported platform settings.'
+            ignored = sorted(set(outer.platform_config) - {'kubernetes'})
+            if ignored:
+                # Stock's Argo backend applies only the kubernetes platform
+                # spec and carries the others unexecuted; say so instead of
+                # failing the compile.
+                warnings.warn(
+                    f'Task {outer.name!r} has settings for platforms {ignored}, '
+                    'which no Argo backend executes; only kubernetes settings apply.',
+                    stacklevel=2,
                 )
             config = copy.deepcopy(outer.platform_config.get('kubernetes', {}))
             if outer is not task and _bound_to_parameters(config):
