@@ -24,7 +24,17 @@ the controller's namespace-scoped ConfigMap-create Role; component service accou
 retain only their existing task-result permissions. See the staging evidence and
 remaining limits in [SDK compatibility](../sdk-compatibility.md).
 
-Frontend development proxies `/argo/` and `/kubernetes/` to the deployed authenticated
-proxy (default `http://127.0.0.1:3003`, override `KFP_NATIVE_PROXY`). It does not run
-a Node application backend or manufacture credentials. Use explicit Kubernetes
-contexts and restart a port-forward after replacing its target UI pod.
+Frontend development proxies `/argo/`, `/kubernetes/` and `/config.json` to the
+deployed authenticated proxy (default `http://127.0.0.1:3003`, override
+`KFP_NATIVE_PROXY`). It does not run a Node application backend or manufacture
+credentials. Use explicit Kubernetes contexts and restart a port-forward after
+replacing its target UI pod.
+
+The UI proxy has two authentication modes, selected by `deploy.py --auth-mode`
+and the `KFP_UI_AUTH_MODE` container variable. `token` (default, used by CI and the
+deployment smoke) forwards the browser's bearer token. `single-user` lets the
+proxy's own editor-bound service account authenticate every request through an njs
+helper and advertises itself at `/config.json`, so the UI never asks for a token.
+Both modes publish the deployment namespace there (`KFP_UI_NAMESPACE` from the
+downward API); the UI uses it when the URL has no `?namespace=`. Keep single-user
+mode for disposable local namespaces.

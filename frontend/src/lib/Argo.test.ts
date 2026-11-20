@@ -9,6 +9,7 @@ import {
   getArgoWorkflow,
   getArgoMetadata,
   getArgoLogs,
+  getUiConfig,
   listArgoWorkflows,
   type ArgoWorkflow,
 } from './Argo';
@@ -37,6 +38,45 @@ const reply = (body: unknown, status = 200) =>
     vi.fn().mockImplementation(async () => new Response(JSON.stringify(body), { status })),
   );
 afterEach(() => vi.unstubAllGlobals());
+
+describe('getUiConfig', () => {
+  it('recognizes a single-user proxy and its namespace, never caching the answer', async () => {
+    reply({ authMode: 'single-user', namespace: 'kfp-argo' });
+    expect(await getUiConfig()).toEqual({ authMode: 'single-user', namespace: 'kfp-argo' });
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe('/config.json');
+    expect(init).toMatchObject({ cache: 'no-store', credentials: 'same-origin' });
+  });
+
+  it.each([
+    ['missing config', () => reply({}, 404)],
+    ['unknown mode', () => reply({ authMode: 'anonymous' })],
+    [
+      'non-JSON body',
+      () =>
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => new Response('<html>')),
+        ),
+    ],
+    [
+      'network failure',
+      () =>
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => Promise.reject(new TypeError('offline'))),
+        ),
+    ],
+  ])('requires a token on %s', async (_, arrange) => {
+    arrange();
+    expect(await getUiConfig()).toEqual({ authMode: 'token', namespace: '' });
+  });
+
+  it('ignores a namespace that is not a DNS label', async () => {
+    reply({ authMode: 'token', namespace: '../etc' });
+    expect(await getUiConfig()).toEqual({ authMode: 'token', namespace: '' });
+  });
+});
 
 describe('native Argo adapter', () => {
   it('renders native status and cache hits without a KFP run or IR', () => {

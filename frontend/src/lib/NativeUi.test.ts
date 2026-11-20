@@ -182,12 +182,41 @@ describe('native resource adapter for the stock UI', () => {
       expect.objectContaining({ apiVersion: 'argoproj.io/v1alpha1', kind: 'CronWorkflow' }),
     ]);
   });
-  it('fails visibly rather than looping forever on a repeated continuation token', async () => {
+  it('fails visibly rather than looping or duplicating on a repeated continuation token', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => response({ items: [], metadata: { continue: 'same' } })),
+      vi.fn(async () =>
+        response({
+          items: [{ metadata: { name: 'a', uid: 'a' } }],
+          metadata: { continue: 'same' },
+        }),
+      ),
     );
     await expect(listUiRuns('team')).rejects.toThrow('repeated a pagination token');
+  });
+  it('treats a repeated continuation token with an empty page as the end of the list', async () => {
+    // Argo Server's merged live/archived list ends this way once rows deduplicate.
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string) => {
+        if (!path.startsWith('/argo/api/v1/workflows/team')) return response({ items: [] });
+        calls += 1;
+        return response(
+          calls === 1
+            ? {
+                items: [
+                  { metadata: { name: 'run', uid: 'uid-1' }, status: { phase: 'Succeeded' } },
+                ],
+                metadata: { continue: '252' },
+              }
+            : { items: [], metadata: { continue: '252' } },
+        );
+      }),
+    );
+    const runs = await listUiRuns('team');
+    expect(runs.map((run) => run.metadata.name)).toEqual(['run']);
+    expect(calls).toBe(2);
   });
   it('never confuses a reused workflow name with an older run identity', async () => {
     vi.stubGlobal(

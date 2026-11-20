@@ -5,7 +5,9 @@ widgets. `src/argo.tsx` and the offline viewer are the entrypoints. Argo/Kuberne
 browser adapters replace the retired REST API clients. Both `index.html` and
 `argo.html` load the native application. There is no Node server or mock backend.
 
-Use the pinned Node/npm versions and `npm run test:ci`. Rebuild the checked-in
+The Router asks for a namespace bearer token unless `/config.json` reports a
+single-user proxy; keep that fallback so older proxies and offline bundles still
+prompt. Use the pinned Node/npm versions and `npm run test:ci`. Rebuild the checked-in
 SDK viewer assets after changing shared widgets. The native production-bundle
 smoke checks endpoint boundaries and credentials; the deployment smoke uses real
 namespace-scoped tokens and checks denied mutations.

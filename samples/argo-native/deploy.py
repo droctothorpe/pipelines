@@ -4,6 +4,12 @@
 
 Uses upstream quick-start development credentials. Bind port-forwards to loopback;
 this is not a production authentication or multi-tenant installation.
+
+UI authentication modes:
+- token (default): the proxy forwards the browser's namespace-scoped bearer token
+  and holds no Kubernetes privileges of its own.
+- single-user: the proxy authenticates with its own editor-bound service account,
+  so the UI needs no login. Only for disposable local single-user namespaces.
 """
 
 import argparse
@@ -17,7 +23,14 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSION = (ROOT / 'third_party/argo/VERSION').read_text().strip()
 
 
-def resources(upstream, namespace, ui_image):
+AUTH_MODES = ('token', 'single-user')
+
+
+def resources(upstream, namespace, ui_image, auth_mode='token'):
+    if auth_mode not in AUTH_MODES:
+        raise ValueError(
+            f'auth_mode must be one of {AUTH_MODES}, not {auth_mode!r}'
+        )
     result = [
         {
             'apiVersion': 'v1',
@@ -131,13 +144,33 @@ def resources(upstream, namespace, ui_image):
         if resource:
             resource['metadata']['namespace'] = namespace
             result.append(resource)
-    nginx = Path(__file__).with_name('nginx.conf').read_text()
+    if auth_mode == 'single-user':
+        for role in ('argo-ui-read', 'argo-ui-edit'):
+            result.append(
+                {
+                    'apiVersion': 'rbac.authorization.k8s.io/v1',
+                    'kind': 'RoleBinding',
+                    'metadata': {
+                        'name': f'argo-ui-proxy-{role.removeprefix("argo-ui-")}',
+                        'namespace': namespace,
+                    },
+                    'roleRef': {
+                        'apiGroup': 'rbac.authorization.k8s.io',
+                        'kind': 'Role',
+                        'name': role,
+                    },
+                    'subjects': [
+                        {'kind': 'ServiceAccount', 'name': 'argo-ui-proxy'}
+                    ],
+                }
+            )
+    nginx = Path(__file__).with_name('nginx.conf.template').read_text()
     result.append(
         {
             'apiVersion': 'v1',
             'kind': 'ConfigMap',
             'metadata': {'name': 'kfp-argo-ui-nginx', 'namespace': namespace},
-            'data': {'default.conf': nginx},
+            'data': {'default.conf.template': nginx},
         }
     )
     result.append(
@@ -157,6 +190,20 @@ def resources(upstream, namespace, ui_image):
                                 'image': ui_image,
                                 'imagePullPolicy': 'IfNotPresent',
                                 'ports': [{'containerPort': 8080}],
+                                'env': [
+                                    {
+                                        'name': 'KFP_UI_AUTH_MODE',
+                                        'value': auth_mode,
+                                    },
+                                    {
+                                        'name': 'KFP_UI_NAMESPACE',
+                                        'valueFrom': {
+                                            'fieldRef': {
+                                                'fieldPath': 'metadata.namespace'
+                                            }
+                                        },
+                                    },
+                                ],
                                 'readinessProbe': {
                                     'httpGet': {
                                         'path': '/argo.html',
@@ -166,7 +213,7 @@ def resources(upstream, namespace, ui_image):
                                 'volumeMounts': [
                                     {
                                         'name': 'nginx',
-                                        'mountPath': '/etc/nginx/conf.d',
+                                        'mountPath': '/etc/nginx/templates',
                                         'readOnly': True,
                                     }
                                 ],
@@ -201,13 +248,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--namespace', default='kfp-argo')
     parser.add_argument('--ui-image', default='kfp-argo-ui:dev')
+    parser.add_argument(
+        '--auth-mode',
+        choices=AUTH_MODES,
+        default='token',
+        help='single-user lets the UI proxy authenticate with its own '
+        'service account so no browser token is needed (local use only)',
+    )
     args = parser.parse_args()
     url = f'https://raw.githubusercontent.com/argoproj/argo-workflows/{VERSION}/manifests/quick-start-postgres.yaml'
     with urllib.request.urlopen(url, timeout=60) as response:
         upstream = list(yaml.safe_load_all(response.read()))
     print(
         yaml.safe_dump_all(
-            resources(upstream, args.namespace, args.ui_image), sort_keys=False
+            resources(upstream, args.namespace, args.ui_image, args.auth_mode),
+            sort_keys=False,
         )
     )
 

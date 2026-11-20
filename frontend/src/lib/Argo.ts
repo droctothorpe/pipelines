@@ -86,6 +86,44 @@ export function setArgoToken(token: string) {
   bearerToken = token.trim().replace(/^Bearer\s+/i, '');
 }
 
+export type UiAuthMode = 'token' | 'single-user';
+export interface UiConfig {
+  authMode: UiAuthMode;
+  /** The proxy's own namespace, used when the URL names none; empty if unknown. */
+  namespace: string;
+}
+
+const NAMESPACE_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+
+/**
+ * The deployed proxy publishes its authentication mode and namespace. In
+ * single-user mode it authenticates with its own service account, so the
+ * browser needs no token. Anything missing, failing or unrecognized falls back
+ * to asking for a token and to the URL's namespace.
+ */
+export async function getUiConfig(signal?: AbortSignal): Promise<UiConfig> {
+  const fallback: UiConfig = { authMode: 'token', namespace: '' };
+  try {
+    const response = await fetch('/config.json', {
+      signal,
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) return fallback;
+    const body = (await response.json()) as { authMode?: unknown; namespace?: unknown } | null;
+    return {
+      authMode: body?.authMode === 'single-user' ? 'single-user' : 'token',
+      namespace:
+        typeof body?.namespace === 'string' && NAMESPACE_LABEL.test(body.namespace)
+          ? body.namespace
+          : '',
+    };
+  } catch {
+    // Older proxies and offline bundles serve no config.
+    return fallback;
+  }
+}
+
 export const hasArgoMetadata = (node: ArgoNode) =>
   node.outputs?.artifacts?.some((artifact) => artifact.name === 'kfp-metadata') ||
   node.outputs?.parameters?.some((parameter) => parameter.name === 'kfp-metadata');
@@ -142,8 +180,13 @@ export async function listNativeItems<T>(
     items.push(...(result.items || []));
     const next = result.metadata?.continue || '';
     if (!next) return items;
-    if (seen.has(next))
+    if (seen.has(next)) {
+      // Argo Server's merged live/archived list can end on a repeated offset with
+      // an empty page after deduplication; nothing further is fetchable. A
+      // repeated token that still returns items would duplicate them, so fail.
+      if (!(result.items || []).length) return items;
       throw new Error('The server repeated a pagination token. Refresh to try again.');
+    }
     seen.add(next);
     query.set(tokenKey, next);
   }
