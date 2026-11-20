@@ -215,10 +215,23 @@ export function NativeListPage({
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ['native', namespace] });
   };
-  const complete = async (operation: () => Promise<unknown>) => {
+  // Argo Server answers list requests from an informer that can lag a deletion
+  // by a moment, so a single refetch may still show what was just removed.
+  // Refetch until the removed identities are gone, bounded.
+  const gone = (ids: string[]) =>
+    !(['pipelines', 'versions', 'experiments', 'runs', 'schedules'] as const).some((kind) =>
+      (
+        (client.getQueryData(['native', namespace, kind]) as NativeResource[] | undefined) || []
+      ).some((entry) => ids.includes(entry.metadata.uid || '') || ids.includes(resourceId(entry))),
+    );
+  const complete = async (operation: () => Promise<unknown>, removed: string[] = []) => {
     await operation();
     setSelected([]);
     await refresh();
+    for (let attempt = 0; attempt < 8 && removed.length && !gone(removed); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await refresh();
+    }
   };
   const groups = new Map<string, NativeResource[]>();
   for (const version of versions)
@@ -244,7 +257,10 @@ export function NativeListPage({
         ? 'Permanently remove these runs from the Argo archive. Stored artifacts are not deleted.'
         : 'Move these runs to Archived. Their workflows, logs and artifacts are preserved.',
       action: () =>
-        complete(() => Promise.all(selectedRuns.map(deleting ? deleteArchivedRun : archiveRun))),
+        complete(
+          () => Promise.all(selectedRuns.map(deleting ? deleteArchivedRun : archiveRun)),
+          deleting ? selectedRuns.map((run) => run.metadata.uid) : [],
+        ),
     });
   if (kind === 'pipelines') {
     columns = pipelineColumns;
@@ -293,18 +309,23 @@ export function NativeListPage({
             content:
               'Delete all selected WorkflowTemplate versions. Existing runs, archives, and artifacts will not be deleted.',
             action: () =>
-              complete(() =>
-                Promise.all(
-                  selected.map(async (id) => {
-                    await Promise.all(
-                      (groups.get(id) || []).map((version) =>
-                        deleteNativeResource(namespace, version),
-                      ),
-                    );
-                    const record = pipelines.find((pipeline) => resourceId(pipeline) === id);
-                    if (record) await deleteNativeResource(namespace, record);
-                  }),
-                ),
+              complete(
+                () =>
+                  Promise.all(
+                    selected.map(async (id) => {
+                      await Promise.all(
+                        (groups.get(id) || []).map((version) =>
+                          deleteNativeResource(namespace, version),
+                        ),
+                      );
+                      const record = pipelines.find((pipeline) => resourceId(pipeline) === id);
+                      if (record) await deleteNativeResource(namespace, record);
+                    }),
+                  ),
+                selected.flatMap((id) => [
+                  id,
+                  ...(groups.get(id) || []).map((version) => version.metadata.uid || ''),
+                ]),
               ),
           }),
         {

@@ -55,6 +55,10 @@ export function NativeNewExperiment() {
   const { namespace, fail } = useNativeUi();
   const navigate = useNavigate();
   const client = useQueryClient();
+  // Stock carries the pipeline from "Create experiment" on a pipeline page through
+  // to the first run, so "Next" lands on a run with that pipeline preselected.
+  const [search] = useSearchParams();
+  const fromPipeline = search.get('pipelineId');
   const [name, setName] = useState(''),
     [description, setDescription] = useState(''),
     [busy, setBusy] = useState(false);
@@ -112,7 +116,8 @@ export function NativeNewExperiment() {
                     queryKey: ['native', namespace, 'experiments'],
                   });
                   navigate(
-                    `/runs/new?experimentId=${enc(resourceId(created))}&firstRunInExperiment=1`,
+                    `/runs/new?experimentId=${enc(resourceId(created))}&firstRunInExperiment=1` +
+                      (fromPipeline ? `&pipelineId=${enc(fromPipeline)}` : ''),
                   );
                 } catch (error) {
                   fail(error);
@@ -200,17 +205,27 @@ export function NativeNewRun() {
     enabled: !!cloneId,
   });
   const versions = inventory.versions.data || [];
-  const version = versions.find((version) =>
-    resourceMatches(
-      version,
-      versionName ||
-        clone.data?.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
-        clone.data?.spec.workflowTemplateRef?.name ||
-        clone.data?.metadata.annotations?.['pipelines.kubeflow.org/workflow-template'] ||
-        cloneSchedule?.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
-        cloneSchedule?.spec?.workflowSpec?.workflowTemplateRef?.name,
-    ),
-  );
+  const requestedPipeline = search.get('pipelineId');
+  const version =
+    versions.find((version) =>
+      resourceMatches(
+        version,
+        versionName ||
+          clone.data?.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
+          clone.data?.spec.workflowTemplateRef?.name ||
+          clone.data?.metadata.annotations?.['pipelines.kubeflow.org/workflow-template'] ||
+          cloneSchedule?.metadata.labels?.['pipelines.kubeflow.org/version-id'] ||
+          cloneSchedule?.spec?.workflowSpec?.workflowTemplateRef?.name,
+      ),
+    ) ||
+    // A pipeline without a version (from "Create experiment") selects its newest version.
+    (requestedPipeline && !versionName
+      ? versions
+          .filter((entry) => pipelineId(entry) === requestedPipeline)
+          .sort((a, b) =>
+            (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
+          )[0]
+      : undefined);
   const experiment = inventory.experiments.data?.find((exp) =>
     resourceMatches(
       exp,
@@ -276,10 +291,31 @@ export function NativeNewRun() {
       : picker === 'Pipeline Version'
         ? versions.filter((entry) => pipelineId(entry) === pipelineId(version!))
         : [...unique.values()];
+  // Stock places a run started without an experiment in the "Default"
+  // experiment, creating it on first use; the SDK client does the same.
+  const defaultExperiment = async () => {
+    const existing = (inventory.experiments.data || []).find(
+      (entry) => entry.data?.displayName === 'Default',
+    );
+    if (existing) return existing;
+    const created = await createResource(namespace, 'experiments', {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name: `experiment-${crypto.randomUUID().slice(0, 12)}`,
+        namespace,
+        labels: { 'pipelines.kubeflow.org/resource': 'experiment' },
+      },
+      data: { displayName: 'Default', description: '', storageState: 'AVAILABLE' },
+    });
+    await client.invalidateQueries({ queryKey: ['native', namespace, 'experiments'] });
+    return created;
+  };
   const start = async () => {
     if (!version) return;
     setBusy(true);
     try {
+      const chosen = experiment || (await defaultExperiment());
       if (recurring) {
         const artifactRoot = workflowArtifactRoot(version, selectedRoot);
         const labels = {
@@ -301,7 +337,7 @@ export function NativeNewRun() {
             workflowMetadata: {
               labels: {
                 ...labels,
-                ...(experiment ? { [EXPERIMENT]: resourceId(experiment) } : {}),
+                [EXPERIMENT]: resourceId(chosen),
               },
               annotations: {
                 ...artifactRoot.annotations,
@@ -330,7 +366,7 @@ export function NativeNewRun() {
           namespace,
           version,
           values,
-          experiment ? resourceId(experiment) : '',
+          resourceId(chosen),
           name,
           runDescription,
           serviceAccount,

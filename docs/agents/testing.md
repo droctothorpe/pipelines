@@ -34,10 +34,22 @@ memory-only credentials. The real standalone viewer smoke covers offline and
 sandboxed rendering, graph/inspector state and watch recovery. Keep tests at those
 boundaries rather than restoring old RPC-model fixtures.
 
+The live browser suite is `frontend/e2e/` (node:test plus Playwright). Each file
+creates what it needs through the SDK (`test/e2e/fixtures.py`, via the `fixture()`
+helper in `live.mjs`), drives the deployed UI, and asserts on the real responses.
+`npm run test:e2e` runs the files in parallel; `e2e/deployment.test.mjs` runs
+alone afterwards because it restarts services. It reads `ARGO_UI_URL`,
+`ARGO_NAMESPACE`, `ARGO_EDITOR_TOKEN` and `ARGO_READER_TOKEN` (or the `KFP_TEST_*`
+names), honours single-user proxies, and writes screenshots to `KFP_UI_OUTPUT`.
+Coverage matches upstream's frontend integration suite minus the API server: the
+hello-world lifecycle journey (`pipeline-lifecycle.test.mjs`) and the SDK-to-UI
+round trips, plus native-specific checks for logs, previews, markdown safety and
+run-form parameters.
+
 ## End to end
 
 `test/e2e/` is the single live suite for the SDK against a deployed native
-installation. Each module drives the public `kfp` client, then reads the real
+installation; `frontend/e2e/` is its browser counterpart and both run on every PR. Each module drives the public `kfp` client, then reads the real
 workflow, pods or artifacts. Point it at a cluster and pick a tier:
 
 ```sh
