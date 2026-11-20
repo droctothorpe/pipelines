@@ -62,6 +62,7 @@ This commit is an explicit compatibility checkpoint, not a declaration of comple
 | A05 | Artifact-list staging architecture | A consumer init-container may stage runtime-sized collections using the installed Argo downloader. No additional copy pods; storage credentials remain init-only. This is an accepted implementation mechanism, not permission to drop artifact behavior. |
 | A06 | System Logs tab | The obsolete KFP System Logs tab was removed at the user's request. Task logs, details and I/O remain. |
 | A07 | Release infrastructure | The old release/merge-queue machinery was retired with approval. Native CI/security/contributor checks are not a replica of the retired release system. |
+| A09 | Response fields owned by the retired backend | Accepted 2026-11-20. These stock response fields stay unset because their source no longer exists; they are not fabricated. `V2Run`: `error`, `plugins_input`, `plugins_output`, `run_details` (MLMD context ids). `V2RecurringRun`: `error`, `plugins_input`. `V2Pipeline`/`V2PipelineVersion`: `error`, `tags`, `package_url`. `V2Artifact`: `description`, `number_value` (MLMD custom properties). `PipelineTaskTypeAttributes.download_to_workspace` (C07). Pod `uid` after the pod is garbage-collected or for archived runs. Formerly C19 and U49–U54; the fields Argo can supply are populated, see the field table. |
 | A08 | Artifacts page scope | Accepted 2026-11-20. The Artifacts page lists artifacts from the latest 50 runs and shows a truncation notice; it is not a global artifact catalog or index. Artifacts remain reachable through their runs, which is where they are used. Maintaining an index would add state the native stack otherwise avoids, for a page that is rarely the entry point. Formerly C22. |
 
 ## C. Confirmed gaps or narrower functionality
@@ -93,7 +94,7 @@ This commit is an explicit compatibility checkpoint, not a declaration of comple
 |---|---|---|---|
 | C17 | Backend plugin inputs | Run plugin inputs explicitly raise `NotImplementedError`; plugin output models exist but there is no corresponding native plugin execution path. | `client/_native.py:_workflow_spec` |
 | C18 | Certificate-only full history/artifacts | Direct Kubernetes authentication supports resource operations. Argo-only archive/artifact/history requests still need an authenticated Argo endpoint. `list_runs` and experiment archival also consult archive history; Kubernetes-only full-history separation is unfinished. | `client/_transport.py`, `_native.py`; U29 |
-| C19 | Historical task/MLMD detail | Historical Pod UIDs, state transitions, MLMD context identities and several task classification fields are not reconstructed. Missing values are left absent/None, not fabricated. | `client/_task_details.py`; detailed field inventory below |
+| C19 | Historical task/MLMD detail | **Resolved 2026-11-20** for everything Argo can supply: task and run state history, scope path, iteration attributes, lifecycle category and stock's lifecycle-message normalization, pod UIDs while pods exist, artifact creation times and input producers, experiment last-run time, schedule update time and run scheduled time. The remainder is accepted as A09. | `client/_task_details.py`, `client/_native.py`, `test/native_task_details_test.py`, `test/native_client_test.py`; field table below |
 | C20 | Atomic experiment archival | Native archival is ordered, retryable multi-resource mutation, not the stock database transaction for experiment/run state. Some children may change before a reported failure. Concurrent run/schedule creation is not atomically fenced. | `_native.py:_experiment_storage`, `NativeUi.ts:setExperimentStorage` |
 | C21 | UI package upload breadth | The UI importer accepts a labelled native WorkflowTemplate document, narrower than the SDK's native YAML/JSON/ZIP/tar and resource-kind handling. URL import depends on browser CORS. | `frontend/src/lib/NativeImport.ts`, `pages/NativeUpload.tsx` |
 | C22 | Artifact discovery breadth | Moved to accepted departure A08 on 2026-11-20. | `frontend/src/lib/NativeQueries.ts:useArtifactInventory` |
@@ -161,7 +162,7 @@ are established. Do not call all validation errors regressions.
 | U22 | Latest experiment cascade | SDK/UI archival, partial failure/retry, late-created runs and parent-first restoration need live verification. | Unit and mocked production browser tests pass; `experiment_archive.py` is retained but unrun. |
 | U23 | Compact inventory API behavior | Latest field projection, metadata-only negotiation, count-aware paging, cache lag and identity reconciliation need live verification on the deployment. | Upstream source, unit and mocked browser tests pass; read-only `inventory.py` is unrun. |
 | U24 | Latest task projection | Gzip snapshots and nested retry/validation pod ownership need live proof, especially compressed/offloaded histories and retries. | New red/green tests pass; prior typed task snapshots were checked live before these edits. |
-| U25 | Complete response/exception parity | Full DTO field availability, error codes/categories, I/O producer classification, child hierarchy, cancellation state and serialization equivalence remain incomplete. | C19 and U49–U54 identify omissions; model/signature presence is not sufficient. |
+| U25 | Complete response/exception parity | Full DTO field availability, error codes/categories, I/O producer classification, child hierarchy, cancellation state and serialization equivalence remain incomplete. | The field parity table below records what is populated and A09 what is accepted as absent; whole-response and exception equivalence per operation is still uncompared. |
 | U26 | Filtering and pagination semantics | All filter operators/field aliases/types, empty inventories, ordering ties, paging under mutation and old cursor/error expectations lack complete baseline comparison. | `_listing.py` has retained tests; old wire tokens are not preserved. |
 | U27 | Remaining lifecycle edges | Default-experiment deletion protection, orphan membership, deletion races, already-deleted resources, default/shared version selection, unregistered template adoption and all clone paths need review. | Basic CRUD/UID/name-reuse tests pass. No new destructive probes were run to close these questions. |
 | U28 | Recurring trigger semantics | Seconds-bearing cron, time zones/DST, start/end boundaries, outage windows, concurrency saturation/queued-vs-skipped occurrences and enable/disable races need full comparison. | Periodic/default-enabled/cron configuration and selected executions passed. Six-field zero-seconds normalization is narrower than arbitrary seconds cron. A04 only accepts missed-occurrence catch-up, not every other scheduling difference. |
@@ -191,24 +192,36 @@ are established. Do not call all validation errors regressions.
 | U47 | Preview-formats timeout | Resolved: `artifact_preview_formats_pipeline` runs 11 pods strictly sequentially, each pip-installing polars/torch/transformers, and completed `Succeeded` in 15 m 44 s on 2026-11-20. | The runner's 900 s timeout is the limit, not the native stack; raise the timeout or slim the sample's dependencies. |
 | U48 | Interrupted nested-condition run | Resolved: `nested_condition.py` passed in the 2026-11-20 cold pass, as did every other previously transport-failed core case. | None. |
 
-### Field-level response uncertainty
+### Field-level response parity (resolved 2026-11-20)
 
-These are category **(b)**: the adapter does not populate the listed fields, but
-per-operation stock availability has not been fully compared. Stock need not fill
-every field on every response. Do not turn these omissions into fabricated values
-or equate restored model classes with complete response compatibility.
+Formerly U49–U54. Each field is either populated from a stated native source or
+accepted as absent under A09. Stock need not fill every field on every response;
+the behavioral comparison of whole responses remains U25.
 
-| ID | Model | Fields the current projection does not populate |
+| Model | Field | Native source |
 |---|---|---|
-| U49 | `V2Run` | `error`, `plugins_input`, `plugins_output`, `run_details`, `scheduled_at`, `state_history` |
-| U50 | `V2Experiment` | `last_run_created_at` |
-| U51 | `V2Pipeline` / `V2PipelineVersion` | Pipeline: `error`, `tags`. Version: `error`, `package_url`, `tags`. |
-| U52 | `V2RecurringRun` | `error`, `plugins_input`, `updated_at` |
-| U53 | `V2PipelineTask` / `PipelineTaskTaskPod` | Task: `lifecycle_category`, `scope_path`, `state_history`, `type_attributes`. Pod: `uid`. |
-| U54 | I/O and artifact DTOs | `InputOutputsIOParameter.producer`, `InputOutputsIOArtifact.producer`; `V2Artifact.created_at`, `description`, `number_value`. Artifact URI and available producer-derived identity are projected, but this does not fill those separate DTO fields. |
+| `V2Run` | `state_history` | PENDING at creation, RUNNING at `status.startedAt`, terminal state at `status.finishedAt` |
+| `V2Run` | `scheduled_at` | Argo's `workflows.argoproj.io/scheduled-time` annotation on schedule-created runs; creation time for manual runs, as in stock |
+| `V2Run` | `error`, `plugins_*`, `run_details` | Absent, A09 |
+| `V2Experiment` | `last_run_created_at` | Newest live or archived run labelled with the experiment; left unset if the run inventory cannot be listed |
+| `V2RecurringRun` | `updated_at` | Newest `managedFields` write time on the CronWorkflow; creation time before any update |
+| `V2RecurringRun` | `error`, `plugins_input` | Absent, A09 |
+| `V2Pipeline` / `V2PipelineVersion` | `error`, `tags`, `package_url` | Absent, A09 |
+| `V2PipelineTask` | `state_history` | RUNNING at `startedAt`, terminal state at `finishedAt`; cached and skipped tasks have a single entry |
+| `V2PipelineTask` | `scope_path` | Dot path of display names from `root` through Argo's node tree. Loops include Argo's iteration wrapper node, which the task list also exposes, so `root.for-loop-2.iteration.iteration(0:...)` rather than stock's `root.for-loop-2.task` |
+| `V2PipelineTask` | `type_attributes` | `iteration_count` on loop groups, `iteration_index` on iterations; `download_to_workspace` absent (C07) |
+| `V2PipelineTask` | `lifecycle_message`, `lifecycle_category` | Stock's normalization and classifier ported: transient startup reasons, successful nodes and user-script exits (`Error (exit code N)`) yield no lifecycle message; otherwise image-pull, scheduling, runtime, admission or unknown. The raw node message stays in `status_metadata.message` |
+| `PipelineTaskTaskPod` | `uid` | Pod lookup by workflow label on `get_run` of a live run; absent after pod GC, for archived runs, or when pods cannot be listed |
+| `InputOutputsIOArtifact` | `producer` | The producing pod recorded in the native artifact identity (one producer per port); outputs carry none |
+| `InputOutputsIOParameter` | `producer` | Absent: resolved parameter values do not record their upstream task |
+| `V2Artifact` | `created_at` | Producer task finish time; unknown for producers outside the run (cache reuse) |
+| `V2Artifact` | `description`, `number_value` | Absent, A09 |
 
-Evidence: `client/_native.py` and `_task_details.py` constructor arguments compared
-with `server_api/models/*`. See U25 for behavioral comparison still required.
+Evidence: `test/native_task_details_test.py` and `test/native_client_test.py`
+(red on the previous adapter, green after), and a live `kfp.Client` session
+against the OrbStack namespace on 2026-11-20 showing run and task histories,
+scope paths, iteration attributes, a pod UID, an experiment last-run time, a
+schedule update time and an input producer with its creation time.
 
 ## P. External prerequisites, not passing results
 

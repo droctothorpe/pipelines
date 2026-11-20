@@ -6,6 +6,7 @@ import base64
 import gzip
 import io as streams
 import json
+import re
 from collections import defaultdict
 from datetime import datetime
 
@@ -19,6 +20,128 @@ from kfp.dsl.argo_staging import records
 
 PREFIX = 'pipelines.kubeflow.org/'
 MAX_NODE_STATUS_BYTES = 64 * 1024 * 1024
+
+TRANSIENT_MESSAGES = {'PodInitializing', 'ContainerCreating'}
+SUCCESS_PHASES = {'Succeeded', 'Skipped', 'Omitted'}
+TERMINAL_STATES = {'SUCCEEDED', 'FAILED', 'SKIPPED', 'CACHED'}
+USER_EXIT = 'Error (exit code '
+
+
+def _reason(message):
+    return message.split(':', 1)[0].strip()
+
+
+def _split_container_prefix(message):
+    """Argo may prefix the container name, as in "main: OOMKilled (exit code
+    137)".
+
+    Only a single-word prefix counts, so a message body is never taken
+    as a reason.
+    """
+    prefix, separator, rest = message.partition(':')
+    if separator and not re.search(r'\s', prefix.strip()):
+        return True, rest.strip()
+    return False, ''
+
+
+def _match_category(message):
+    lower = message.lower()
+    reason = _reason(message).lower()
+    # image-pull is checked before runtime: ErrImagePull messages contain "error".
+    if reason in ('errimagepull', 'imagepullbackoff') or any(
+        phrase in lower
+        for phrase in ('back-off pulling image', 'failed to pull image')
+    ):
+        return 'image-pull'
+    if (
+        any(phrase in lower for phrase in ('is forbidden', 'admission webhook'))
+        or reason == 'forbidden'
+        or any(token in reason for token in ('kyverno', 'podsecurity'))
+    ):
+        return 'admission'
+    if any(
+        marker in lower
+        for marker in (
+            'unschedulable',
+            'failedscheduling',
+            'insufficient cpu',
+            'insufficient memory',
+        )
+    ):
+        return 'scheduling'
+    if reason == 'error' or any(
+        reason == code or reason.startswith(code + ' ')
+        for code in ('oomkilled', 'crashloopbackoff')
+    ):
+        return 'runtime'
+    return 'unknown'
+
+
+def lifecycle_category(message):
+    """Stock's pod failure classification of a lifecycle message.
+
+    Returns image-pull, scheduling, runtime, admission or unknown, and None when
+    the message is empty. A user-script exit ("Error (exit code N)") stays
+    unknown: that is a user failure, not an infrastructure one.
+    """
+    message = (message or '').strip()
+    if not message:
+        return None
+    has_prefix, rest = _split_container_prefix(message)
+    if message.startswith(USER_EXIT) or (
+        has_prefix and rest.startswith(USER_EXIT)
+    ):
+        return 'unknown'
+    category = _match_category(message)
+    if category == 'unknown' and has_prefix:
+        category = _match_category(rest)
+    return category
+
+
+def lifecycle_message(message, phase):
+    """Stock drops transient startup reasons, messages of successful nodes and
+    user-code exits from lifecycle_message; the raw text stays in status
+    metadata."""
+    if not message:
+        return None
+    if message in TRANSIENT_MESSAGES or _reason(message) in TRANSIENT_MESSAGES:
+        return None
+    if phase in SUCCESS_PHASES:
+        return None
+    has_prefix, rest = _split_container_prefix(message)
+    if message.startswith(USER_EXIT) or (
+        has_prefix and rest.startswith(USER_EXIT)
+    ):
+        return None
+    return message
+
+
+def task_history(node, state):
+    """Argo keeps only start and finish times, so the history is the transition
+    into RUNNING and the terminal state.
+
+    Cached and skipped tasks never ran.
+    """
+    started, finished = node.get('startedAt'), node.get('finishedAt')
+    history = []
+    if started and state not in ('CACHED', 'SKIPPED'):
+        history.append(
+            models.PipelineTaskTaskStatus(
+                update_time=timestamp(started), state='RUNNING'
+            )
+        )
+    if state in TERMINAL_STATES and (finished or started):
+        history.append(
+            models.PipelineTaskTaskStatus(
+                update_time=timestamp(finished or started), state=state
+            )
+        )
+    return history
+
+
+def iteration_index(node):
+    match = re.search(r'\((\d+):', node.get('displayName') or '')
+    return match[1] if match else None
 
 
 def timestamp(value):
@@ -37,8 +160,12 @@ def contract(template):
         return {}
 
 
-def io(node, template, direction, workflow_name=None):
+def io(node, template, direction, workflow_name=None, pod_times=None):
     data = node.get(direction, {})
+    # Outputs were created when this task finished; inputs were created when
+    # their producer finished, known for producers in the same workflow.
+    finished = timestamp(node.get('finishedAt') or node.get('startedAt'))
+    pod_times = pod_times or {}
     annotations = template.get('metadata', {}).get('annotations', {})
     kinds = json.loads(
         annotations.get(
@@ -100,9 +227,17 @@ def io(node, template, direction, workflow_name=None):
                             uri=identity['uri'],
                             metadata=identity.get('metadata'),
                             namespace=producer['namespace'],
+                            created_at=finished
+                            if direction == 'outputs'
+                            else pod_times.get(producer['task']),
                         )
                     )
                 port = name.removeprefix('kfp-meta-')
+                # Inputs name the task that produced them; the identity records
+                # the producing pod, which is that task's pod name here.
+                producers = {
+                    identity['producer']['task'] for identity in identities
+                }
                 artifacts.append(
                     models.InputOutputsIOArtifact(
                         artifact_key=port,
@@ -112,6 +247,11 @@ def io(node, template, direction, workflow_name=None):
                         else 'COLLECTED_INPUTS'
                         if ports.get(port, {}).get('artifactList')
                         else 'TASK_OUTPUT_INPUT',
+                        producer=models.V2IOProducer(
+                            task_name=next(iter(producers))
+                        )
+                        if direction != 'outputs' and len(producers) == 1
+                        else None,
                     )
                 )
             except (ValueError, KeyError, TypeError):
@@ -190,14 +330,46 @@ def node_status(resource):
     return nodes if isinstance(nodes, dict) else None
 
 
-def tasks(resource):
+def pod_name(resource, pod, root):
+    name = pod.get('podName')
+    if not name and pod.get('name') == root:
+        name = root
+    if (
+        not name
+        and resource['metadata']
+        .get('annotations', {})
+        .get('workflows.argoproj.io/pod-name-format')
+        == 'v1'
+    ):
+        name = pod['id']
+    if not name and pod.get('templateName'):
+        name = (
+            root
+            + '-'
+            + pod['templateName']
+            + '-'
+            + pod['id'].rsplit('-', 1)[-1]
+        )
+    return name
+
+
+def tasks(resource, pod_uids=None):
     nodes = node_status(resource)
+    pod_uids = pod_uids or {}
     if nodes is None:
         return None
     status = resource.get('status', {})
     spec = status.get('storedWorkflowTemplateSpec') or resource.get('spec', {})
     templates = {t['name']: t for t in spec.get('templates', [])}
     root = resource['metadata']['name']
+    pod_times = {
+        pod_name(resource, node, root): timestamp(
+            node.get('finishedAt') or node.get('startedAt')
+        )
+        for node in nodes.values()
+        if node['type'] == 'Pod'
+        and not node.get('memoizationStatus', {}).get('hit')
+    }
     parents = {key: node.get('boundaryID') for key, node in nodes.items()}
     for key, node in nodes.items():
         if node['type'] in ('Retry', 'TaskGroup', 'StepGroup'):
@@ -274,26 +446,12 @@ def tasks(resource):
         for pod in pod_nodes:
             if pod.get('memoizationStatus', {}).get('hit'):
                 continue
-            name = pod.get('podName')
-            if not name and pod.get('name') == root:
-                name = root
-            if (
-                not name
-                and resource['metadata']
-                .get('annotations', {})
-                .get('workflows.argoproj.io/pod-name-format')
-                == 'v1'
-            ):
-                name = pod['id']
-            if not name and pod.get('templateName'):
-                name = (
-                    root
-                    + '-'
-                    + pod['templateName']
-                    + '-'
-                    + pod['id'].rsplit('-', 1)[-1]
+            name = pod_name(resource, pod, root)
+            pods.append(
+                models.PipelineTaskTaskPod(
+                    name=name, uid=pod_uids.get(name), type='EXECUTOR'
                 )
-            pods.append(models.PipelineTaskTaskPod(name=name, type='EXECUTOR'))
+            )
         kind = (
             template.get('metadata', {})
             .get('annotations', {})
@@ -311,6 +469,39 @@ def tasks(resource):
                 else 'DAG'
             )
         )
+        state = (
+            'CACHED'
+            if cached
+            else phases.get(node.get('phase'), 'RUNTIME_STATE_UNSPECIFIED')
+        )
+        lifecycle = lifecycle_message(message, node.get('phase'))
+        parent = parents.get(key)
+        while parent in owners:
+            parent = owners[parent]
+        path, cursor = [], key
+        while (
+            cursor
+            and cursor != root
+            and nodes.get(cursor, {}).get('name') != root
+        ):
+            path.append(nodes[cursor].get('displayName', cursor))
+            cursor = parents.get(cursor)
+            while cursor in owners:
+                cursor = owners[cursor]
+        attributes = None
+        if node['type'] == 'TaskGroup':
+            attributes = models.PipelineTaskTypeAttributes(
+                iteration_count=str(len(node.get('children', [])))
+            )
+        elif nodes.get(parent, {}).get('type') == 'TaskGroup':
+            index = iteration_index(node)
+            if index is None:
+                siblings = nodes[parent].get('children', [])
+                index = str(siblings.index(key)) if key in siblings else None
+            if index is not None:
+                attributes = models.PipelineTaskTypeAttributes(
+                    iteration_index=index
+                )
         result.append(
             models.V2PipelineTask(
                 name=node.get('name', key),
@@ -321,20 +512,22 @@ def tasks(resource):
                 cache_fingerprint=node.get('memoizationStatus', {}).get('key'),
                 create_time=timestamp(node.get('startedAt')),
                 end_time=timestamp(node.get('finishedAt')),
-                state='CACHED'
-                if cached
-                else phases.get(node.get('phase'), 'RUNTIME_STATE_UNSPECIFIED'),
+                state=state,
+                state_history=task_history(node, state),
                 type=kind,
-                parent_task_id=parents.get(key),
-                lifecycle_message=message,
+                type_attributes=attributes,
+                parent_task_id=parent,
+                scope_path='.'.join(['root'] + path[::-1]),
+                lifecycle_message=lifecycle,
+                lifecycle_category=lifecycle_category(lifecycle),
                 status_metadata=models.PipelineTaskStatusMetadata(
                     message=message
                 )
                 if message
                 else None,
                 child_tasks=child_tasks[key],
-                inputs=io(node, template, 'inputs', root),
-                outputs=io(node, template, 'outputs', root),
+                inputs=io(node, template, 'inputs', root, pod_times),
+                outputs=io(node, template, 'outputs', root, pod_times),
             )
         )
     return result

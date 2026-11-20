@@ -128,7 +128,9 @@ checks. The per-sample results of the latest complete `samples/core` pass are in
 [core samples](core-samples.md): 25 of the 27 baseline-compilable definitions pass
 on OrbStack (three after fixes made during that pass), including all four
 preview/list samples, directory/file data passing, control flow, retries and PVC
-lifecycle. GPU and credentialed-cloud execution are
+lifecycle. Response-field parity for runs, tasks, experiments and schedules is
+tabulated in [the compatibility inventory](compatibility.md#field-level-response-parity-resolved-2026-11-20).
+GPU and credentialed-cloud execution are
 not verified. Caching/memory sample runs use explicitly recorded smaller inputs;
 this is not a claim that every original notebook timing/submission cell ran.
 
