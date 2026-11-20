@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Preserve structured runtime values through Argo's string parameter boundary."""
+"""Preserve structured runtime values through Argo's string parameter
+boundary."""
 
 import json
 import re
@@ -15,7 +16,8 @@ class _Expression:
 MARKER = '__kfp_native_json__'
 CLAIMS = '__kfp_native_claims__'
 CLAIM_REFS = '__kfp_native_claim_refs__'
-MARKERS = {MARKER, CLAIMS, CLAIM_REFS}
+MERGE = '__kfp_native_merge__'
+MARKERS = {MARKER, CLAIMS, CLAIM_REFS, MERGE}
 REFERENCE = re.compile(
     r'\{\{(inputs\.parameters\.[^{}]+|workflow\.annotations\.[^{}]+|workflow\.(?:name|uid|namespace)|pod\.name)\}\}'
 )
@@ -64,12 +66,53 @@ def reference(value):
     return value
 
 
+def _merge(spec):
+    """Static entries first, then each dynamic JSON value's entries, as stock's
+    driver appends them at run time; a null value contributes nothing."""
+    parts = [expression(spec['static'])]
+    for binding in spec['dynamic']:
+        match = REFERENCE.fullmatch(binding)
+        if match is None:
+            raise ValueError('Structured setting lacks a bound native input.')
+        decoded = 'fromJSON(' + reference(match[1]) + ')'
+        if spec.get('items'):
+            parts.append(
+                '('
+                + decoded
+                + ' == nil ? [] : '
+                + expression({spec['items']: binding})
+                + ')'
+            )
+        else:
+            parts.append(
+                '('
+                + decoded
+                + ''.join('?.' + key for key in spec['path'])
+                + ' ?? [])'
+            )
+    merged = 'concat(' + ', '.join(parts) + ')'
+    if spec.get('wrap'):
+        # Kubernetes rejects an empty required term list; omit the field then.
+        return (
+            'len('
+            + merged
+            + ') > 0 ? sprig.dict('
+            + literal(spec['wrap'])
+            + ', '
+            + merged
+            + ') : nil'
+        )
+    return merged
+
+
 def expression(value):
     if isinstance(value, _Expression):
         return value.source
     if isinstance(value, dict):
         if deferred(value):
             marker = next(iter(value))
+            if marker == MERGE:
+                return _merge(value[marker])
             match = REFERENCE.fullmatch(value[marker])
             if match is None:
                 raise ValueError(
@@ -159,6 +202,10 @@ def finalize(template, component, container_expressions=None):
                 if isinstance(item, dict):
                     if deferred(item):
                         marker = next(iter(item))
+                        if marker == MERGE:
+                            raise ValueError(
+                                'Merged static and dynamic settings cannot pass through TaskConfig.'
+                            )
                         match = REFERENCE.fullmatch(item[marker])
                         if match is None or not match[1].startswith(
                             'inputs.parameters.'
