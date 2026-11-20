@@ -81,6 +81,9 @@ def crossing_pipeline(fail: bool, enabled: bool = True):
     """The producer is outside the condition; the tolerant consumer inside."""
     source = produce(fail=fail).set_caching_options(False)
     with dsl.If(enabled == True):
+        check_status(failed=fail).after(
+            source
+        ).ignore_upstream_failure().set_caching_options(False)
         cleanup(
             failed=fail,
             message=source.outputs['Output'],

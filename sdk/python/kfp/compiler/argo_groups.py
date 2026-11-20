@@ -103,6 +103,12 @@ class _Scope:
         # gets a `kfp-present-<port>` input carrying the producer's status.
         self.presence = set()
         self.tolerant = {}
+        # `.after()` targets outside this group, by name: whether some inner
+        # depender tolerates the target's failure, and whether an inner task
+        # needs the target's status for a PipelineTaskFinalStatus input. The
+        # dependency itself is lifted onto this group's item in the scope that
+        # owns the target, as stock lifts it onto the enclosing group.
+        self.after = {}
         self.children = [
             _Scope(compiler, child, self) for child in group.groups
         ]
@@ -391,6 +397,58 @@ class _Scope:
             found.extend(child.consumers(key))
         return found
 
+    def lift_after(self, child, item, arguments):
+        """Attach `child`'s outside `.after()` targets to its item here when
+        the target is a sibling, otherwise carry them further up.
+
+        Tolerant dependers relax the item's dependency; status flags
+        follow the same path as presence flags.
+        """
+        for name, entry in sorted(child.after.items()):
+            if entry['tolerant'] == {True, False}:
+                raise ValueError(
+                    f'Tasks inside {child.group.name!r} order themselves after {name!r} both with and '
+                    'without ignore_upstream_failure(); make every such task failure-tolerant.'
+                )
+            tolerant = True in entry['tolerant']
+            owner = self.owners.get(name)
+            flag = 'kfp-after-' + name
+            if owner is None:
+                mine = self.after.setdefault(
+                    name, {'tolerant': set(), 'status': False}
+                )
+                mine['tolerant'].add(tolerant)
+                mine['status'] |= entry['status']
+                if entry['status']:
+                    arguments['parameters'].append(
+                        {'name': flag, 'value': _ref('inputs.parameters', flag)}
+                    )
+                continue
+            target = owner.group.name if isinstance(owner, _Scope) else name
+            item.setdefault('dependencies', []).append(target)
+            if tolerant:
+                self.tolerant.setdefault(item['name'], set()).add(target)
+            if entry['status']:
+                arguments['parameters'].append(
+                    {
+                        'name': flag,
+                        'value': '{{=tasks['
+                        + _json(target)
+                        + "].status == 'Succeeded'}}",
+                    }
+                )
+
+    def flags(self):
+        """Group inputs carrying upstream status for failure-tolerant tasks."""
+        return sorted(
+            ['kfp-present-' + port for port in self.presence]
+            + [
+                'kfp-after-' + name
+                for name, entry in self.after.items()
+                if entry['status']
+            ]
+        )
+
     def thread_presence(self, child, item, arguments):
         """Supply the producer status for each failure-tolerant group input of
         `child`: from the sibling producer's status when it lives here, or from
@@ -454,13 +512,28 @@ class _Scope:
                 'template': target,
                 'arguments': self.arguments(task),
             }
-            if task.dependent_tasks:
-                item['dependencies'] = [
-                    self.owners[name].group.name
-                    if isinstance(self.owners.get(name), _Scope)
-                    else name
-                    for name in task.dependent_tasks
-                ]
+            local = []
+            for name in task.dependent_tasks:
+                owner = self.owners.get(name)
+                if owner is None:
+                    entry = self.after.setdefault(
+                        name, {'tolerant': set(), 'status': False}
+                    )
+                    entry['tolerant'].add(
+                        bool(task._ignore_upstream_failure_tag)
+                    )
+                    entry['status'] |= bool(
+                        task._ignore_upstream_failure_tag
+                    ) and any(
+                        port.type == 'PipelineTaskFinalStatus'
+                        for port in (task.component_spec.inputs or {}).values()
+                    )
+                    continue
+                local.append(
+                    owner.group.name if isinstance(owner, _Scope) else name
+                )
+            if local:
+                item['dependencies'] = local
             self.template['dag']['tasks'].append(item)
         for child in self.children:
             item = {'name': child.group.name, 'template': child.name}
@@ -573,6 +646,7 @@ class _Scope:
                     }
                 )
             self.thread_presence(child, item, arguments)
+            self.lift_after(child, item, arguments)
             item['arguments'] = {
                 key: value for key, value in arguments.items() if value
             }
@@ -602,8 +676,9 @@ class _Scope:
                 )
             else:
                 parameters.append({'name': name})
-        for port in sorted(self.presence):
-            parameters.append({'name': 'kfp-present-' + port})
+        for flag in self.flags():
+            parameters.append({'name': flag})
+        for port in self.presence:
             for artifact in artifacts:
                 if artifact['name'] == port:
                     artifact['optional'] = True
@@ -704,12 +779,12 @@ class _Scope:
                     arguments['parameters'].append(
                         {'name': name, 'value': _ref('inputs.parameters', name)}
                     )
-            for port in sorted(self.presence):
-                flag = 'kfp-present-' + port
+            for flag in self.flags():
                 wrapper_inputs['parameters'].append({'name': flag})
                 arguments['parameters'].append(
                     {'name': flag, 'value': _ref('inputs.parameters', flag)}
                 )
+            for port in self.presence:
                 for artifact in wrapper_inputs['artifacts']:
                     if artifact['name'] == port:
                         artifact['optional'] = True
@@ -787,6 +862,15 @@ class _Scope:
                 if task._ignore_upstream_failure_tag
             },
             self.tolerant,
+            {
+                task.name: [
+                    'kfp-after-' + name
+                    for name in task.dependent_tasks
+                    if name in self.after and self.after[name]['status']
+                ]
+                for task in self.group.tasks
+                if task._ignore_upstream_failure_tag
+            },
         )
         missing = (
             set().union(*dependencies.values()) - set(dependencies)

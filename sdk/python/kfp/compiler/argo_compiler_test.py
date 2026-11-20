@@ -586,6 +586,147 @@ def test_mixed_tolerance_inside_a_group_is_rejected(tmp_path):
         compiler.Compiler().compile(pipeline, str(tmp_path / 'mixed.yaml'))
 
 
+@pytest.mark.parametrize('shape', ['condition', 'loop', 'nested'])
+def test_after_crossing_a_group_boundary_is_lifted_onto_the_group(
+    tmp_path, shape
+):
+    """C28: `.after()` from inside a condition, loop or nested condition onto a
+    task outside the group becomes the group item's dependency in the scope
+    that owns the target, as stock lifts it onto the enclosing group."""
+
+    @dsl.component
+    def step() -> str:
+        return 'x'
+
+    @dsl.pipeline(name='after-' + shape)
+    def pipeline(enabled: bool = True):
+        first = step()
+        if shape == 'loop':
+            with dsl.ParallelFor([1, 2]):
+                step().after(first)
+        elif shape == 'nested':
+            with dsl.If(enabled == True):
+                with dsl.If(enabled == True):
+                    step().after(first)
+        else:
+            with dsl.If(enabled == True):
+                step().after(first)
+
+    path = tmp_path / f'{shape}.yaml'
+    compiler.Compiler().compile(pipeline, str(path), resource_kind='Workflow')
+    dags = [
+        t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'dag' in t
+    ]
+    root = next(
+        t
+        for t in dags
+        if any(task['name'] == 'step' for task in t['dag']['tasks'])
+    )
+    group = next(
+        task for task in root['dag']['tasks'] if task['name'] != 'step'
+    )
+    assert group['dependencies'] == ['step']
+    assert 'depends' not in group
+    inner = next(
+        task
+        for t in dags
+        for task in t['dag']['tasks']
+        if task['name'] == 'step-2'
+    )
+    assert 'dependencies' not in inner and 'depends' not in inner
+
+
+def test_tolerant_after_across_a_boundary_relaxes_the_group_and_carries_status(
+    tmp_path,
+):
+    @dsl.component
+    def step() -> str:
+        return 'x'
+
+    @dsl.component
+    def report(status: dsl.PipelineTaskFinalStatus) -> str:
+        return status.state
+
+    @dsl.pipeline(name='after-tolerant')
+    def pipeline(enabled: bool = True):
+        first = step()
+        with dsl.If(enabled == True):
+            with dsl.ParallelFor([1, 2]):
+                report().after(first).ignore_upstream_failure()
+
+    path = tmp_path / 'tolerant.yaml'
+    compiler.Compiler().compile(pipeline, str(path), resource_kind='Workflow')
+    dags = [
+        t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'dag' in t
+    ]
+    root = next(
+        t
+        for t in dags
+        if any(task['name'] == 'step' for task in t['dag']['tasks'])
+    )
+    group = next(
+        task for task in root['dag']['tasks'] if task['name'] != 'step'
+    )
+    assert 'dependencies' not in group
+    assert (
+        'step.Failed' in group['depends'] and 'step.Errored' in group['depends']
+    )
+    assert root['dag']['failFast'] is False
+    flag = 'kfp-after-step'
+    args = {p['name']: p['value'] for p in group['arguments']['parameters']}
+    assert args[flag] == '{{=tasks["step"].status == \'Succeeded\'}}'
+    report_dag = next(
+        t
+        for t in dags
+        if any(task['name'] == 'report' for task in t['dag']['tasks'])
+    )
+    assert flag in [p['name'] for p in report_dag['inputs']['parameters']]
+    task = next(
+        task for task in report_dag['dag']['tasks'] if task['name'] == 'report'
+    )
+    status = next(
+        p['value']
+        for p in task['arguments']['parameters']
+        if p['name'] == 'status'
+    )
+    assert 'inputs.parameters["' + flag + "\"] != 'true'" in status
+    assert "'FAILED' : 'SUCCEEDED'" in status
+    for template in dags:
+        if template is root or template is report_dag:
+            continue
+        assert flag in [
+            p['name'] for p in template.get('inputs', {}).get('parameters', [])
+        ], template['name']
+        assert any(
+            p['name'] == flag
+            and p['value'] == '{{inputs.parameters.' + flag + '}}'
+            for item in template['dag']['tasks']
+            for p in item.get('arguments', {}).get('parameters', [])
+        ), template['name']
+
+
+def test_mixed_tolerance_of_an_outside_after_target_is_rejected(tmp_path):
+    @dsl.component
+    def step() -> str:
+        return 'x'
+
+    @dsl.pipeline(name='after-mixed')
+    def pipeline(enabled: bool = True):
+        first = step()
+        with dsl.If(enabled == True):
+            step().after(first).ignore_upstream_failure()
+            step().after(first)
+
+    with pytest.raises(
+        ValueError, match='both with and without ignore_upstream_failure'
+    ):
+        compiler.Compiler().compile(pipeline, str(tmp_path / 'mixed.yaml'))
+
+
 def test_ignore_upstream_failure_supplies_final_status(tmp_path):
     @dsl.component
     def cleanup(status: dsl.PipelineTaskFinalStatus):

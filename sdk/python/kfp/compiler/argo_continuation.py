@@ -119,11 +119,13 @@ def relax(task, deps, tolerated=None):
     )
 
 
-def dependencies(dag, ignored, tolerant=None):
+def dependencies(dag, ignored, tolerant=None, external=None):
     """Keep every task a target so cleanup success cannot hide body failure.
 
     `tolerant` maps a group item to the sibling producers whose failure a
-    failure-tolerant task inside that group ignores.
+    failure-tolerant task inside that group ignores. `external` maps an
+    ignored task to the `kfp-after-` group inputs that carry the status of
+    `.after()` targets outside this group.
     """
     from kfp.compiler.argo_compiler import _json
 
@@ -145,8 +147,14 @@ def dependencies(dag, ignored, tolerant=None):
                 continue
             failed = (
                 ' || '.join(
-                    f'tasks[{_json(dep)}].status in ["Failed", "Error", "Omitted"]'
-                    for dep in deps
+                    [
+                        f'tasks[{_json(dep)}].status in ["Failed", "Error", "Omitted"]'
+                        for dep in deps
+                    ]
+                    + [
+                        f"inputs.parameters[{_json(flag)}] != 'true'"
+                        for flag in (external or {}).get(task['name'], [])
+                    ]
                 )
                 or 'false'
             )
@@ -160,6 +168,8 @@ def dependencies(dag, ignored, tolerant=None):
             task.setdefault('arguments', {}).setdefault(
                 'parameters', []
             ).append({'name': name, 'value': status})
+        if (external or {}).get(task['name']):
+            changed = True
         if not deps:
             continue
         task['depends'] = relax(task, task.pop('dependencies'))
