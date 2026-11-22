@@ -109,10 +109,12 @@ if __name__ == '__main__':
 
     kind, target = sys.argv[1], Path(sys.argv[2])
     namespace = os.environ.get('KFP_TEST_NAMESPACE', 'kfp-argo')
-    client = kfp.Client(
-        host=os.environ['KFP_TEST_HOST'],
-        namespace=namespace,
-        existing_token=os.environ['KFP_TEST_TOKEN'],
+    client = support.as_user(
+        kfp.Client(
+            host=os.environ['KFP_TEST_HOST'],
+            namespace=namespace,
+            existing_token=os.environ['KFP_TEST_TOKEN'],
+        )
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(create(client, namespace, kind)))

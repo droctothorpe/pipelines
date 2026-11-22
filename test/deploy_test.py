@@ -142,8 +142,9 @@ def test_single_user_mode_binds_proxy_and_publishes_mode():
     )['data']['default.conf.template']
     assert '${KFP_UI_AUTH_MODE}' in template
     assert '"namespace":"${KFP_UI_NAMESPACE}"' in template
-    assert 'single-user $service_account_authorization;' in template
-    assert 'default $http_authorization;' in template
+    assert 'token $http_authorization;' in template
+    assert 'default $service_account_authorization;' in template
+    assert template.count('auth_request /_kfp/authorize;') == 2
     assert template.count('Authorization $upstream_authorization') == 2
     assert '$http_authorization;\n' not in template.split('map ')[0]
     with pytest.raises(ValueError):
@@ -228,3 +229,226 @@ def test_template_offload_grants_controller_creation_only():
             'verbs': ['create', 'patch'],
         }
     ]
+
+
+def multi_user(**kwargs):
+    module = load_deployment()
+    upstream = []
+    for name in ('argo-server', 'workflow-controller'):
+        upstream.append(
+            {
+                'apiVersion': 'apps/v1',
+                'kind': 'Deployment',
+                'metadata': {'name': name, 'namespace': 'argo'},
+                'spec': {
+                    'template': {
+                        'spec': {
+                            'containers': [
+                                {
+                                    'name': name,
+                                    'image': 'quay.io/argoproj/example:latest',
+                                }
+                            ]
+                        }
+                    }
+                },
+            }
+        )
+    upstream.append(
+        {
+            'apiVersion': 'v1',
+            'kind': 'ConfigMap',
+            'metadata': {
+                'name': 'workflow-controller-configmap',
+                'namespace': 'argo',
+            },
+            'data': {
+                'artifactRepository': 's3:\n  endpoint: minio:9000\n  bucket: my-bucket\n'
+            },
+        }
+    )
+    upstream.append(
+        {
+            'apiVersion': 'v1',
+            'kind': 'Secret',
+            'metadata': {'name': 'my-minio-cred', 'namespace': 'argo'},
+            'stringData': {'accesskey': 'admin', 'secretkey': 'password'},
+        }
+    )
+    upstream.append(
+        {
+            'apiVersion': 'v1',
+            'kind': 'ConfigMap',
+            'metadata': {
+                'name': 'artifact-repositories',
+                'namespace': 'argo',
+                'annotations': {
+                    'workflows.argoproj.io/default-artifact-repository': 'default-v1'
+                },
+            },
+            'data': {
+                'default-v1': 's3:\n  endpoint: minio:9000\n  bucket: my-bucket\n'
+            },
+        }
+    )
+    return (
+        module,
+        upstream,
+        module.resources(
+            upstream, 'platform', 'ui:test', 'multi-user', **kwargs
+        ),
+    )
+
+
+def test_multi_user_mode_runs_cluster_wide_and_authorizes_per_user():
+    """The stock multi-user model: Argo manages every namespace, the proxy acts
+    with a cluster-scoped account after a SubjectAccessReview for the user the
+    gateway names, and Kubeflow namespace members get rights by aggregation."""
+    module, _, result = multi_user()
+    by_kind = {}
+    for item in result:
+        by_kind.setdefault(item['kind'], {})[item['metadata']['name']] = item
+    for name in ('argo-server', 'workflow-controller'):
+        args = by_kind['Deployment'][name]['spec']['template']['spec'][
+            'containers'
+        ][0]['args']
+        assert '--namespaced' not in args and '--managed-namespace' not in args
+    assert by_kind['Deployment']['argo-server']['spec']['template']['spec'][
+        'containers'
+    ][0]['args'] == ['server', '--auth-mode', 'client']
+    repository = by_kind['ConfigMap']['workflow-controller-configmap']['data'][
+        'artifactRepository'
+    ]
+    assert 'endpoint: minio.platform:9000' in repository
+    assert 'bucket: argo-artifacts' in repository
+    proxy = by_kind['ClusterRole']['argo-ui-proxy']
+    assert {
+        'apiGroups': ['authorization.k8s.io'],
+        'resources': ['subjectaccessreviews'],
+        'verbs': ['create'],
+    } in proxy['rules']
+    assert module.role_rules('argo-ui-edit')[0] in proxy['rules']
+    binding = by_kind['ClusterRoleBinding']['argo-ui-proxy']
+    assert binding['subjects'] == [
+        {
+            'kind': 'ServiceAccount',
+            'name': 'argo-ui-proxy',
+            'namespace': 'platform',
+        }
+    ]
+    assert proxy_bindings(result) == []
+    view = by_kind['ClusterRole']['kfp-native-view']
+    edit = by_kind['ClusterRole']['kfp-native-edit']
+    assert view['metadata']['labels'] == {
+        'rbac.authorization.kubeflow.org/aggregate-to-kubeflow-view': 'true'
+    }
+    assert edit['metadata']['labels'] == {
+        'rbac.authorization.kubeflow.org/aggregate-to-kubeflow-edit': 'true'
+    }
+    assert view['rules'] == module.role_rules('argo-ui-read')
+    assert edit['rules'] == module.role_rules(
+        'argo-ui-read'
+    ) + module.role_rules('argo-ui-edit')
+    assert all(
+        set(rule['verbs']) <= {'get', 'list', 'watch'} for rule in view['rules']
+    )
+    assert ui_container(result)['env'] == [
+        {'name': 'KFP_UI_AUTH_MODE', 'value': 'multi-user'},
+        {'name': 'KFP_UI_NAMESPACE', 'value': ''},
+        {'name': 'KFP_UI_USERID_HEADER', 'value': 'kubeflow-userid'},
+        {'name': 'KFP_UI_USERID_PREFIX', 'value': ''},
+    ]
+    assert 'VirtualService' not in by_kind
+    env = ui_container(
+        module.resources(
+            [],
+            'platform',
+            'ui:test',
+            'multi-user',
+            userid_header='x-goog-authenticated-user-email',
+            userid_prefix='accounts.google.com:',
+        )
+    )['env']
+    assert {
+        'name': 'KFP_UI_USERID_PREFIX',
+        'value': 'accounts.google.com:',
+    } in env
+
+
+def test_multi_user_gateway_serves_pipeline_prefix_from_the_ingress_only():
+    module, _, result = multi_user(gateway='kubeflow/kubeflow-gateway')
+    virtual_service = next(
+        item for item in result if item['kind'] == 'VirtualService'
+    )
+    assert virtual_service['metadata']['namespace'] == 'platform'
+    route = virtual_service['spec']['http'][0]
+    assert virtual_service['spec']['gateways'] == ['kubeflow/kubeflow-gateway']
+    assert route['match'] == [{'uri': {'prefix': '/pipeline'}}]
+    assert route['route'][0]['destination'] == {
+        'host': 'kfp-argo-ui.platform.svc.cluster.local',
+        'port': {'number': 80},
+    }
+    policy = next(
+        item for item in result if item['kind'] == 'AuthorizationPolicy'
+    )
+    assert policy['spec']['selector'] == {'matchLabels': {'app': 'kfp-argo-ui'}}
+    assert policy['spec']['rules'] == [
+        {
+            'from': [
+                {
+                    'source': {
+                        'principals': [
+                            'cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account'
+                        ]
+                    }
+                }
+            ]
+        }
+    ]
+    with pytest.raises(ValueError):
+        module.resources(
+            [],
+            'platform',
+            'ui:test',
+            'token',
+            gateway='kubeflow/kubeflow-gateway',
+        )
+
+
+def test_tenant_bundle_prepares_a_namespace_for_the_cluster_wide_controller():
+    module, upstream, _ = multi_user()
+    result = module.tenant_resources(upstream, 'platform', 'team-a')
+    assert all(item['metadata']['namespace'] == 'team-a' for item in result)
+    names = sorted((item['kind'], item['metadata']['name']) for item in result)
+    assert names == [
+        ('ConfigMap', 'artifact-repositories'),
+        ('ConfigMap', 'kfp-cache'),
+        ('Role', 'argo-workflow'),
+        ('Role', 'kfp-cache'),
+        ('Role', 'kfp-template-config'),
+        ('RoleBinding', 'argo-workflow'),
+        ('RoleBinding', 'kfp-cache'),
+        ('RoleBinding', 'kfp-template-config'),
+        ('Secret', 'my-minio-cred'),
+        ('ServiceAccount', 'argo-workflow'),
+    ]
+    offload = next(
+        item
+        for item in result
+        if item['kind'] == 'RoleBinding'
+        and item['metadata']['name'] == 'kfp-template-config'
+    )
+    assert offload['subjects'] == [
+        {'kind': 'ServiceAccount', 'name': 'argo', 'namespace': 'platform'}
+    ]
+    assert not any('argo-ui' in item['metadata']['name'] for item in result)
+    repositories = next(
+        item
+        for item in result
+        if item['metadata']['name'] == 'artifact-repositories'
+    )
+    assert repositories['metadata']['annotations'] == {
+        'workflows.argoproj.io/default-artifact-repository': 'default-v1'
+    }
+    assert 'endpoint: minio.platform:9000' in repositories['data']['default-v1']
+    assert 'bucket: argo-artifacts' in repositories['data']['default-v1']

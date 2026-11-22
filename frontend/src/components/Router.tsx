@@ -10,6 +10,7 @@ import BusyButton from 'src/atoms/BusyButton';
 import SideNavigation from './SideNav';
 import NativePage from './NativePage';
 import { setArgoToken, type UiAuthMode } from 'src/lib/Argo';
+import { embedded } from 'src/lib/Dashboard';
 import { NativeUiContext, type Confirmation } from 'src/lib/NativeUiContext';
 import {
   NativeListPage,
@@ -43,13 +44,26 @@ export const ExternalLinks = {
   GITHUB_ISSUE: 'https://github.com/kubeflow/pipelines/issues/new/choose',
 };
 
-function Workspace({ namespace, authMode }: { namespace: string; authMode: UiAuthMode }) {
+const NAMESPACE_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+
+function Workspace({
+  namespace,
+  authMode,
+  onNamespace,
+}: {
+  namespace: string;
+  authMode: UiAuthMode;
+  onNamespace?: (namespace: string) => void;
+}) {
   const location = useLocation();
   const [tokenConnected, setTokenConnected] = useState(false);
-  // Single-user proxies authenticate with their own service account; otherwise
-  // a namespace-scoped browser token is required before any request is made.
-  const connected = authMode === 'single-user' || tokenConnected;
+  // Single-user proxies authenticate with their own service account and
+  // multi-user proxies with the gateway's identity, once a namespace is known;
+  // otherwise a namespace-scoped browser token is required before any request.
+  const multiUser = authMode === 'multi-user';
+  const connected = authMode === 'single-user' || (multiUser && !!namespace) || tokenConnected;
   const [token, setToken] = useState('');
+  const [candidate, setCandidate] = useState('');
   const [error, setError] = useState('');
   const [confirmation, setConfirmation] = useState<Confirmation>();
   const [busy, setBusy] = useState(false);
@@ -58,7 +72,8 @@ function Workspace({ namespace, authMode }: { namespace: string; authMode: UiAut
     <NativeUiContext.Provider value={{ namespace, fail, confirm: setConfirmation }}>
       <div className={commonCss.page}>
         <div className={commonCss.flexGrow} style={{ minHeight: 0 }}>
-          <SideNavigation page={location.pathname} />
+          {/* The central dashboard has its own navigation for these pages. */}
+          {!embedded() && <SideNavigation page={location.pathname} />}
           {connected ? (
             <Routes>
               <Route path='/pipelines' element={<NativeListPage kind='pipelines' />} />
@@ -101,24 +116,48 @@ function Workspace({ namespace, authMode }: { namespace: string; authMode: UiAut
       <Dialog open={!connected} maxWidth='sm' fullWidth>
         <DialogTitle>Connect to Kubeflow Pipelines</DialogTitle>
         <DialogContent>
-          <p>
-            Namespace: {namespace}. Use a Kubernetes bearer token with access to this namespace. The
-            token stays in memory and is cleared on reload.
-          </p>
-          <Input
-            label='Kubernetes bearer token'
-            type='password'
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            variant='outlined'
-            autoComplete='off'
-            autoFocus
-          />
+          {multiUser ? (
+            <>
+              <p>
+                {embedded()
+                  ? 'Waiting for the dashboard to select a namespace. You can also enter one.'
+                  : 'Enter the namespace whose pipelines you want to work with.'}
+              </p>
+              <Input
+                label='Namespace'
+                value={candidate}
+                onChange={(event) => setCandidate(event.target.value)}
+                variant='outlined'
+                autoComplete='off'
+                autoFocus
+              />
+            </>
+          ) : (
+            <>
+              <p>
+                Namespace: {namespace}. Use a Kubernetes bearer token with access to this namespace.
+                The token stays in memory and is cleared on reload.
+              </p>
+              <Input
+                label='Kubernetes bearer token'
+                type='password'
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+                variant='outlined'
+                autoComplete='off'
+                autoFocus
+              />
+            </>
+          )}
         </DialogContent>
         <DialogActions>
           <Button
-            disabled={!token.trim()}
+            disabled={multiUser ? !NAMESPACE_LABEL.test(candidate.trim()) : !token.trim()}
             onClick={() => {
+              if (multiUser) {
+                onNamespace?.(candidate.trim());
+                return;
+              }
               setArgoToken(token);
               setToken('');
               setTokenConnected(true);
@@ -168,13 +207,16 @@ function Workspace({ namespace, authMode }: { namespace: string; authMode: UiAut
 export default function Router({
   namespace,
   authMode = 'token',
+  onNamespace,
 }: {
   namespace: string;
   authMode?: UiAuthMode;
+  /** Multi-user mode without a dashboard: the person names the namespace. */
+  onNamespace?: (namespace: string) => void;
 }) {
   return (
     <HashRouter>
-      <Workspace namespace={namespace} authMode={authMode} />
+      <Workspace namespace={namespace} authMode={authMode} onNamespace={onNamespace} />
     </HashRouter>
   );
 }

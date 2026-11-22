@@ -10,6 +10,7 @@ import {
   getArgoMetadata,
   getArgoLogs,
   getUiConfig,
+  apiPath,
   listArgoWorkflows,
   type ArgoWorkflow,
 } from './Argo';
@@ -40,6 +41,11 @@ const reply = (body: unknown, status = 200) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe('getUiConfig', () => {
+  it('recognizes a multi-user proxy, which names no default namespace', async () => {
+    reply({ authMode: 'multi-user', namespace: '' });
+    expect(await getUiConfig()).toEqual({ authMode: 'multi-user', namespace: '' });
+  });
+
   it('recognizes a single-user proxy and its namespace, never caching the answer', async () => {
     reply({ authMode: 'single-user', namespace: 'kfp-argo' });
     expect(await getUiConfig()).toEqual({ authMode: 'single-user', namespace: 'kfp-argo' });
@@ -218,5 +224,28 @@ describe('native Argo adapter', () => {
     );
     expect(await getArgoLogs(run)).toEqual(['train: hello']);
     await expect(getArgoLogs(run)).rejects.toThrow('permission denied');
+  });
+});
+
+describe('apiPath', () => {
+  afterEach(() => window.history.replaceState({}, '', '/'));
+
+  it('keeps root-served paths as they are', () => {
+    window.history.replaceState({}, '', '/argo.html?namespace=team#/runs');
+    expect(apiPath('/argo/api/v1/info')).toBe('/argo/api/v1/info');
+    expect(apiPath('/config.json')).toBe('/config.json');
+  });
+
+  it('resolves against the page when served under the dashboard prefix, once', () => {
+    window.history.replaceState({}, '', '/pipeline/argo.html#/runs');
+    expect(apiPath('/argo/api/v1/info')).toBe('/pipeline/argo/api/v1/info');
+    expect(apiPath('/pipeline/argo/api/v1/info')).toBe('/pipeline/argo/api/v1/info');
+    window.history.replaceState({}, '', '/pipeline/');
+    expect(apiPath('/kubernetes/api/v1/namespaces/team/configmaps')).toBe(
+      '/pipeline/kubernetes/api/v1/namespaces/team/configmaps',
+    );
+    expect(argoArtifactUrl(run, node, 'dataset')).toBe(
+      '/pipeline/argo/artifacts/argo/demo/first/dataset',
+    );
   });
 });

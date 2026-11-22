@@ -60,12 +60,18 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const errors = [],
     requests = [],
-    urls = [];
+    urls = [],
+    prefixed = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.route('**/*', async (route) => {
     const request = route.request(),
       url = new URL(request.url());
     assert.equal(url.origin, 'http://localhost');
+    // The proxy serves the same tree under the dashboard's /pipeline/ prefix.
+    if (url.pathname.startsWith('/pipeline/')) {
+      prefixed.push(url.pathname);
+      url.pathname = url.pathname.slice('/pipeline'.length);
+    }
     if (url.pathname.endsWith('.html') || url.pathname.startsWith('/static/')) {
       const file = url.pathname.slice(1);
       const type = file.endsWith('.js')
@@ -83,12 +89,15 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
     if (url.pathname === '/config.json') {
       // Token-mode deployments may predate the config endpoint; single-user
       // proxies publish their mode so the UI skips the login dialog.
-      return authMode === 'single-user'
-        ? route.fulfill({
+      return authMode === 'token'
+        ? route.fulfill({ status: 404 })
+        : route.fulfill({
             contentType: 'application/json',
-            body: JSON.stringify({ authMode, namespace: 'team' }),
-          })
-        : route.fulfill({ status: 404 });
+            body: JSON.stringify({
+              authMode,
+              namespace: authMode === 'single-user' ? 'team' : '',
+            }),
+          });
     }
     requests.push(url.pathname);
     urls.push(url.pathname + url.search);
@@ -98,7 +107,7 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
     );
     assert.equal(
       request.headers().authorization,
-      authMode === 'single-user' ? undefined : `Bearer ${token}`,
+      authMode === 'token' ? `Bearer ${token}` : undefined,
     );
     const handled = await inventory.handleRequest?.(request, url);
     if (handled) return route.fulfill(handled);
@@ -162,15 +171,52 @@ async function mount(browser, entry, inventory = {}, authMode = 'token') {
       return route.fulfill({ contentType: 'text/plain', body: 'x,y\n1,2\n' });
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
-  // Single-user proxies publish their namespace, so the URL needs none.
-  await page.goto(`http://localhost/${entry}${authMode === 'token' ? '?namespace=team' : ''}`);
+  // Single-user proxies publish their namespace, so the URL needs none. A
+  // multi-user proxy is reached through the dashboard prefix.
+  const prefix = authMode === 'multi-user' ? 'pipeline/' : '';
+  await page.goto(
+    `http://localhost/${prefix}${entry}${authMode === 'single-user' ? '' : '?namespace=team'}`,
+  );
   if (authMode === 'token') {
     await page.getByLabel('Kubernetes bearer token').fill(token);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
   }
-  return { page, errors, requests, urls };
+  return { page, errors, requests, urls, prefixed };
 }
+
+test('multi-user proxies under /pipeline/ resolve every request there and send no browser credentials', async () => {
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+  try {
+    const { page, errors, requests, prefixed } = await mount(
+      browser,
+      'argo.html',
+      {},
+      'multi-user',
+    );
+    await page.getByText('No pipelines found.', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.ok(requests.some((path) => path.startsWith('/kubernetes/')));
+    assert.ok(prefixed.includes('/pipeline/config.json'));
+    assert.ok(prefixed.some((path) => path.startsWith('/pipeline/static/')));
+    assert.ok(prefixed.some((path) => path.startsWith('/pipeline/kubernetes/')));
+    assert.ok(prefixed.some((path) => path.startsWith('/pipeline/argo/')));
+    assert.ok(prefixed.every((path) => !path.startsWith('/pipeline/pipeline/')));
+    await page.goto('http://localhost/pipeline/argo.html#/runs');
+    await page.getByLabel('Namespace').waitFor();
+    assert.equal(
+      await page.getByRole('button', { name: 'Connect', exact: true }).isEnabled(),
+      false,
+    );
+    await page.getByLabel('Namespace').fill('team');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByText('No available runs found.', { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+});
 
 test('single-user proxies skip the token dialog, default the namespace and send no browser credentials', async () => {
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });

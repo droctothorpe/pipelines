@@ -16,6 +16,20 @@ IMAGE = os.environ.get('KFP_TEST_IMAGE')
 COMPONENT = {'base_image': IMAGE, 'install_kfp_package': False} if IMAGE else {}
 
 
+def as_user(client, user=None):
+    """Name the user for a multi-user proxy.
+
+    Behind a real gateway the identity header comes from the login; the
+    suite reaches the proxy directly and sets it itself, as stock's
+    multi-user tests do. Without a user the client is unchanged.
+    """
+    user = user or os.environ.get('KFP_TEST_USER')
+    if user:
+        header = os.environ.get('KFP_TEST_USERID_HEADER', 'kubeflow-userid')
+        client._run_api.transport.session.headers[header] = user
+    return client
+
+
 def submit(client, function, arguments=None, name=None, **options):
     """Create a run in the suite's experiment with a unique, searchable
     name."""

@@ -34,9 +34,15 @@ export async function authMode() {
   return mode;
 }
 
-export async function launch(viewport = { width: 1280, height: 900 }) {
+// On a multi-user proxy the suite names the user itself, in place of a gateway.
+const user = process.env.KFP_TEST_USER;
+const identity = user
+  ? { [process.env.KFP_TEST_USERID_HEADER || 'kubeflow-userid']: user }
+  : undefined;
+
+export async function launch(viewport = { width: 1280, height: 900 }, extraHTTPHeaders = identity) {
   const browser = await chromium.launch({ channel });
-  const page = await browser.newPage({ viewport });
+  const page = await browser.newPage({ viewport, extraHTTPHeaders });
   const errors = [],
     paths = [],
     urls = [];
@@ -55,7 +61,9 @@ export async function open(page, hash, token = editor) {
 }
 
 export async function connect(page, token = editor) {
-  if ((await authMode()) !== 'single-user') {
+  // Single-user proxies hold their own credentials; multi-user proxies take
+  // the user from the gateway header and the namespace from the URL.
+  if ((await authMode()) === 'token') {
     await page.getByLabel('Kubernetes bearer token').fill(token);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
@@ -75,6 +83,7 @@ export async function api(path, options = {}, token = editor) {
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      ...identity,
       ...options.headers,
     },
   });
@@ -155,7 +164,7 @@ export async function fixture(kind) {
 
 /** Run a line of SDK client code against the deployment and return its stdout. */
 export function sdk(code) {
-  const prelude = `import os,kfp; c=kfp.Client(host=os.environ['KFP_TEST_HOST'],namespace=os.environ['KFP_TEST_NAMESPACE'],existing_token=os.environ['KFP_TEST_TOKEN']); `;
+  const prelude = `import os,sys,kfp; sys.path.insert(0,'test'); from e2e import support; c=support.as_user(kfp.Client(host=os.environ['KFP_TEST_HOST'],namespace=os.environ['KFP_TEST_NAMESPACE'],existing_token=os.environ['KFP_TEST_TOKEN'])); `;
   return execFileSync('uv', ['run', 'python', '-c', prelude + code], {
     cwd: root,
     encoding: 'utf8',

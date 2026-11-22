@@ -31,13 +31,17 @@ for deployment in postgres minio workflow-controller argo-server kfp-argo-ui; do
   kubectl --context "$context" -n "$namespace" rollout status "deployment/$deployment" --timeout=180s
 done
 kubectl --context "$context" -n "$namespace" apply -f /tmp/native-version.yaml
-kubectl --context "$context" -n "$namespace" port-forward svc/kfp-argo-ui "$port:80" > /tmp/native-port-forward.log 2>&1 &
-forward_pid=$!
-for _ in $(seq 1 60); do
-  kill -0 "$forward_pid"
-  if grep -q 'Forwarding from 127.0.0.1:' /tmp/native-port-forward.log && curl -fsS "http://127.0.0.1:$port/argo.html" -o /dev/null; then break; fi
-  sleep 1
-done
+forward() {
+  if [[ -n "$forward_pid" ]]; then kill "$forward_pid" 2>/dev/null || true; wait "$forward_pid" 2>/dev/null || true; fi
+  kubectl --context "$context" -n "$namespace" port-forward svc/kfp-argo-ui "$port:80" > /tmp/native-port-forward.log 2>&1 &
+  forward_pid=$!
+  for _ in $(seq 1 60); do
+    kill -0 "$forward_pid"
+    if grep -q 'Forwarding from 127.0.0.1:' /tmp/native-port-forward.log && curl -fsS "http://127.0.0.1:$port/argo.html" -o /dev/null; then return; fi
+    sleep 1
+  done
+}
+forward
 export ARGO_EDITOR_TOKEN ARGO_READER_TOKEN
 ARGO_EDITOR_TOKEN=$(kubectl --context "$context" -n "$namespace" create token argo-ui-editor --duration=2h)
 ARGO_READER_TOKEN=$(kubectl --context "$context" -n "$namespace" create token argo-ui-reader --duration=2h)
@@ -61,3 +65,23 @@ export PLAYWRIGHT_CHANNEL=${PLAYWRIGHT_CHANNEL:-chromium}
 # the deployment acceptance test runs alone because it restarts services.
 (cd frontend && npm run test:e2e)
 node --test frontend/e2e/deployment.test.mjs
+
+# Multi-user mode on the same cluster: Argo runs cluster-wide, a tenant namespace
+# is prepared, and the proxy authorizes the user named by the gateway header. The
+# suite sets that header itself, as stock's multi-user tests do.
+tenant=kfp-tenant-a
+uv run python samples/argo-native/deploy.py --namespace "$namespace" --ui-image kfp-argo-ui:test --auth-mode multi-user > /tmp/native-multi-user.yaml
+kubectl --context "$context" -n "$namespace" apply --server-side --force-conflicts -f /tmp/native-multi-user.yaml
+for deployment in workflow-controller argo-server kfp-argo-ui; do
+  kubectl --context "$context" -n "$namespace" rollout status "deployment/$deployment" --timeout=180s
+done
+kubectl --context "$context" create namespace "$tenant"
+uv run python samples/argo-native/deploy.py --namespace "$namespace" --tenant "$tenant" | kubectl --context "$context" apply --server-side -f -
+kubectl --context "$context" apply -f test/e2e/multi-user-roles.yaml
+forward
+KFP_TEST_HOST="http://127.0.0.1:$port" KFP_TEST_NAMESPACE="$namespace" KFP_TEST_TOKEN=gateway KFP_TEST_TENANT="$tenant" \
+  KFP_TEST_IMAGE="$image" \
+  uv run python -m pytest test/e2e/test_multi_user.py -p no:randomly --e2e-output /tmp/kfp-e2e/multi-user -q
+# The dashboard journeys, then the stock lifecycle and SDK round trips as a tenant editor.
+ARGO_NAMESPACE="$tenant" ARGO_EDITOR_TOKEN=gateway KFP_TEST_USER=alice@example.com \
+  node --test frontend/e2e/multi-user.test.mjs frontend/e2e/pipeline-lifecycle.test.mjs frontend/e2e/sdk-ui-interop.test.mjs

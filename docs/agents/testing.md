@@ -41,6 +41,10 @@ helper in `live.mjs`), drives the deployed UI, and asserts on the real responses
 alone afterwards because it restarts services. It reads `ARGO_UI_URL`,
 `ARGO_NAMESPACE`, `ARGO_EDITOR_TOKEN` and `ARGO_READER_TOKEN` (or the `KFP_TEST_*`
 names), honours single-user proxies, and writes screenshots to `KFP_UI_OUTPUT`.
+`test/native-deployment.sh` then redeploys the same cluster in multi-user mode and
+runs `test/e2e/test_multi_user.py` and `frontend/e2e/multi-user.test.mjs`: those
+need a tenant namespace, `test/e2e/multi-user-roles.yaml`, and `KFP_TEST_USER`
+(the identity header the suite sets in place of a gateway); they skip elsewhere.
 Coverage matches upstream's frontend integration suite minus the API server: the
 hello-world lifecycle journey (`pipeline-lifecycle.test.mjs`) and the SDK-to-UI
 round trips, plus native-specific checks for logs, previews, markdown safety and

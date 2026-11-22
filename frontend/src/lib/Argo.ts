@@ -86,11 +86,22 @@ export function setArgoToken(token: string) {
   bearerToken = token.trim().replace(/^Bearer\s+/i, '');
 }
 
-export type UiAuthMode = 'token' | 'single-user';
+export type UiAuthMode = 'token' | 'single-user' | 'multi-user';
+const AUTH_MODES: UiAuthMode[] = ['token', 'single-user', 'multi-user'];
 export interface UiConfig {
   authMode: UiAuthMode;
   /** The proxy's own namespace, used when the URL names none; empty if unknown. */
   namespace: string;
+}
+
+/**
+ * The app is served from the proxy root and, under the Kubeflow central
+ * dashboard, from `/pipeline/`. API paths resolve against the page so the same
+ * bundle works in both places.
+ */
+export function apiPath(path: string): string {
+  const base = new URL('.', window.location.href).pathname;
+  return path.startsWith(base) ? path : base + path.replace(/^\//, '');
 }
 
 const NAMESPACE_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
@@ -98,13 +109,14 @@ const NAMESPACE_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 /**
  * The deployed proxy publishes its authentication mode and namespace. In
  * single-user mode it authenticates with its own service account, so the
- * browser needs no token. Anything missing, failing or unrecognized falls back
- * to asking for a token and to the URL's namespace.
+ * browser needs no token; in multi-user mode the gateway names the user and the
+ * dashboard names the namespace. Anything missing, failing or unrecognized falls
+ * back to asking for a token and to the URL's namespace.
  */
 export async function getUiConfig(signal?: AbortSignal): Promise<UiConfig> {
   const fallback: UiConfig = { authMode: 'token', namespace: '' };
   try {
-    const response = await fetch('/config.json', {
+    const response = await fetch(apiPath('/config.json'), {
       signal,
       credentials: 'same-origin',
       cache: 'no-store',
@@ -112,7 +124,7 @@ export async function getUiConfig(signal?: AbortSignal): Promise<UiConfig> {
     if (!response.ok) return fallback;
     const body = (await response.json()) as { authMode?: unknown; namespace?: unknown } | null;
     return {
-      authMode: body?.authMode === 'single-user' ? 'single-user' : 'token',
+      authMode: AUTH_MODES.find((mode) => mode === body?.authMode) ?? 'token',
       namespace:
         typeof body?.namespace === 'string' && NAMESPACE_LABEL.test(body.namespace)
           ? body.namespace
@@ -145,7 +157,7 @@ export async function argoRequest(
   signal?: AbortSignal,
   init: RequestInit = {},
 ): Promise<Response> {
-  const response = await fetch(path, {
+  const response = await fetch(apiPath(path), {
     ...init,
     signal,
     credentials: 'same-origin',
@@ -244,8 +256,12 @@ export async function getArgoWorkflow(
 
 export function argoArtifactUrl(run: ArgoWorkflow, node: ArgoNode, artifact: string): string {
   if (run.archived)
-    return `/argo/artifact-files/${segment(run.metadata.namespace)}/archived-workflows/${segment(run.metadata.uid)}/${segment(node.id)}/outputs/${segment(artifact)}`;
-  return `/argo/artifacts/${segment(run.metadata.namespace)}/${segment(run.metadata.name)}/${segment(node.id)}/${segment(artifact)}`;
+    return apiPath(
+      `/argo/artifact-files/${segment(run.metadata.namespace)}/archived-workflows/${segment(run.metadata.uid)}/${segment(node.id)}/outputs/${segment(artifact)}`,
+    );
+  return apiPath(
+    `/argo/artifacts/${segment(run.metadata.namespace)}/${segment(run.metadata.name)}/${segment(node.id)}/${segment(artifact)}`,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

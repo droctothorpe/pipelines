@@ -126,10 +126,14 @@ def settings(request):
 def client(settings):
     import kfp
 
-    return kfp.Client(
-        host=settings.host,
-        namespace=settings.namespace,
-        existing_token=settings.token,
+    from e2e import support
+
+    return support.as_user(
+        kfp.Client(
+            host=settings.host,
+            namespace=settings.namespace,
+            existing_token=settings.token,
+        )
     )
 
 
