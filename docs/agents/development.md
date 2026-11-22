@@ -30,11 +30,20 @@ deployed authenticated proxy (default `http://127.0.0.1:3003`, override
 credentials. Use explicit Kubernetes contexts and restart a port-forward after
 replacing its target UI pod.
 
-The UI proxy has two authentication modes, selected by `deploy.py --auth-mode`
+The UI proxy has three authentication modes, selected by `deploy.py --auth-mode`
 and the `KFP_UI_AUTH_MODE` container variable. `token` (default, used by CI and the
 deployment smoke) forwards the browser's bearer token. `single-user` lets the
 proxy's own editor-bound service account authenticate every request through an njs
 helper and advertises itself at `/config.json`, so the UI never asks for a token.
-Both modes publish the deployment namespace there (`KFP_UI_NAMESPACE` from the
+Those two publish the deployment namespace there (`KFP_UI_NAMESPACE` from the
 downward API); the UI uses it when the URL has no `?namespace=`. Keep single-user
-mode for disposable local namespaces.
+mode for disposable local namespaces. `multi-user` is the Kubeflow platform mode:
+Argo runs cluster-wide, the proxy trusts the identity header the authenticating
+gateway sets (`KFP_UI_USERID_HEADER`, default `kubeflow-userid`), runs a
+SubjectAccessReview for that user on every proxied request (`ui-proxy.js`
+`authorize`, paths it does not know are refused) and then acts with its own
+cluster-scoped account. The UI is also served under `/pipeline/` for the central
+dashboard, which names the namespace over postMessage (`src/lib/Dashboard.ts`).
+Tenant namespaces get `deploy.py --tenant`; people get access through the
+aggregated `kfp-native-edit`/`kfp-native-view` ClusterRoles. See
+[samples/argo-native/README.md](../../samples/argo-native/README.md).

@@ -126,12 +126,9 @@ test(
       await page.getByRole('link', { name: secondName, exact: true }).waitFor();
       await go(page, '/experiments');
       await page.getByLabel('Filter experiments', { exact: true }).fill(experimentName);
+      // The filter request is debounced: wait for the other rows to go.
+      await page.getByRole('link', { name: 'Default', exact: true }).waitFor({ state: 'hidden' });
       await page.getByRole('link', { name: experimentName, exact: true }).waitFor();
-      assert.equal(
-        await page.getByRole('link', { name: 'Default', exact: true }).count(),
-        0,
-        'Filtering must hide other experiments',
-      );
       await page.getByLabel('Filter experiments', { exact: true }).fill('Default');
       await page.getByRole('link', { name: 'Default', exact: true }).waitFor();
       // 9. Delete the uploaded pipeline from the list.

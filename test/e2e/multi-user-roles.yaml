@@ -1,0 +1,54 @@
+# Copyright 2026 The Kubeflow Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Stand-ins for what the Kubeflow profile controller provides on a platform:
+# the aggregating kubeflow-edit/kubeflow-view ClusterRoles, and a binding per
+# namespace member. The live suite's multi-user tests expect an editor and a
+# viewer in the tenant namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeflow-edit
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.kubeflow.org/aggregate-to-kubeflow-edit: 'true'
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeflow-view
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.kubeflow.org/aggregate-to-kubeflow-view: 'true'
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alice-edit
+  namespace: kfp-tenant-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeflow-edit
+subjects:
+  - kind: User
+    name: alice@example.com
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bob-view
+  namespace: kfp-tenant-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeflow-view
+subjects:
+  - kind: User
+    name: bob@example.com
+    apiGroup: rbac.authorization.k8s.io

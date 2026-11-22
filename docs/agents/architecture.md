@@ -20,7 +20,9 @@ API definitions and old pipeline IR builder.
 The browser reads Kubernetes ConfigMaps for experiments and Argo resources for
 versions, runs and schedules. Argo Server provides hydrated/offloaded status and
 archive/artifact access. UID is run identity. Cache metadata retains the original
-producer. Tokens stay in memory and namespace roles enforce permissions.
+producer. Tokens stay in memory and namespace roles enforce permissions. In
+multi-user mode the proxy authorizes the gateway-named user per request with a
+SubjectAccessReview, the stock API server's model, and acts with its own account.
 
 `test/native_cleanup_test.py` guards the retired-service boundary. The repo has no
 Go execution backend, KFP controllers, legacy REST transports, or in-process

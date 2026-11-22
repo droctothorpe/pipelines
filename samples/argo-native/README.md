@@ -18,7 +18,9 @@ The deployed target is Kubernetes context `orbstack`, namespace `kfp-argo`.
 Use a disposable, single-user namespace. The upstream quick-start has development
 object-store/database credentials; Argo's internal certificate is self-signed.
 The UI requires a namespace-scoped token, but this is **not a production or
-multi-tenant installation**. Keep the port-forward on loopback.
+multi-tenant installation**; the Kubeflow platform layout is
+[multi-user mode](#multi-user-mode-kubeflow-platform). Keep the port-forward on
+loopback.
 
 Requirements: OrbStack Kubernetes, Docker, kubectl, Argo CLI, uv, and the Node/npm
 versions pinned in `frontend/.nvmrc` and `frontend/package.json`.
@@ -91,6 +93,63 @@ defaults to that namespace, so <http://127.0.0.1:3003/> works without a
 test and its denied-mutation checks need the default `token` mode.
 Do not use single-user mode on a shared cluster: anyone who can reach the
 port-forward has editor rights in the namespace.
+
+### Multi-user mode (Kubeflow platform)
+
+`--auth-mode multi-user` is the counterpart of stock KFP's multi-user installation
+and is meant to sit behind Kubeflow's authenticating gateway (Istio ingress with
+oauth2-proxy, or any front proxy that puts the logged-in user in a header).
+
+```sh
+uv run python samples/argo-native/deploy.py --auth-mode multi-user \
+  --istio-gateway kubeflow/kubeflow-gateway > /tmp/kfp-argo-deployment.yaml
+kubectl --context orbstack -n kfp-argo apply --server-side -f /tmp/kfp-argo-deployment.yaml
+# Each namespace that runs pipelines (a Kubeflow profile) gets the tenant bundle.
+uv run python samples/argo-native/deploy.py --tenant team-a | kubectl --context orbstack apply --server-side -f -
+```
+
+What changes:
+
+- The workflow controller and Argo Server run cluster-wide (no `--namespaced`).
+- The proxy trusts the identity header the gateway sets (`--userid-header`,
+  default `kubeflow-userid`; `--userid-prefix` strips a prefix, as stock's
+  `KUBEFLOW_USERID_PREFIX` does). For every `/argo/` and `/kubernetes/` request it
+  maps the path to the Kubernetes resource it reaches, asks the API server with a
+  SubjectAccessReview whether that user may do that in that namespace, and only
+  then forwards the request with its own cluster-scoped service account. This is
+  the stock API server's model. Requests without the header get 401; cluster-wide
+  listings, other namespaces and paths the UI and SDK never use get 403. Archived
+  runs addressed by uid are checked against the namespace the archive recorded.
+- People get rights through the aggregated `kfp-native-edit` and `kfp-native-view`
+  ClusterRoles, labelled for Kubeflow's `kubeflow-edit`/`kubeflow-view`, so a
+  profile's owners and contributors can use pipelines in their namespace with no
+  extra binding. Stock's `kubeflow-pipelines-edit` already grants the same Argo
+  resources.
+- `--tenant NAME` emits what a namespace needs under the cluster-wide controller:
+  the `argo-workflow` account, cache state, template-offload rights, the artifact
+  repository ConfigMap and the object-store credentials. Stock's profile sync
+  creates the equivalent automatically; here it is a manifest to apply when a
+  profile is created.
+- `--istio-gateway NAMESPACE/NAME` adds the VirtualService that serves the UI at
+  `/pipeline` (the path the central dashboard links to) and an AuthorizationPolicy
+  admitting only the ingress gateway (`--ingress-principal`), so nobody inside the
+  mesh can forge the header. The UI namespace needs sidecar injection for the
+  policy to apply. Kubeflow's default dashboard links (`/pipeline/#/pipelines`,
+  `#/experiments`, `#/runs`, `#/recurringruns`, `#/artifacts`) work unchanged.
+- The UI takes its namespace from the central dashboard's namespace selector
+  (the `iframe-connected`/`namespace-selected` protocol of the dashboard's client
+  library) and hides its own side navigation when embedded. Opened directly, it
+  asks for a namespace, and `?namespace=` still wins.
+- The SDK goes through the same gateway: `kfp.Client(host='https://<kubeflow>/pipeline',
+  existing_token=<token the gateway accepts>)`. With Kubeflow's machine-to-machine
+  setup a Kubernetes service-account token works and the user becomes
+  `system:serviceaccount:<ns>:<name>`.
+
+The proxy publishes `{"authMode":"multi-user","namespace":""}` at `/config.json`.
+`test/e2e/test_multi_user.py` and `frontend/e2e/multi-user.test.mjs` exercise this
+mode on every PR against a tenant namespace, setting the identity header directly
+in place of a gateway; `test/e2e/multi-user-roles.yaml` stands in for the profile
+controller's bindings.
 
 ## Compile and submit
 

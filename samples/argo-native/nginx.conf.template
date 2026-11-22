@@ -1,15 +1,16 @@
-# Rendered by the image entrypoint with envsubst. ${KFP_UI_AUTH_MODE} and
-# ${KFP_UI_NAMESPACE} are the only substituted values; nginx variables keep
-# their $name form.
+# Rendered by the image entrypoint with envsubst. ${KFP_UI_AUTH_MODE},
+# ${KFP_UI_NAMESPACE}, ${KFP_UI_USERID_HEADER} and ${KFP_UI_USERID_PREFIX} are the
+# only substituted values; nginx variables keep their $name form.
 js_import proxy from /etc/nginx/ui-proxy.js;
 js_set $service_account_authorization proxy.serviceAccountAuthorization;
 
 # token: forward the browser's bearer token unchanged.
-# single-user: the proxy's own service-account token replaces whatever the
-# browser sent, so the UI needs no login. Only for local single-user namespaces.
+# single-user and multi-user: the proxy's own service-account token replaces
+# whatever the browser sent. In multi-user mode every proxied request is first
+# authorized for the gateway-named user (see ui-proxy.js).
 map "${KFP_UI_AUTH_MODE}" $upstream_authorization {
-  single-user $service_account_authorization;
-  default $http_authorization;
+  token $http_authorization;
+  default $service_account_authorization;
 }
 
 server {
@@ -18,6 +19,9 @@ server {
   root /usr/share/nginx/html;
   index argo.html;
   client_max_body_size 2m;
+  set $kfp_auth_mode "${KFP_UI_AUTH_MODE}";
+  set $kfp_userid_header "${KFP_UI_USERID_HEADER}";
+  set $kfp_userid_prefix "${KFP_UI_USERID_PREFIX}";
 
   location = /config.json {
     default_type application/json;
@@ -26,7 +30,20 @@ server {
     return 200 '{"authMode":"${KFP_UI_AUTH_MODE}","namespace":"${KFP_UI_NAMESPACE}"}';
   }
 
+  # The Kubeflow central dashboard embeds pipelines at /pipeline/. The app
+  # resolves its assets and API paths relative to the page, so serving the same
+  # tree there is a plain prefix strip.
+  location = /pipeline {
+    return 302 /pipeline/;
+  }
+  location /pipeline/ {
+    rewrite ^/pipeline/(.*)$ /$1 last;
+  }
+
   location /argo/ {
+    # The authorizer sees the path after the /pipeline/ rewrite.
+    set $kfp_target_uri $uri$is_args$args;
+    auth_request /_kfp/authorize;
     proxy_pass https://argo-server:2746/;
     proxy_set_header Authorization $upstream_authorization;
     # Local quick-start Argo uses a self-signed certificate.
@@ -35,12 +52,44 @@ server {
   }
 
   location /kubernetes/ {
+    set $kfp_target_uri $uri$is_args$args;
+    auth_request /_kfp/authorize;
     proxy_pass https://kubernetes.default.svc/;
     proxy_set_header Authorization $upstream_authorization;
     proxy_ssl_server_name on;
     proxy_ssl_name kubernetes.default.svc;
     proxy_ssl_trusted_certificate /var/run/secrets/kubernetes.io/serviceaccount/ca.crt;
     proxy_ssl_verify on;
+  }
+
+  location = /_kfp/authorize {
+    internal;
+    js_content proxy.authorize;
+  }
+
+  location = /_kfp/subjectaccessreview {
+    internal;
+    proxy_pass https://kubernetes.default.svc/apis/authorization.k8s.io/v1/subjectaccessreviews;
+    proxy_method POST;
+    proxy_set_header Authorization $service_account_authorization;
+    proxy_set_header Content-Type application/json;
+    # Subrequests inherit the browser's headers; a partial-metadata Accept would
+    # be refused here with 406.
+    proxy_set_header Accept application/json;
+    proxy_ssl_server_name on;
+    proxy_ssl_name kubernetes.default.svc;
+    proxy_ssl_trusted_certificate /var/run/secrets/kubernetes.io/serviceaccount/ca.crt;
+    proxy_ssl_verify on;
+  }
+
+  location ~ ^/_kfp/archive/(?<uid>[^/]+)$ {
+    internal;
+    # Argo returns the whole archived document; only its namespace is read.
+    subrequest_output_buffer_size 32m;
+    proxy_pass https://argo-server:2746/api/v1/archived-workflows/$uid;
+    proxy_set_header Authorization $service_account_authorization;
+    proxy_set_header Accept application/json;
+    proxy_ssl_verify off;
   }
 
   location / {
