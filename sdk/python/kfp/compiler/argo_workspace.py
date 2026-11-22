@@ -34,7 +34,7 @@ def configure(spec, workspace):
         )
     ):
         raise ValueError(
-            'Workspace PVC accessModes must be supplied in pvcSpecPatch; deployment-provided workspace defaults are not yet bound.'
+            'Workspace PVC spec must specify accessModes in pvcSpecPatch.'
         )
     if claim.get('storageClassName') == '':
         raise ValueError(
