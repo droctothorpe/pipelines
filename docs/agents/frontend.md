@@ -21,7 +21,9 @@ namespace-scoped tokens and checks denied mutations.
 Artifact visualizations dispatch on the v2 artifact type in `NativeInspectors`; a legacy
 `mlpipeline-ui-metadata` artifact goes through `lib/NativeUiMetadata.ts` and the
 `NativeUiMetadata` viewer, whose sources are inline or sibling artifacts served by
-Argo Server. Keep HTML (typed or `web-app`) inside `SandboxedHtml`.
+Argo Server. Keep HTML (typed or `web-app`) inside `SandboxedHtml`, which is stock's
+`allow-scripts` iframe; do not add or remove rendering restrictions without a matching
+stock change (C24 in `docs/compatibility.md`).
 
 Use effects only for external synchronization. Derive display data during render,
 perform mutations in event handlers, and preserve selections across refreshes.

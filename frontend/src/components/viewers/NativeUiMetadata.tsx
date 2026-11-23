@@ -32,14 +32,14 @@ import {
 
 const SOURCE_LIMIT = 1024 * 1024;
 
-/** The sandbox the typed HTML viewer uses: no scripts, no network, inline styles only. */
+/** Stock's HTML viewer sandbox: scripts run in an opaque origin, never the UI's. */
 export function SandboxedHtml({ html, title }: { html: string; title: string }) {
   return (
     <iframe
       title={title}
-      sandbox=''
+      sandbox='allow-scripts'
       style={{ border: 0, width: '100%', height: '100%', minHeight: 400 }}
-      srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">${html}`}
+      srcDoc={html}
     />
   );
 }

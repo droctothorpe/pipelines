@@ -45,14 +45,16 @@ export async function launch(viewport = { width: 1280, height: 900 }, extraHTTPH
   const page = await browser.newPage({ viewport, extraHTTPHeaders });
   const errors = [],
     paths = [],
-    urls = [];
+    urls = [],
+    hosts = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('request', (request) => {
     const url = new URL(request.url());
     paths.push(url.pathname);
     urls.push(url.pathname + url.search);
+    hosts.push(url.host);
   });
-  return { browser, page, errors, paths, urls };
+  return { browser, page, errors, paths, urls, hosts };
 }
 
 export async function open(page, hash, token = editor) {

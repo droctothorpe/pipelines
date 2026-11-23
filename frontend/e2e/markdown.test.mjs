@@ -15,14 +15,14 @@ import {
 } from './live.mjs';
 
 test(
-  'Markdown artifacts keep stock formatting without scripts or tracking images',
+  'Markdown artifacts render as in stock: formatting kept, raw HTML inert, images fetched',
   { timeout: 600000 },
   async () => {
     requireTokens();
     const { run_id: uid } = await fixture('markdown');
     const node = nodeWithArtifact(await archivedRun(uid), 'document');
     assert.ok(node, 'The markdown run must record a document artifact');
-    const { browser, page, errors, urls } = await launch();
+    const { browser, page, errors, hosts } = await launch();
     try {
       await open(page, `/artifacts/${uid}/${node.id}/document`, reader);
       await page.getByRole('button', { name: 'Visualization', exact: true }).click();
@@ -38,8 +38,8 @@ test(
       assert.equal(await page.locator('.markdown-viewer script').count(), 0);
       assert.equal(await page.evaluate(() => window.__unexpectedMarkdownExecution), undefined);
       assert.ok(
-        !urls.some((url) => url.includes('tracker.invalid')),
-        'External images must not be fetched',
+        hosts.includes('tracker.invalid'),
+        'Remote images are requested as the stock viewer does (C24 parity)',
       );
       await shot(page, 'markdown', { fullPage: true });
       await mobile(page, 'markdown');

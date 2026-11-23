@@ -35,7 +35,7 @@ def report(document: dsl.Output[dsl.Markdown]):
 assert score > 0.9
 ```
 
-![remote tracking image](https://tracker.invalid/pixel)
+![remote image, fetched as in stock](https://tracker.invalid/pixel)
 
 <script>window.__unexpectedMarkdownExecution = true</script>
 """)

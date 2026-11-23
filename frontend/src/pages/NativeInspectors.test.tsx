@@ -9,7 +9,7 @@ import { NativeArtifactContent } from './NativeInspectors';
 vi.mock('src/lib/NativeUiContext', () => ({ useNativeUi: () => ({ fail: vi.fn() }) }));
 afterEach(() => vi.unstubAllGlobals());
 
-it('renders Markdown structure without raw HTML execution or automatic external images', async () => {
+it('renders Markdown as stock does: no raw HTML, sanitized links, images as written', async () => {
   const producer = { run: 'run-id', task: 'pod', namespace: 'team' };
   const metadata = {
     schema: 'kfp-argo/v1',
@@ -58,8 +58,12 @@ it('renders Markdown structure without raw HTML execution or automatic external 
   expect(await screen.findByRole('heading', { name: 'Evaluation' })).toBeTruthy();
   expect(view.container.querySelector('strong')?.textContent).toBe('passed');
   expect(view.container.querySelector('script')).toBeNull();
-  expect(view.container.querySelector('img[src^="http"]')).toBeNull();
+  // Stock parity (C24): the parser's sanitizer drops javascript: links and
+  // remote images render as written, nothing beyond the stock viewer.
   expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
+  expect(view.container.querySelector('img')?.getAttribute('src')).toBe(
+    'https://tracker.example/pixel',
+  );
   expect(vi.mocked(fetch).mock.calls).toHaveLength(1);
 });
 
@@ -104,6 +108,11 @@ it('routes a legacy mlpipeline-ui-metadata artifact to the kept viewers', async 
         source: 'neg,neg,3\nneg,pos,1\npos,neg,1\npos,pos,5\n',
       },
       { type: 'markdown', storage: 'inline', source: '## Legacy summary' },
+      {
+        type: 'web-app',
+        storage: 'inline',
+        source: '<h1>Legacy web app</h1><script>document.title = "x"</script>',
+      },
       { type: 'tensorboard', source: 's3://bucket/run/pod/logs' },
       { type: 'table', format: 'csv', header: ['x'], source: 's3://elsewhere/data.csv' },
     ],
@@ -141,6 +150,12 @@ it('routes a legacy mlpipeline-ui-metadata artifact to the kept viewers', async 
   expect(table.textContent).toContain('tuned');
   expect(await screen.findByRole('heading', { name: 'Legacy summary' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'confusion_matrix visualization' })).toBeTruthy();
+  // Stock's HTML viewer sandbox: scripts allowed, same-origin not, content verbatim.
+  const frame = screen.getByTitle('Legacy web app 4');
+  expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+  expect(frame.getAttribute('srcdoc')).toBe(
+    '<h1>Legacy web app</h1><script>document.title = "x"</script>',
+  );
   expect(screen.getByText(/TensorBoard viewers are not launched/).textContent).toContain(
     's3://bucket/run/pod/logs',
   );
