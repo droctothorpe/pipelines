@@ -1,3 +1,5 @@
+# Generated bindings keep their generator's layout, as in stock.
+exclude: (^sdk/python/kfp/server_api/|_pb2\.py$)
 repos:
   - repo: local
     hooks:
@@ -6,7 +8,8 @@ repos:
         entry: uv run --frozen --extra lint docformatter --in-place
         language: system
         types: [python]
-        exclude: _pb2\.py$
+        # docformatter mangles sphinx links; the Kubernetes docstrings are heavy on them (stock exclusion).
+        exclude: ^sdk/python/kfp/kubernetes/
       - id: ruff-check
         name: ruff check
         entry: uv run --frozen --extra lint ruff check --fix

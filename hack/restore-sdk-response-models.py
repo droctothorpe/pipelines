@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Restore unchanged stock public Client response models, without REST transports.
+"""Restore unchanged stock public Client response models, without REST
+transports.
 
-The generated model sources are copied byte-for-byte from the contract baseline.
-No API service classes, ApiClient, REST transport or server implementation is copied.
+The generated model sources are copied byte-for-byte from the contract
+baseline. No API service classes, ApiClient, REST transport or server
+implementation is copied.
 """
 
 import argparse

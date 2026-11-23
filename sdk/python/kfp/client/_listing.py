@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Public SDK filtering and opaque pagination over native resource inventories."""
+"""Public SDK filtering and opaque pagination over native resource
+inventories."""
 
 import base64
 import datetime

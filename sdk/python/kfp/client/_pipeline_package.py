@@ -86,7 +86,8 @@ def _read(stream):
 
 
 def override_caching(manifest, enable_caching, cache_key=None):
-    """Apply existing run-level cache overrides without mutating a stored version."""
+    """Apply existing run-level cache overrides without mutating a stored
+    version."""
     spec = manifest['spec']
     if manifest['kind'] == 'CronWorkflow':
         spec = spec['workflowSpec']

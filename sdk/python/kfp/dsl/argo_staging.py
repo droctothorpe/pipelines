@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Init-only adapter to Argo's installed artifact downloader (standard library only)."""
+"""Init-only adapter to Argo's installed artifact downloader (standard library
+only)."""
 
 import copy
 import json

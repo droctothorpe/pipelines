@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Validate raw-container scalar outputs using native DAG expressions, not pods."""
+"""Validate raw-container scalar outputs using native DAG expressions, not
+pods."""
 
 import copy
 import json

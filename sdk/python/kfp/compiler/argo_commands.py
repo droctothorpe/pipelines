@@ -9,7 +9,8 @@ from kfp.compiler.argo_structured import expression, literal
 
 
 def arguments(values, bindings, presence):
-    """Return an expression for argv, preserving branch-dependent argument count."""
+    """Return an expression for argv, preserving branch-dependent argument
+    count."""
     pattern = (
         re.compile(
             '|'.join(

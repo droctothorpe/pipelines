@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Artifact-list staging templates and init-only repository credential bindings."""
+"""Artifact-list staging templates and init-only repository credential
+bindings."""
 
 import copy
 import json
@@ -229,7 +230,8 @@ def needs_binding(spec):
 
 
 def bind_repository(spec, repository):
-    """Use Secret references only; never read Secret values or mount them in main."""
+    """Use Secret references only; never read Secret values or mount them in
+    main."""
     repository = {
         k: copy.deepcopy(v) for k, v in repository.items() if k in ('s3', 'gcs')
     }
