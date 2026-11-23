@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Importer declarations remain typed authoring data, never a backend fallback."""
+"""Importer declarations remain typed authoring data, never a backend
+fallback."""
 
 import pytest
 import yaml

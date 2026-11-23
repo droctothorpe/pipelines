@@ -14,7 +14,8 @@ EXECUTOR = 'kfp.dsl.executor_main'
 
 
 def portable_command(command, artifact_previews=True):
-    """Replace SDK executor invocations, leaving install scripts and user code intact."""
+    """Replace SDK executor invocations, leaving install scripts and user code
+    intact."""
     source = Path(argo_runtime.__file__).read_bytes()
     encoded = base64.b64encode(zlib.compress(source)).decode('ascii')
     # Older SDK module loaders assume importlib.util was imported by their entrypoint.

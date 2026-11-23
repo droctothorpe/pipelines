@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Nullable parameter wire values preserve None, empty strings and literal null."""
+"""Nullable parameter wire values preserve None, empty strings and literal
+null."""
 
 import re
 
