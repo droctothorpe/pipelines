@@ -44,3 +44,74 @@ assert score > 0.9
 @dsl.pipeline(name='markdown-viewer-compatibility')
 def markdown_pipeline():
     report()
+
+
+@dsl.component
+def summarize(
+    mlpipeline_ui_metadata: dsl.Output[dsl.Artifact],
+    table: dsl.Output[dsl.Artifact],
+):
+    """Stock's legacy viewer contract: declare viewers in an output artifact
+    named mlpipeline-ui-metadata, with inline sources or this task's own
+    artifact URIs."""
+    import json
+    from pathlib import Path
+
+    Path(table.path).write_text('baseline,0.81\ntuned,0.94\n')
+    Path(mlpipeline_ui_metadata.path).write_text(
+        json.dumps(
+            {
+                'outputs': [
+                    {
+                        'type': 'table',
+                        'format': 'csv',
+                        'header': ['model', 'accuracy'],
+                        'source': table.uri,
+                    },
+                    {
+                        'type': 'confusion_matrix',
+                        'format': 'csv',
+                        'schema': [
+                            {'name': 'target', 'type': 'CATEGORY'},
+                            {'name': 'predicted', 'type': 'CATEGORY'},
+                            {'name': 'count', 'type': 'NUMBER'},
+                        ],
+                        'labels': ['negative', 'positive'],
+                        'storage': 'inline',
+                        'source': 'negative,negative,3\nnegative,positive,1\n'
+                        'positive,negative,1\npositive,positive,5\n',
+                    },
+                    {
+                        'type': 'roc',
+                        'format': 'csv',
+                        'schema': [
+                            {'name': 'fpr', 'type': 'NUMBER'},
+                            {'name': 'tpr', 'type': 'NUMBER'},
+                            {'name': 'thresholds', 'type': 'NUMBER'},
+                        ],
+                        'storage': 'inline',
+                        'source': '0.0,0.0,1.0\n0.1,0.9,0.5\n1.0,1.0,0.0\n',
+                    },
+                    {
+                        'type': 'markdown',
+                        'storage': 'inline',
+                        'source': '## Legacy summary\n\nThe tuned model **wins**.',
+                    },
+                    {
+                        'type': 'web-app',
+                        'storage': 'inline',
+                        'source': '<h1>Legacy web app</h1><script>document.title="x"</script>',
+                    },
+                    {
+                        'type': 'tensorboard',
+                        'source': table.uri.rsplit('/', 1)[0] + '/logs',
+                    },
+                ]
+            }
+        )
+    )
+
+
+@dsl.pipeline(name='legacy-ui-metadata-compatibility')
+def ui_metadata_pipeline():
+    summarize()

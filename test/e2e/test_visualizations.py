@@ -9,6 +9,7 @@ from e2e import support
 from e2e.pipelines.visualizations import (
     classification_pipeline,
     markdown_pipeline,
+    ui_metadata_pipeline,
 )
 
 
@@ -18,8 +19,9 @@ from e2e.pipelines.visualizations import (
     [
         (classification_pipeline, 'evaluate', 'metrics'),
         (markdown_pipeline, 'report', 'document'),
+        (ui_metadata_pipeline, 'summarize', 'mlpipeline_ui_metadata'),
     ],
-    ids=['classification-metrics', 'markdown'],
+    ids=['classification-metrics', 'markdown', 'legacy-ui-metadata'],
 )
 def test_visualization_artifacts_are_recorded(
     client, record, function, task_name, artifact
