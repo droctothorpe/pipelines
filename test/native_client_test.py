@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise the stock Client facade at its native HTTP boundary."""
 
+import copy
 import json
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
@@ -22,10 +23,31 @@ def stock_program(value: str = 'hello'):
     echo(value=value)
 
 
+REPOSITORIES = {
+    'apiVersion': 'v1',
+    'kind': 'ConfigMap',
+    'metadata': {
+        'name': 'artifact-repositories',
+        'namespace': 'team',
+        'uid': 'repositories-uid',
+        'resourceVersion': '1',
+        'annotations': {
+            'workflows.argoproj.io/default-artifact-repository': 'default-v1'
+        },
+    },
+    'data': {
+        'default-v1': 's3:\n  bucket: argo-artifacts\n  endpoint: minio:9000\n',
+        'archive': 's3:\n  bucket: cold-storage\n  endpoint: minio:9000\n',
+        'gcs-exports': 'gcs:\n  bucket: exports\n',
+    },
+}
+
+
 @pytest.fixture
 def native_store():
     return {
-        'maps': {},
+        # Argo's namespace artifact repositories, which runs bind to at submit.
+        'maps': {'artifact-repositories': copy.deepcopy(REPOSITORIES)},
         'workflows': {},
         'archives': {},
         'versions': {},
@@ -261,7 +283,11 @@ def test_unchanged_experiment_lifecycle_and_response_types(native_api):
         client.create_experiment('Training').experiment_id
         == experiment.experiment_id
     )
-    assert len(resources) == 1
+    # One experiment ConfigMap beside the namespace artifact repositories.
+    assert (
+        sum(1 for item in resources.values() if item['metadata'].get('labels'))
+        == 1
+    )
     assert (
         client.get_experiment(experiment_id=experiment.experiment_id).to_dict()
         == experiment.to_dict()
@@ -289,7 +315,7 @@ def test_unchanged_experiment_lifecycle_and_response_types(native_api):
         == 'AVAILABLE'
     )
     assert client.delete_experiment(experiment.experiment_id) == {}
-    assert resources == {}
+    assert set(resources) == {'artifact-repositories'}
     assert all('/apis/v2' not in path for _, path, _ in requests_seen)
 
 
@@ -763,7 +789,9 @@ def test_archive_restore_preserves_run_and_works_after_engine_gc(
     assert client.delete_run(run.run_id) == {}
     assert native_store['archives'] == {}
     assert not any(
-        item['metadata']['labels'].get('pipelines.kubeflow.org/resource')
+        item['metadata']
+        .get('labels', {})
+        .get('pipelines.kubeflow.org/resource')
         == 'run-state'
         for item in native_store['maps'].values()
     )
@@ -967,10 +995,11 @@ def test_public_namespace_context_persistence(native_api):
 
 
 @pytest.mark.parametrize(
-    'root', ['s3://custom-bucket/a/b', 'gs://custom-bucket/a/b']
+    'root, entry',
+    [('s3://cold-storage/a/b', 'archive'), ('gs://exports/a/b', 'gcs-exports')],
 )
 def test_pipeline_root_override_preserves_version_and_user_literals(
-    native_api, native_store, root
+    native_api, native_store, root, entry
 ):
     client, _, _ = native_api
     pipeline = client.upload_pipeline_from_pipeline_func(
@@ -1002,13 +1031,17 @@ def test_pipeline_root_override_preserves_version_and_user_literals(
         workflow['spec']['arguments']['parameters'][0]['value']
         == 's3://argo-artifacts/user-data'
     )
-    driver = 's3' if root.startswith('s3:') else 'gcs'
+    # Artifacts carry keys only; the bucket comes from the repository entry
+    # that serves the root, selected on the run.
     artifacts = [
         artifact
         for template in workflow['spec']['templates']
         for artifact in template.get('outputs', {}).get('artifacts', [])
     ]
-    assert artifacts and all(driver in artifact for artifact in artifacts)
+    assert artifacts and all(
+        set(artifact['s3']) == {'key'} for artifact in artifacts
+    )
+    assert workflow['spec']['artifactRepositoryRef'] == {'key': entry}
     assert (
         json.dumps(
             next(iter(native_store['versions'].values())), sort_keys=True
@@ -1017,11 +1050,62 @@ def test_pipeline_root_override_preserves_version_and_user_literals(
     )
 
 
-def test_decorator_pipeline_root_is_honored(native_api):
+def test_runs_follow_the_namespace_artifact_repository(
+    native_api, native_store
+):
+    """No root anywhere: the run binds to Argo's default entry for the
+    namespace. A root nothing serves is refused before anything is created."""
+    client, _, _ = native_api
+    pipeline = client.upload_pipeline_from_pipeline_func(
+        stock_program, namespace='team'
+    )
+    version = next(iter(native_store['versions'].values()))
+    annotations = version['metadata']['annotations']
+    assert annotations['pipelines.kubeflow.org/artifact-repository'] == ''
+    assert annotations['pipelines.kubeflow.org/artifact-root-binding'] == 'v1'
+    run = client.run_pipeline(
+        None, 'Default root', pipeline_id=pipeline.pipeline_id
+    )
+    workflow = native_store['workflows'][run.run_id]
+    assert (
+        client.get_run(run.run_id).runtime_config.pipeline_root
+        == 's3://argo-artifacts'
+    )
+    assert (
+        workflow['metadata']['annotations'][
+            'pipelines.kubeflow.org/artifact-bucket'
+        ]
+        == 'argo-artifacts'
+    )
+    assert 'artifactRepositoryRef' not in workflow['spec']
+    with pytest.raises(kfp.server_api.exceptions.ApiException) as refused:
+        client.run_pipeline(
+            None,
+            'Nowhere',
+            pipeline_id=pipeline.pipeline_id,
+            pipeline_root='s3://elsewhere/x',
+        )
+    assert refused.value.status == 400
+    assert (
+        's3://elsewhere' in refused.value.reason
+        and 's3://cold-storage' in refused.value.reason
+    )
+    assert len(native_store['workflows']) == 1
+    # Without any repository the namespace cannot run pipelines.
+    del native_store['maps']['artifact-repositories']
+    with pytest.raises(kfp.server_api.exceptions.ApiException) as missing:
+        client.run_pipeline(
+            None, 'No repository', pipeline_id=pipeline.pipeline_id
+        )
+    assert missing.value.status == 400
+    assert 'artifact repository' in missing.value.reason
+
+
+def test_decorator_pipeline_root_is_honored(native_api, native_store):
     client, _, _ = native_api
 
     @dsl.pipeline(
-        name='declared-root', pipeline_root='s3://custom-bucket/declared'
+        name='declared-root', pipeline_root='s3://cold-storage/declared'
     )
     def rooted():
         echo(value='hello')
@@ -1034,8 +1118,11 @@ def test_decorator_pipeline_root_is_honored(native_api):
     )
     assert (
         client.get_run(run.run_id).runtime_config.pipeline_root
-        == 's3://custom-bucket/declared'
+        == 's3://cold-storage/declared'
     )
+    assert native_store['workflows'][run.run_id]['spec'][
+        'artifactRepositoryRef'
+    ] == {'key': 'archive'}
 
 
 def test_stock_cli_experiment_lifecycle_uses_native_http(native_api):

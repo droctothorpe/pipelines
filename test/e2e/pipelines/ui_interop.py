@@ -14,6 +14,8 @@ from uuid import uuid4
 
 from kfp import dsl
 
+from e2e import support
+
 
 @dsl.component
 def echo(value: str) -> str:
@@ -43,6 +45,7 @@ def create(client, namespace):
     finished = client.wait_for_run_completion(run.run_id, timeout=600)
     assert finished.state == 'SUCCEEDED', finished.to_dict()
     return {
+        'artifact_root': support.namespace_root(client, namespace),
         'namespace': namespace,
         'experiment_id': experiment.experiment_id,
         'experiment_name': experiment.display_name,

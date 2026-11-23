@@ -479,3 +479,35 @@ def test_handwritten_workflow_contract(tmp_path, monkeypatch):
             assert float(
                 Path(contract['outputs']['Output']['path']).read_text()
             ) == pytest.approx(2 / 3)
+
+
+def test_bound_root_must_match_where_argo_stores_artifacts(tmp_path):
+    """The run's URIs name the bucket it was bound to; Argo stages the
+    repository it resolved for the pod.
+
+    A mismatch fails before anything runs rather than recording URIs
+    that point nowhere.
+    """
+    template = tmp_path / 'template'
+    contract = {
+        'outputs': {
+            'data': {'uri': 's3://argo-artifacts/{run}/{task}/data'},
+            'count': {'type': 'Integer'},
+        }
+    }
+    argo_runtime.check_archive_location(contract, template)  # outside Argo
+    template.write_text(
+        json.dumps({'archiveLocation': {'s3': {'bucket': 'argo-artifacts'}}})
+    )
+    argo_runtime.check_archive_location(contract, template)
+    assert argo_runtime.archive_root(template) == 's3://argo-artifacts'
+    template.write_text(
+        json.dumps({'archiveLocation': {'gcs': {'bucket': 'exports'}}})
+    )
+    assert argo_runtime.archive_root(template) == 'gs://exports'
+    with pytest.raises(
+        RuntimeError, match='bound to s3://argo-artifacts.*gs://exports'
+    ):
+        argo_runtime.check_archive_location(contract, template)
+    template.write_text('{"archiveLocation": {"plugin": {"name": "x"}}}')
+    argo_runtime.check_archive_location(contract, template)

@@ -58,6 +58,38 @@ def workflow(client, completed):
     )
 
 
+def repository_root(raw):
+    """``scheme://bucket`` of the repository Argo resolved for a workflow."""
+    repository = (
+        (raw.get('status') or {})
+        .get('artifactRepositoryRef', {})
+        .get('artifactRepository', {})
+    )
+    for driver, scheme in (('s3', 's3'), ('gcs', 'gs')):
+        bucket = (repository.get(driver) or {}).get('bucket')
+        if bucket:
+            return f'{scheme}://{bucket}'
+    return None
+
+
+def namespace_root(client, namespace):
+    """The root the namespace's default Argo artifact repository serves."""
+    import yaml
+
+    config = client._run_api.transport.request(
+        'GET',
+        f'/kubernetes/api/v1/namespaces/{namespace}/configmaps/artifact-repositories',
+    )
+    key = config['metadata']['annotations'][
+        'workflows.argoproj.io/default-artifact-repository'
+    ]
+    repository = yaml.safe_load(config['data'][key])
+    for driver, scheme in (('s3', 's3'), ('gcs', 'gs')):
+        if repository.get(driver, {}).get('bucket'):
+            return f'{scheme}://{repository[driver]["bucket"]}'
+    raise AssertionError(f'No S3/GCS default repository in {namespace}')
+
+
 def nodes(raw):
     return list((raw.get('status') or {}).get('nodes', {}).values())
 

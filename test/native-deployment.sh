@@ -78,6 +78,12 @@ done
 kubectl --context "$context" create namespace "$tenant"
 uv run python samples/argo-native/deploy.py --namespace "$namespace" --tenant "$tenant" | kubectl --context "$context" apply --server-side -f -
 kubectl --context "$context" apply -f test/e2e/multi-user-roles.yaml
+# The tenant keeps its own bucket: Argo's repository chain is the namespace
+# storage policy, and runs there must land in it.
+kubectl --context "$context" -n "$namespace" exec deploy/minio -- mkdir -p "/data/$tenant"
+kubectl --context "$context" -n "$tenant" get configmap artifact-repositories -o json \
+  | sed "s/bucket: argo-artifacts/bucket: $tenant/g" \
+  | kubectl --context "$context" -n "$tenant" apply --server-side --force-conflicts -f -
 forward
 KFP_TEST_HOST="http://127.0.0.1:$port" KFP_TEST_NAMESPACE="$namespace" KFP_TEST_TOKEN=gateway KFP_TEST_TENANT="$tenant" \
   KFP_TEST_IMAGE="$image" \

@@ -33,11 +33,17 @@ class Compiler:
     applying them. Image digests identify locally built images for cache
     correctness without requiring registry access during offline
     compilation.
+
+    Compiled artifacts carry keys only. Without ``artifact_repository``
+    they land in the Argo artifact repository configured for the run's
+    namespace, bound when the run is submitted; an explicit
+    ``s3://bucket[/prefix]`` or ``gs://bucket[/prefix]`` must be served by
+    one of that namespace's repository entries.
     """
 
     def __init__(
         self,
-        artifact_repository: str = 's3://argo-artifacts',
+        artifact_repository: Optional[str] = None,
         service_account_name: str = 'argo-workflow',
         cache_config_map: str = 'kfp-cache',
         image_digests: Optional[Dict[str, str]] = None,

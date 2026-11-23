@@ -1282,3 +1282,46 @@ def test_versions_are_content_addressed(tmp_path):
         names.append(yaml.safe_load(path.read_text())['metadata']['name'])
     assert names[0] == names[1]
     assert names[1] != names[2]
+
+
+def test_artifacts_carry_keys_only_and_follow_the_namespace_repository(
+    tmp_path,
+):
+    """Without a compile-time root, packages name no bucket: Argo places key-
+    only artifacts in the repository it resolves for the run's namespace, and
+    the submitter binds that bucket into the run.
+
+    An explicit root is recorded for the submitter to honour.
+    """
+    from kfp.compiler import argo_artifacts
+
+    @dsl.pipeline(name='placed-by-argo')
+    def pipeline(value: int = 1):
+        identity(value=value)
+
+    path = tmp_path / 'default.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    manifest = yaml.safe_load(path.read_text())
+    annotations = manifest['metadata']['annotations']
+    assert annotations[argo_artifacts.BINDING] == 'v1'
+    assert annotations[argo_artifacts.ROOT] == ''
+    assert annotations[argo_artifacts.BUCKET] == ''
+    artifacts = [
+        artifact
+        for template in manifest['spec']['templates']
+        for artifact in template.get('outputs', {}).get('artifacts', [])
+    ]
+    assert artifacts
+    for artifact in artifacts:
+        assert set(artifact['s3']) == {'key'}, artifact
+        assert artifact['s3']['key'].startswith(
+            '{{workflow.annotations.' + argo_artifacts.PREFIX + '}}'
+        )
+    path = tmp_path / 'explicit.yaml'
+    compiler.Compiler(artifact_repository='gs://exports/team').compile(
+        pipeline, str(path)
+    )
+    annotations = yaml.safe_load(path.read_text())['metadata']['annotations']
+    assert annotations[argo_artifacts.ROOT] == 'gs://exports/team'
+    assert annotations[argo_artifacts.BUCKET] == 'exports'
+    assert annotations[argo_artifacts.PREFIX] == 'team/'

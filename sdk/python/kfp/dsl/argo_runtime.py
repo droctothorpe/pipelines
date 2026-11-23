@@ -24,7 +24,7 @@ import sys
 from contextlib import nullcontext
 from functools import wraps
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from kfp.dsl.executor import Executor
 
@@ -211,6 +211,45 @@ class _StagedExecutor(Executor):
         return artifact
 
 
+ARGO_TEMPLATE = Path('/var/run/argo/template')
+ARCHIVE_SCHEMES = {'s3': 's3', 'gcs': 'gs'}
+
+
+def archive_root(template_path: Path = ARGO_TEMPLATE) -> Optional[str]:
+    """``scheme://bucket`` of the repository Argo resolved for this pod, from
+    the template it stages into the pod; None outside Argo."""
+    try:
+        template = json.loads(template_path.read_text())
+    except (OSError, ValueError):
+        return None
+    location = template.get('archiveLocation') or {}
+    for driver, scheme in ARCHIVE_SCHEMES.items():
+        bucket = (location.get(driver) or {}).get('bucket')
+        if bucket:
+            return f'{scheme}://{bucket}'
+    return None
+
+
+def check_archive_location(contract: dict, template_path: Path = ARGO_TEMPLATE):
+    """Output URIs name the bucket the run was bound to; Argo stores into the
+    namespace repository.
+
+    A stale or hand-submitted binding must fail loudly rather than
+    record URIs that point nowhere.
+    """
+    actual = archive_root(template_path)
+    if not actual:
+        return
+    for name, port in contract.get('outputs', {}).items():
+        uri = port.get('uri')
+        if uri and not uri.startswith(actual + '/'):
+            raise RuntimeError(
+                f'Output {name!r} is bound to {uri.split("/{run}")[0]} but Argo stores '
+                f'artifacts for this namespace in {actual}. Submit the run through '
+                'the KFP client or UI so the artifact root follows the namespace repository.'
+            )
+
+
 def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
     """Invoke an unchanged KFP function against Argo input/output declarations.
 
@@ -224,6 +263,7 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
         raise ValueError(
             f'Unsupported Argo runtime contract; expected {SCHEMA}.'
         )
+    check_archive_location(contract)
     values = {entry['name']: entry['value'] for entry in parameters}
     inputs = {'parameterValues': {}, 'artifacts': {}}
     references = []

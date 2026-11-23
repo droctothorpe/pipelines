@@ -24,11 +24,25 @@ const version: NativeResource = {
   },
   spec: {},
 };
+// The namespace's Argo artifact repositories, which runs bind to at submit.
+const repositories = {
+  metadata: { annotations: { 'workflows.argoproj.io/default-artifact-repository': 'default' } },
+  data: {
+    default: 's3:\n  bucket: argo-artifacts\n  endpoint: minio:9000\n',
+    archive: 's3:\n  bucket: new-bucket\n  endpoint: minio:9000\n',
+    exports: 'gcs:\n  bucket: new-bucket\n',
+  },
+};
 const mock = () =>
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => new Response('{}')),
+    vi.fn(async (url: string) =>
+      String(url).endsWith('/configmaps/artifact-repositories')
+        ? new Response(JSON.stringify(repositories))
+        : new Response('{}'),
+    ),
   );
+const submission = () => vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === 'POST')!;
 afterEach(() => {
   vi.unstubAllGlobals();
   setArgoToken('');
@@ -58,54 +72,77 @@ it('rejects manifests targeting another namespace', async () => {
 it('submits native workflows with version and experiment labels', async () => {
   mock();
   setArgoToken('test-namespace-token');
-  await submitRun('team', version, { factor: '1.2' }, 'experiment-a');
-  const [url, options] = vi.mocked(fetch).mock.calls[0];
+  const bound = structuredClone(version);
+  bound.metadata.annotations = { 'pipelines.kubeflow.org/artifact-root-binding': 'v1' };
+  await submitRun('team', bound, { factor: '1.2' }, 'experiment-a');
+  const [url, options] = submission();
   expect(url).toBe('/argo/api/v1/workflows/team');
   expect(options?.headers).toMatchObject({ Authorization: 'Bearer test-namespace-token' });
   const body = JSON.parse(options?.body as string);
   expect(body.workflow.spec.workflowTemplateRef.name).toBe(version.metadata.name);
   expect(body.workflow.metadata.labels['pipelines.kubeflow.org/experiment']).toBe('experiment-a');
+  // No root anywhere: the run follows the namespace's default repository.
+  expect(body.workflow.metadata.annotations['pipelines.kubeflow.org/pipeline-root']).toBe(
+    's3://argo-artifacts',
+  );
+  expect(body.workflow.metadata.annotations['pipelines.kubeflow.org/artifact-bucket']).toBe(
+    'argo-artifacts',
+  );
+  expect(body.workflow.spec.artifactRepositoryRef).toBeUndefined();
+  // A hand-written template without bindings is submitted as it is.
+  vi.mocked(fetch).mockClear();
+  await submitRun('team', version, {}, 'experiment-a');
+  const plain = JSON.parse(submission()[1]?.body as string).workflow;
+  expect(plain.metadata.annotations['pipelines.kubeflow.org/pipeline-root']).toBeUndefined();
 });
 
-it.each(['s3://new-bucket/a/b', 'gs://new-bucket/a/b'])(
-  'applies a custom pipeline root without changing the version: %s',
-  async (root) => {
-    mock();
-    const compiled = structuredClone(version);
-    compiled.metadata.annotations = {
-      'pipelines.kubeflow.org/artifact-root-binding': 'v1',
-      'pipelines.kubeflow.org/artifact-repository': 's3://old-bucket',
-    };
-    compiled.spec = {
-      entrypoint: 'root',
-      templates: [
-        {
-          name: 'root',
-          outputs: {
-            artifacts: [
-              {
-                name: 'data',
-                s3: {
-                  bucket: '{{workflow.annotations.pipelines.kubeflow.org/artifact-bucket}}',
-                  key: '{{workflow.annotations.pipelines.kubeflow.org/artifact-key-prefix}}data',
-                },
+it('refuses a root no namespace repository serves, before submitting anything', async () => {
+  mock();
+  await expect(
+    submitRun('team', version, {}, '', 'Nowhere', '', '', 's3://elsewhere/x'),
+  ).rejects.toThrow('No artifact repository in this namespace serves s3://elsewhere');
+  expect(vi.mocked(fetch).mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(true);
+});
+
+it.each([
+  ['s3://new-bucket/a/b', 'archive'],
+  ['gs://new-bucket/a/b', 'exports'],
+])('applies a custom pipeline root without changing the version: %s', async (root, entry) => {
+  mock();
+  const compiled = structuredClone(version);
+  compiled.metadata.annotations = {
+    'pipelines.kubeflow.org/artifact-root-binding': 'v1',
+    'pipelines.kubeflow.org/artifact-repository': 's3://old-bucket',
+  };
+  compiled.spec = {
+    entrypoint: 'root',
+    templates: [
+      {
+        name: 'root',
+        outputs: {
+          artifacts: [
+            {
+              name: 'data',
+              s3: {
+                key: '{{workflow.annotations.pipelines.kubeflow.org/artifact-key-prefix}}data',
               },
-            ],
-          },
+            },
+          ],
         },
-      ],
-    };
-    const before = JSON.stringify(compiled);
-    await submitRun('team', compiled, {}, '', 'Custom root', '', '', root);
-    const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string).workflow;
-    expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-repository']).toBe(root);
-    expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-bucket']).toBe('new-bucket');
-    expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-key-prefix']).toBe('a/b/');
-    if (root.startsWith('gs:'))
-      expect(body.spec.templates[0].outputs.artifacts[0].gcs).toBeDefined();
-    expect(JSON.stringify(compiled)).toBe(before);
-  },
-);
+      },
+    ],
+  };
+  const before = JSON.stringify(compiled);
+  await submitRun('team', compiled, {}, '', 'Custom root', '', '', root);
+  const body = JSON.parse(submission()[1]?.body as string).workflow;
+  expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-repository']).toBe(root);
+  expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-bucket']).toBe('new-bucket');
+  expect(body.metadata.annotations['pipelines.kubeflow.org/artifact-key-prefix']).toBe('a/b/');
+  // The entry serving the root is selected; artifacts stay key-only.
+  expect(body.spec.artifactRepositoryRef).toEqual({ key: entry });
+  expect(body.spec.workflowTemplateRef.name).toBe(version.metadata.name);
+  expect(JSON.stringify(compiled)).toBe(before);
+});
 
 it('deletes only the experiment ConfigMap, using its UID precondition', async () => {
   mock();

@@ -21,7 +21,8 @@ test(
       await go(page, `/runs/new?pipelineVersionId=${f.version_id}&experimentId=${f.experiment_id}`);
       await page.getByLabel('Run name', { exact: false }).fill(`UI custom root ${f.run_id}`);
       await page.getByLabel('Custom Pipeline Root', { exact: true }).check();
-      const customRoot = `s3://argo-artifacts/ui-root-${f.run_id}`;
+      // A prefix inside the bucket the namespace repository serves.
+      const customRoot = `${f.artifact_root}/ui-root-${f.run_id}`;
       await page.getByRole('textbox', { name: /^Pipeline Root/ }).fill(customRoot);
       await page.getByLabel('value', { exact: true }).fill(`UI root ${f.run_id}`);
       const submission = page.waitForResponse(
@@ -125,13 +126,11 @@ test(
           ],
         },
       };
-      await page
-        .locator('input[type=file]')
-        .setInputFiles({
-          name: 'pipeline.yaml',
-          mimeType: 'application/yaml',
-          buffer: Buffer.from(JSON.stringify(packageData)),
-        });
+      await page.locator('input[type=file]').setInputFiles({
+        name: 'pipeline.yaml',
+        mimeType: 'application/yaml',
+        buffer: Buffer.from(JSON.stringify(packageData)),
+      });
       await page.getByRole('button', { name: 'Create', exact: true }).click();
       await page.waitForURL(/#\/pipelines\/details\//);
       assert.ok(

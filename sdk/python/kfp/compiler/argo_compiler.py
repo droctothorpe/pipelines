@@ -15,7 +15,6 @@ from pathlib import Path
 import kfp
 from kfp.compiler import argo_continuation, argo_parameters
 from kfp.compiler.argo_artifacts import (
-    BUCKET,
     PREFIX,
     ROOT,
     reference,
@@ -117,10 +116,6 @@ class _Compiler:
         self.graph_context = (None, None)
         self.staged_graph_inputs = set()
         self.root_annotations = root_annotations(options.artifact_repository)
-        self.driver = (
-            's3' if options.artifact_repository.startswith('s3:') else 'gcs'
-        )
-        self.bucket = reference(BUCKET)
         self.prefix = reference(PREFIX)
         self.uri = reference(ROOT)
 
@@ -770,14 +765,14 @@ class _Compiler:
                             'name': name,
                             'path': path,
                             'archive': {'none': {}},
-                            self.driver: {'bucket': self.bucket, 'key': key},
+                            # Key only: Argo places it in the namespace repository.
+                            's3': {'key': key},
                         },
                         {
                             'name': name + '-metadata',
                             'path': declaration['metadataPath'],
                             'archive': {'none': {}},
-                            self.driver: {
-                                'bucket': self.bucket,
+                            's3': {
                                 'key': self.prefix
                                 + '/'.join(
                                     [
@@ -837,8 +832,7 @@ class _Compiler:
                     'name': 'kfp-metadata',
                     'path': '/tmp/kfp/outputs/metadata.json',
                     'archive': {'none': {}},
-                    self.driver: {
-                        'bucket': self.bucket,
+                    's3': {
                         'key': self.prefix
                         + '{{workflow.uid}}/{{pod.name}}/kfp-metadata.json',
                     },
@@ -852,7 +846,7 @@ class _Compiler:
                             for item in outputs['artifacts']
                             if item['name'] == name
                         )
-                        location = dict(original[self.driver])
+                        location = dict(original['s3'])
                         location['key'] += '.kfp-preview.json'
                         outputs['artifacts'].append(
                             {
@@ -860,7 +854,7 @@ class _Compiler:
                                 'path': port['path'] + '.kfp-preview.json',
                                 'optional': True,
                                 'archive': {'none': {}},
-                                self.driver: location,
+                                's3': location,
                             }
                         )
                     outputs['parameters'].append(
@@ -1111,8 +1105,7 @@ class _Compiler:
                 metadata_location=None
                 if python
                 else {
-                    self.driver: {
-                        'bucket': self.bucket,
+                    's3': {
                         'key': self.prefix
                         + '{{workflow.uid}}/{{pod.name}}/kfp-metadata.json',
                     }
