@@ -60,6 +60,7 @@ workflow, pods or artifacts. Point it at a cluster and pick a tier:
 kubectl --context orbstack -n kfp-argo port-forward svc/kfp-argo-ui 3003:80 &
 export KFP_TEST_HOST=http://127.0.0.1:3003 KFP_TEST_NAMESPACE=kfp-argo
 export KFP_TEST_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=2h)"
+export KFP_TEST_CONTEXT=orbstack KFP_TEST_ARGO_SERVER=https://127.0.0.1:2746  # direct-Kubernetes client tests; port-forward svc/argo-server
 uv run python -m pytest test/e2e -m 'not prerequisite' -n 4 --dist loadfile -p no:randomly  # what CI runs
 uv run python -m pytest test/e2e -m smoke -p no:randomly                  # quick local check, ~10 min
 uv run python -m pytest test/e2e -p no:randomly -k samples                # the stock sample corpus only

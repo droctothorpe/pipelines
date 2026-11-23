@@ -383,11 +383,13 @@ service-account credentials and preserves refresh hooks. An explicit
 certificate. Reader-token authorization was verified without an admin fallback.
 
 No authentication bridge is introduced just to preserve the old connection path.
-Engine-only archive/artifact APIs still require access to an authenticated Argo
-endpoint. The full-history `list_runs` merge currently also accesses that endpoint;
-separating Kubernetes-only inventory is unfinished adapter work, not a fundamental
-limitation of certificate authentication. The UI/proxy `host=...` connection remains
-available for those engine-specific operations.
+Engine-only routes, meaning the archive, go to Argo Server itself with the same
+Kubernetes token (`Client(argo_server=...)`, the Argo CLI's `ARGO_SERVER` family,
+or the in-cluster `argo-server` Service); Argo Server's client auth mode accepts it
+directly, so the UI proxy is not part of the SDK path. A certificate-only
+kubeconfig has no token Argo Server can use and may set `ARGO_TOKEN`; without any
+address outside a cluster, listings warn once and cover live runs. The UI/proxy
+`host=...` connection remains available for people without a kubeconfig.
 
 Reproducer: `test/e2e/test_kube_context.py --context orbstack
 --namespace kfp-argo --run`, or add `--service-account-token` with `KFP_TEST_TOKEN`.

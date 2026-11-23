@@ -120,6 +120,13 @@ class Client:
         ui_host: Base URL to use to open the Kubeflow Pipelines UI. This is used
             when running the client from a notebook to generate and print links.
         verify_ssl: Whether to verify the server's TLS certificate.
+        argo_server: Argo Server address for the archive when authenticating
+            directly against Kubernetes (``kube_context`` or in-cluster
+            credentials); every other request goes to the Kubernetes API.
+            Defaults to the Argo CLI's ``ARGO_SERVER`` (with ``ARGO_SECURE`` and
+            ``ARGO_BASE_HREF``), then to ``argo-server.<namespace>:2746`` inside
+            a cluster. ``ARGO_INSECURE_SKIP_VERIFY`` disables its TLS check.
+            Ignored when ``host`` names a native endpoint.
         healthz_max_attempts: Maximum number of attempts for the health check
             that runs during initialization when no namespace is set in the
             local context. Set it to 1 to fail fast when the backend is
@@ -128,6 +135,7 @@ class Client:
 
     # in-cluster DNS name of the pipeline service
     _IN_CLUSTER_DNS_NAME = 'http://kfp-argo-ui.{}.svc.cluster.local:80'
+    _ARGO_SERVER_DNS_NAME = 'https://argo-server.{}.svc.cluster.local:2746'
     _KUBE_PROXY_PATH = 'api/v1/namespaces/{}/services/kfp-argo-ui:80/proxy/'
 
     # Auto populated path in pods
@@ -154,6 +162,7 @@ class Client:
         ui_host: Optional[str] = None,
         verify_ssl: Optional[bool] = None,
         healthz_max_attempts: int = 5,
+        argo_server: Optional[str] = None,
     ) -> None:
         """Create a new instance of kfp client."""
         _validate_max_attempts(healthz_max_attempts, 'healthz_max_attempts')
@@ -182,6 +191,7 @@ class Client:
             kube_context,
             credentials,
             verify_ssl,
+            argo_server,
         )
         # Save the loaded API client configuration, as a reference if update is
         # needed.
@@ -248,6 +258,7 @@ class Client:
         kube_context: Optional[str],
         credentials: Optional[TokenCredentialsBase],
         verify_ssl: Optional[bool],
+        argo_server: Optional[str] = None,
     ) -> kfp.server_api.Configuration:
         config = kfp.server_api.Configuration()
         self._uses_gcp_credentials = False
@@ -355,6 +366,14 @@ class Client:
                 return config
 
         config._native_kubernetes_host = config.host.rstrip('/')
+        # Engine-only routes (the archive) go straight to Argo Server, which
+        # accepts the same Kubernetes token; nothing else needs the proxy.
+        config._native_argo_server = self._argo_server_endpoint(
+            argo_server, in_cluster, namespace or 'kubeflow'
+        )
+        config._native_argo_verify = verify_ssl is not False and os.environ.get(
+            'ARGO_INSECURE_SKIP_VERIFY', ''
+        ).lower() not in ('true', '1', 'yes')
         if verify_ssl is not None:
             config.verify_ssl = verify_ssl
         if ssl_ca_cert:
@@ -399,6 +418,33 @@ class Client:
                 + Client._KUBE_PROXY_PATH.format(namespace or 'kubeflow')
             )
         return config
+
+    @staticmethod
+    def _argo_server_endpoint(
+        argo_server: Optional[str], in_cluster: bool, namespace: str
+    ) -> Optional[str]:
+        """Resolve Argo Server the way the Argo CLI does: an explicit address,
+        else ``ARGO_SERVER`` with ``ARGO_SECURE`` and ``ARGO_BASE_HREF``, else
+        the in-cluster Service. Outside a cluster with no address, the archive
+        stays unreachable and listings say so."""
+        base = ''
+        if not argo_server:
+            argo_server = os.environ.get('ARGO_SERVER', '')
+            if argo_server:
+                base = os.environ.get('ARGO_BASE_HREF', '').strip('/')
+            elif in_cluster:
+                argo_server = Client._ARGO_SERVER_DNS_NAME.format(namespace)
+            else:
+                return None
+        if '://' not in argo_server:
+            secure = os.environ.get('ARGO_SECURE', 'true').lower() not in (
+                'false',
+                '0',
+                'no',
+            )
+            argo_server = ('https://' if secure else 'http://') + argo_server
+        argo_server = argo_server.rstrip('/')
+        return argo_server + '/' + base if base else argo_server
 
     def _is_inverse_proxy_host(self, host: str) -> bool:
         # This check authorizes automatic disclosure of Google credentials.

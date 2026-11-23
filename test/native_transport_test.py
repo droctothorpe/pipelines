@@ -201,3 +201,114 @@ def test_basic_credentials_and_refreshed_bearer_precedence(monkeypatch):
         recorded[-1]['headers']['Authorization']
         == 'Bearer refreshed-test-token'
     )
+
+
+def test_direct_path_sends_engine_only_routes_to_argo_server(monkeypatch):
+    """The archive lives behind Argo Server; a kubeconfig client reaches it
+    there with its own token instead of needing the UI proxy."""
+    recorded = record_requests(monkeypatch)
+    monkeypatch.delenv('ARGO_TOKEN', raising=False)
+    configuration = Configuration(host='https://kube.invalid/proxy')
+    configuration._native_kubernetes_host = 'https://kube.invalid'
+    configuration._native_argo_server = 'https://argo.invalid/base'
+    configuration._native_argo_verify = False
+    configuration.ssl_ca_cert = '/kube/ca.crt'
+    configuration.cert_file = '/kube/client.crt'
+    configuration.api_key['authorization'] = 'sa-token'
+    configuration.api_key_prefix['authorization'] = 'Bearer'
+    transport = NativeTransport(configuration)
+    transport.request(
+        'GET',
+        '/argo/api/v1/archived-workflows/uid-1',
+        params={'namespace': 'team'},
+    )
+    assert recorded[-1]['url'] == (
+        'https://argo.invalid/base/api/v1/archived-workflows/uid-1'
+    )
+    assert recorded[-1]['headers']['Authorization'] == 'Bearer sa-token'
+    assert recorded[-1]['verify'] is False
+    assert recorded[-1]['cert'] is None
+    # Everything Kubernetes can serve still goes to Kubernetes.
+    transport.request('GET', '/argo/api/v1/workflows/team/run-1')
+    assert recorded[-1]['url'] == (
+        'https://kube.invalid/apis/argoproj.io/v1alpha1/namespaces/team/workflows/run-1'
+    )
+    assert recorded[-1]['verify'] == '/kube/ca.crt'
+    # A certificate-only kubeconfig may borrow the Argo CLI's token for Argo.
+    configuration.api_key.clear()
+    monkeypatch.setenv('ARGO_TOKEN', 'Bearer argo-cli-token')
+    transport.request('GET', '/argo/api/v1/archived-workflows')
+    assert recorded[-1]['headers']['Authorization'] == 'Bearer argo-cli-token'
+    transport.request('GET', '/kubernetes/api/v1/namespaces/team/pods')
+    assert 'Authorization' not in recorded[-1]['headers']
+
+
+def _direct_client(monkeypatch, tmp_path, in_cluster, **kwargs):
+    monkeypatch.setattr(
+        kfp.Client, '_LOCAL_KFP_CONTEXT', str(tmp_path / 'context.json')
+    )
+    monkeypatch.delenv('KF_PIPELINES_ENDPOINT', raising=False)
+
+    def load_incluster(client_configuration):
+        if not in_cluster:
+            raise kubernetes.config.ConfigException('outside cluster')
+        client_configuration.host = 'https://kubernetes.default.svc'
+        client_configuration.api_key['BearerToken'] = 'Bearer pod'
+
+    def load_kube(client_configuration, context):
+        client_configuration.host = 'https://kube.invalid'
+        client_configuration.cert_file = '/kube/client.crt'
+
+    monkeypatch.setattr(
+        kubernetes.config, 'load_incluster_config', load_incluster
+    )
+    monkeypatch.setattr(kubernetes.config, 'load_kube_config', load_kube)
+    return kfp.Client(namespace='team', **kwargs)
+
+
+def test_client_resolves_argo_server_like_the_argo_cli(monkeypatch, tmp_path):
+    record_requests(monkeypatch)
+    for name in (
+        'ARGO_SERVER',
+        'ARGO_SECURE',
+        'ARGO_BASE_HREF',
+        'ARGO_INSECURE_SKIP_VERIFY',
+    ):
+        monkeypatch.delenv(name, raising=False)
+    # Outside a cluster with no address the archive stays unreachable.
+    config = _direct_client(
+        monkeypatch, tmp_path, False, kube_context='c'
+    )._existing_config
+    assert config._native_argo_server is None
+    # In a cluster the Service in the client's namespace is the default.
+    config = _direct_client(monkeypatch, tmp_path, True)._existing_config
+    assert (
+        config._native_argo_server
+        == 'https://argo-server.team.svc.cluster.local:2746'
+    )
+    assert config._native_argo_verify is True
+    # The Argo CLI's variables are honoured, including a proxy base path.
+    monkeypatch.setenv('ARGO_SERVER', '127.0.0.1:2746')
+    monkeypatch.setenv('ARGO_SECURE', 'false')
+    monkeypatch.setenv('ARGO_BASE_HREF', '/argo')
+    monkeypatch.setenv('ARGO_INSECURE_SKIP_VERIFY', 'true')
+    config = _direct_client(
+        monkeypatch, tmp_path, False, kube_context='c'
+    )._existing_config
+    assert config._native_argo_server == 'http://127.0.0.1:2746/argo'
+    assert config._native_argo_verify is False
+    # An explicit address is used as given, without the environment's base path.
+    config = _direct_client(
+        monkeypatch,
+        tmp_path,
+        False,
+        kube_context='c',
+        argo_server='https://argo.example:2746/',
+    )._existing_config
+    assert config._native_argo_server == 'https://argo.example:2746'
+    # A native endpoint never uses it.
+    monkeypatch.setattr(kfp.Client, '_LOCAL_KFP_CONTEXT', str(tmp_path / 'x'))
+    config = kfp.Client(
+        host='https://proxy.example', existing_token='t', argo_server='x'
+    )._existing_config
+    assert getattr(config, '_native_argo_server', None) is None

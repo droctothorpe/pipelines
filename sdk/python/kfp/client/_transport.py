@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Authenticated native resource transport behind the public SDK facade."""
 
+import os
 import re
 from urllib.parse import urlsplit
 
@@ -18,6 +19,8 @@ class NativeTransport:
         self.kubernetes_host = getattr(
             configuration, '_native_kubernetes_host', None
         )
+        self.argo_server = getattr(configuration, '_native_argo_server', None)
+        self.argo_verify = getattr(configuration, '_native_argo_verify', True)
         self.session = requests.Session()
         # The Client's explicit configuration owns auth/proxy/TLS; ambient .netrc
         # credentials must not replace its bearer token.
@@ -45,6 +48,7 @@ class NativeTransport:
             )
         configuration = self.configuration
         url = configuration.host.rstrip('/') + path
+        argo = False
         if self.kubernetes_host:
             if path.startswith('/kubernetes/'):
                 url = self.kubernetes_host.rstrip('/') + path.removeprefix(
@@ -79,19 +83,29 @@ class NativeTransport:
                             key.removeprefix('listOptions.'): value
                             for key, value in params.items()
                         }
+                elif self.argo_server:
+                    # Engine-only routes (the archive) go to Argo Server itself.
+                    url = self.argo_server + path.removeprefix('/argo')
+                    argo = True
         authorization = configuration.get_api_key_with_prefix('authorization')
         headers = {'Accept': accept}
         if authorization:
             headers['Authorization'] = authorization
         elif configuration.username is not None:
             headers['Authorization'] = configuration.get_basic_auth_token()
+        elif argo and os.environ.get('ARGO_TOKEN'):
+            # A certificate kubeconfig carries no token Argo Server can use;
+            # the Argo CLI's own token variable fills that gap and nothing else.
+            headers['Authorization'] = os.environ['ARGO_TOKEN']
         verify = (
             (configuration.ssl_ca_cert or True)
             if configuration.verify_ssl
             else False
         )
+        if argo:
+            verify = self.argo_verify
         cert = None
-        if configuration.cert_file:
+        if configuration.cert_file and not argo:
             cert = (
                 (configuration.cert_file, configuration.key_file)
                 if configuration.key_file
