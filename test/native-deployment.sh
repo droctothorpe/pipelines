@@ -42,6 +42,9 @@ forward() {
   done
 }
 forward
+# Argo Server itself, for the direct-Kubernetes client's archive reads.
+argo_port=$((port + 1))
+kubectl --context "$context" -n "$namespace" port-forward svc/argo-server "$argo_port:2746" > /tmp/native-argo-port-forward.log 2>&1 &
 export ARGO_EDITOR_TOKEN ARGO_READER_TOKEN
 ARGO_EDITOR_TOKEN=$(kubectl --context "$context" -n "$namespace" create token argo-ui-editor --duration=2h)
 ARGO_READER_TOKEN=$(kubectl --context "$context" -n "$namespace" create token argo-ui-reader --duration=2h)
@@ -54,7 +57,7 @@ export ARGO_TOKEN="Bearer $ARGO_EDITOR_TOKEN"
 # need hardware or credentials, in parallel, with the content-addressed demo
 # image so pods carry this SDK instead of installing it.
 KFP_TEST_HOST="http://127.0.0.1:$port" KFP_TEST_NAMESPACE="$namespace" KFP_TEST_TOKEN="$ARGO_EDITOR_TOKEN" \
-  KFP_TEST_IMAGE="$image" \
+  KFP_TEST_IMAGE="$image" KFP_TEST_CONTEXT="$context" KFP_TEST_ARGO_SERVER="https://127.0.0.1:$argo_port" \
   uv run python -m pytest test/e2e -m 'not prerequisite' -n "${KFP_TEST_WORKERS:-4}" --dist loadfile \
   -p no:randomly --e2e-output /tmp/kfp-e2e -q
 export ARGO_CONTEXT="$context" ARGO_NAMESPACE="$namespace"

@@ -16,7 +16,8 @@ that need no deployment.
 
 Optional settings: ``KFP_TEST_IMAGE`` (a prebuilt image carrying this SDK, used
 by components that would otherwise install KFP from PyPI), ``KFP_TEST_CONTEXT``
-(a kubeconfig context for the direct-Kubernetes authentication test),
+(a kubeconfig context for the direct-Kubernetes authentication test, and
+KFP_TEST_ARGO_SERVER for its archive reads straight from Argo Server),
 ``KFP_TEST_ARTIFACT_ROOT`` (an alternative object-store root), and
 ``--e2e-output`` (where the JSON report and compiled manifests are written).
 """
@@ -45,6 +46,7 @@ class Settings:
     output: Path
     image: str | None
     context: str | None
+    argo_server: str | None
     artifact_root: str
 
 
@@ -116,6 +118,7 @@ def settings(request):
         output=output,
         image=os.environ.get('KFP_TEST_IMAGE') or None,
         context=os.environ.get('KFP_TEST_CONTEXT') or None,
+        argo_server=os.environ.get('KFP_TEST_ARGO_SERVER') or None,
         artifact_root=os.environ.get(
             'KFP_TEST_ARTIFACT_ROOT', 's3://argo-artifacts'
         ).rstrip('/'),

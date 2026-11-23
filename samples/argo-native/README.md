@@ -66,6 +66,20 @@ login field. On macOS, copy it without printing it:
 kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=2h | pbcopy
 ```
 
+The SDK does not need this proxy. With a kubeconfig or in-cluster credentials it
+talks to the Kubernetes API directly and reads the archive from Argo Server with
+the same token:
+
+```sh
+kubectl --context orbstack -n kfp-argo port-forward svc/argo-server 2746:2746 &
+ARGO_INSECURE_SKIP_VERIFY=true python -c "import kfp; print(kfp.Client(kube_context='orbstack', namespace='kfp-argo', argo_server='https://127.0.0.1:2746').list_runs().total_size)"
+```
+
+Inside a cluster `argo-server.<namespace>:2746` is the default; the Argo CLI's
+`ARGO_SERVER`, `ARGO_SECURE`, `ARGO_BASE_HREF` and `ARGO_TOKEN` are honoured.
+`kfp.Client(host=..., existing_token=...)` through the proxy remains for people
+without a kubeconfig.
+
 Use `argo-ui-reader` instead to test denied mutations. These are namespace roles,
 not cluster-admin credentials. Tokens are cleared when the UI reloads. Restart a
 port-forward after its target pod is replaced; a stale forward can keep its port
@@ -140,10 +154,13 @@ What changes:
   (the `iframe-connected`/`namespace-selected` protocol of the dashboard's client
   library) and hides its own side navigation when embedded. Opened directly, it
   asks for a namespace, and `?namespace=` still wins.
-- The SDK goes through the same gateway: `kfp.Client(host='https://<kubeflow>/pipeline',
-  existing_token=<token the gateway accepts>)`. With Kubeflow's machine-to-machine
+- The SDK can go through the same gateway, `kfp.Client(host='https://<kubeflow>/pipeline',
+  existing_token=<token the gateway accepts>)`; with Kubeflow's machine-to-machine
   setup a Kubernetes service-account token works and the user becomes
-  `system:serviceaccount:<ns>:<name>`.
+  `system:serviceaccount:<ns>:<name>`. From a notebook the gateway is unnecessary:
+  the pod's service account reaches the Kubernetes API directly and Argo Server
+  for the archive, with `ARGO_SERVER=argo-server.<platform namespace>:2746`
+  since Argo runs outside the profile namespace.
 
 The proxy publishes `{"authMode":"multi-user","namespace":""}` at `/config.json`.
 `test/e2e/test_multi_user.py` and `frontend/e2e/multi-user.test.mjs` exercise this

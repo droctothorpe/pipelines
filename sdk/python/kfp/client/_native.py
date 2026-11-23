@@ -951,16 +951,18 @@ class NativeBackend:
                 },
             )
         except models.ApiException as error:
-            # A client authenticating directly against Kubernetes has no Argo
-            # endpoint for the archive (C18); the cluster's live workflows are
-            # still a faithful inventory of what it holds.
+            # A client authenticating directly against Kubernetes without an
+            # Argo Server address cannot reach the archive; the cluster's live
+            # workflows are still a faithful inventory of what it holds.
             if not tolerate_archive:
                 raise
             if not self._archive_warned:
                 warnings.warn(
                     'Archived runs are not listed: the Argo archive is '
-                    f'unavailable ({error.status} {error.reason}). Use a native '
-                    'endpoint with Argo access for full run history.',
+                    f'unavailable ({error.status} {error.reason}). Pass '
+                    'argo_server= (or set ARGO_SERVER) so the client reaches '
+                    'Argo Server with its Kubernetes token, or use a native '
+                    'endpoint with Argo access.',
                     stacklevel=3,
                 )
                 self._archive_warned = True
