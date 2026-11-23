@@ -925,6 +925,28 @@ def test_importer_download_to_workspace_needs_a_workspace(tmp_path):
         )
 
 
+def test_importer_rejects_oci_modelcar_uris_at_compile_time(tmp_path):
+    """A14: stock's Modelcar sidecar import has no launcher here and Argo has no
+    OCI driver, so the departure surfaces when compiling, not in a pod."""
+
+    @dsl.component(base_image='python:3.11', install_kfp_package=False)
+    def read(model: dsl.Input[dsl.Model]) -> str:
+        return model.path
+
+    @dsl.pipeline
+    def pipeline():
+        model = dsl.importer(
+            artifact_uri='oci://quay.io/org/model:latest',
+            artifact_class=dsl.Model,
+        )
+        read(model=model.output)
+
+    with pytest.raises(ValueError, match='s3://, gs://, http:// and https://'):
+        compiler.Compiler().compile(
+            pipeline, str(tmp_path / 'oci.yaml'), resource_kind='Workflow'
+        )
+
+
 def test_other_platform_settings_are_ignored_with_a_warning(tmp_path):
     """C15: stock applies only the kubernetes platform spec and carries other
     platforms' settings unexecuted, so they warn instead of failing."""
