@@ -103,7 +103,16 @@ def test_editor_runs_a_pipeline_in_the_tenant_namespace(editor_run, record):
         support.node_output(support.node(workflow, 'consume')) == 'hello tenant'
     )
     assert submitted.run_id in run_ids(client, TENANT)
-    record(run_id=submitted.run_id, namespace=TENANT, user=EDITOR)
+    # Artifacts follow the tenant's own Argo repository, not the platform's.
+    tenant_root = support.namespace_root(client, TENANT)
+    assert support.repository_root(workflow) == tenant_root
+    assert completed.runtime_config.pipeline_root == tenant_root
+    record(
+        run_id=submitted.run_id,
+        namespace=TENANT,
+        user=EDITOR,
+        artifact_root=tenant_root,
+    )
 
 
 def test_viewer_reads_but_cannot_write(multi_user, editor_run, record):

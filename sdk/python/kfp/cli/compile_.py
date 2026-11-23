@@ -165,7 +165,7 @@ def compile_(
     namespace: Optional[str] = None,
     resource_kind: str = 'WorkflowTemplate',
     schedule: Optional[str] = None,
-    artifact_repository: str = 's3://argo-artifacts',
+    artifact_repository: Optional[str] = None,
     service_account: str = 'argo-workflow',
     cache_config_map: str = 'kfp-cache',
     image_digests: Optional[str] = None,

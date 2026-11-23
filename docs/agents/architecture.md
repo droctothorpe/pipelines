@@ -17,6 +17,9 @@ container definitions for the SDK loader/image builder; it does not register tas
 compile pipeline IR or contact a server. This is distinct from the removed REST
 API definitions and old pipeline IR builder.
 
+Artifacts are key-only; Argo's namespace repository chain places them, the
+submitter binds that bucket into the run, and the runtime checks the binding.
+
 The browser reads Kubernetes ConfigMaps for experiments and Argo resources for
 versions, runs and schedules. Argo Server provides hydrated/offloaded status and
 archive/artifact access. UID is run identity. Cache metadata retains the original

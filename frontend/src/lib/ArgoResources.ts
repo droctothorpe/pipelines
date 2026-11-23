@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { argoRequest, getArgoWorkflow, listNativeItems, type ArgoWorkflow } from './Argo';
-import { workflowArtifactRoot } from './NativeArtifacts';
+import { bindArtifactRoot } from './NativeArtifacts';
 import { prepareArtifactLists } from './NativeArtifactLists';
 
 export interface NativeResource {
@@ -149,7 +149,7 @@ export async function submitRun(
   serviceAccountName?: string,
   pipelineRoot?: string,
 ) {
-  const artifactRoot = workflowArtifactRoot(version, pipelineRoot);
+  const artifactRoot = await bindArtifactRoot(namespace, version, pipelineRoot);
   const labels = {
     ...version.metadata.labels,
     ...(version.metadata.uid ? { 'pipelines.kubeflow.org/version-id': version.metadata.uid } : {}),

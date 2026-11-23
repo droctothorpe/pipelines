@@ -30,7 +30,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { formatDateString } from 'src/lib/UiUtils';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { useInventory } from 'src/lib/NativeQueries';
-import { ARTIFACT_ROOT, workflowArtifactRoot } from 'src/lib/NativeArtifacts';
+import { ARTIFACT_ROOT, bindArtifactRoot } from 'src/lib/NativeArtifacts';
 import {
   createResource,
   submitRun,
@@ -317,7 +317,7 @@ export function NativeNewRun() {
     try {
       const chosen = experiment || (await defaultExperiment());
       if (recurring) {
-        const artifactRoot = workflowArtifactRoot(version, selectedRoot);
+        const artifactRoot = await bindArtifactRoot(namespace, version, selectedRoot);
         const labels = {
           ...version.metadata.labels,
           ...(version.metadata.uid

@@ -45,6 +45,7 @@ function mockRepository() {
           data: {
             default: JSON.stringify({
               s3: {
+                bucket: 'argo-artifacts',
                 endpoint: 'minio:9000',
                 accessKeySecret: { name: 'storage', key: 'access' },
                 secretKeySecret: { name: 'storage', key: 'secret' },

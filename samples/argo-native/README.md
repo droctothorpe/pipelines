@@ -151,6 +151,28 @@ mode on every PR against a tenant namespace, setting the identity header directl
 in place of a gateway; `test/e2e/multi-user-roles.yaml` stands in for the profile
 controller's bindings.
 
+## Artifact storage
+
+Compiled packages name no bucket. Each output artifact carries only a key, and
+Argo places it in the artifact repository it resolves for the run's namespace:
+the `artifact-repositories` ConfigMap's annotated default entry, else the
+controller's default. That is the namespace storage policy stock KFP kept in
+its `kfp-launcher` ConfigMap, expressed through Argo's own chain, and it is what
+`deploy.py --tenant` writes for each namespace. Change a tenant's bucket by
+editing that ConfigMap; nothing is recompiled.
+
+When a run is submitted, the SDK client or the UI reads that ConfigMap and binds
+the repository's bucket into the run, so the URIs the run records are where Argo
+writes. An explicit `pipeline_root` (`@dsl.pipeline(pipeline_root=...)`,
+`Compiler(artifact_repository=...)`, `create_run(..., pipeline_root=...)` or the
+run form) must name a bucket one of the namespace's entries serves; the run then
+selects that entry with `artifactRepositoryRef`, and the path part of the root
+becomes the key prefix. A bucket nothing serves is refused before anything is
+created, with the served buckets listed. Inside the pod the runtime compares the
+bound bucket with the repository Argo staged and fails loudly on a mismatch, so
+a package submitted by hand with a stale root cannot record URIs that point
+nowhere.
+
 ## Compile and submit
 
 `components.py` is the dataset → model → metrics example. The ordinary

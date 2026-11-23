@@ -11,38 +11,84 @@ type Spec = Record<string, any>;
 export const needsArtifactListStaging = (spec?: Spec) =>
   (spec?.templates || []).some((t: Spec) => t.metadata?.annotations?.[MARKER] === 'v1');
 
+const getMap = async (namespace: string, name: string) =>
+  (
+    await argoRequest(
+      `/kubernetes/api/v1/namespaces/${encodeURIComponent(namespace)}/configmaps/${encodeURIComponent(name)}`,
+    )
+  ).json();
+
+/**
+ * Argo's repository chain for a namespace: the `artifact-repositories`
+ * ConfigMap's entries with its annotated default, else the controller's own
+ * default repository where that ConfigMap is readable.
+ */
+export async function namespaceRepositories(
+  namespace: string,
+): Promise<{ entries: Record<string, Spec>; defaultKey?: string }> {
+  let config: Spec = {};
+  try {
+    config = await getMap(namespace, 'artifact-repositories');
+  } catch (error) {
+    if (!(error instanceof ArgoRequestError) || error.status !== 404) throw error;
+  }
+  const entries: Record<string, Spec> = {};
+  for (const [key, text] of Object.entries(config.data || {})) {
+    if (!text) continue;
+    const parsed = load(text as string);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error('Argo artifact repository configuration must be an object.');
+    entries[key] = parsed as Spec;
+  }
+  const annotated =
+    config.metadata?.annotations?.['workflows.argoproj.io/default-artifact-repository'];
+  if (Object.keys(entries).length && annotated) return { entries, defaultKey: annotated };
+  let controller: Spec = {};
+  try {
+    controller = await getMap(namespace, 'workflow-controller-configmap');
+  } catch (error) {
+    if (!(error instanceof ArgoRequestError) || ![403, 404].includes(error.status)) throw error;
+  }
+  const text = controller.data?.artifactRepository;
+  if (text) {
+    const parsed = load(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      entries.default = parsed as Spec;
+      return { entries, defaultKey: 'default' };
+    }
+  }
+  return { entries, defaultKey: annotated };
+}
+
 /** Resolve namespace configuration, never Secret values; keep the version immutable. */
 export async function prepareArtifactLists(namespace: string, original: Spec): Promise<Spec> {
   if (!needsArtifactListStaging(original)) return original;
   const spec = structuredClone(original);
-  const getMap = async (name: string) =>
-    (
-      await argoRequest(
-        `/kubernetes/api/v1/namespaces/${encodeURIComponent(namespace)}/configmaps/${encodeURIComponent(name)}`,
-      )
-    ).json();
   const reference = spec.artifactRepositoryRef;
-  let config: Spec;
-  try {
-    config = await getMap(reference?.configMap || 'artifact-repositories');
-  } catch (error) {
-    if (reference !== undefined || !(error instanceof ArgoRequestError) || error.status !== 404)
-      throw error;
-    config = {};
+  let parsed: unknown;
+  if (reference?.configMap && reference.configMap !== 'artifact-repositories') {
+    const config = await getMap(namespace, reference.configMap);
+    const key =
+      reference.key ||
+      config.metadata?.annotations?.['workflows.argoproj.io/default-artifact-repository'];
+    if (!key)
+      throw new Error(
+        'Artifact repository reference needs a key or a namespace default annotation.',
+      );
+    parsed = load(config.data?.[key] || '');
+  } else {
+    const { entries, defaultKey } = await namespaceRepositories(namespace);
+    const key = reference?.key || defaultKey;
+    if (reference !== undefined && !key)
+      throw new Error(
+        'Artifact repository reference needs a key or a namespace default annotation.',
+      );
+    parsed = key ? entries[key] : undefined;
   }
-  const key =
-    reference?.key ||
-    config.metadata?.annotations?.['workflows.argoproj.io/default-artifact-repository'];
-  let text;
-  if (key) text = config.data?.[key];
-  else if (reference !== undefined)
-    throw new Error('Artifact repository reference needs a key or a namespace default annotation.');
-  else text = (await getMap('workflow-controller-configmap')).data?.artifactRepository;
-  if (!text)
+  if (!parsed)
     throw new Error(
       'Configure an Argo artifact repository before submitting artifact-list consumers.',
     );
-  const parsed = load(text);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
     throw new Error('Argo artifact repository configuration must be an object.');
   if ('plugin' in parsed)

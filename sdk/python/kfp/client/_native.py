@@ -27,7 +27,7 @@ from kfp.client._scheduling import (
     settings as schedule_settings,
 )
 from kfp.client._transport import NativeTransport
-from kfp.compiler.argo_artifacts import ROOT_KEYS, override_root
+from kfp.compiler.argo_artifacts import ROOT, ROOT_KEYS
 from kfp.dsl.argo_runtime import deserialize, serialize
 
 RESOURCE = 'pipelines.kubeflow.org/resource'
@@ -311,8 +311,6 @@ class NativeBackend:
             )
         if enable_caching is not None or cache_key is not None:
             override_caching(manifest, enable_caching, cache_key)
-        if run.runtime_config and run.runtime_config.pipeline_root:
-            override_root(manifest, run.runtime_config.pipeline_root)
         annotations = manifest.get('metadata', {}).get('annotations', {})
         spec = copy.deepcopy(manifest['spec'])
         if manifest['kind'] == 'CronWorkflow':
@@ -362,15 +360,30 @@ class NativeBackend:
             )
         return manifest, spec, parameters
 
+    def _config_map(self, namespace, name):
+        return self.transport.request(
+            'GET', self._maps_path(namespace) + '/' + segment(name)
+        )
+
+    def _bind_root(self, manifest, spec, namespace, runtime_config):
+        """Artifacts go where Argo's repository chain puts them for this
+        namespace; an explicit pipeline_root selects the entry serving it."""
+        from kfp.client._artifact_repository import bind_namespace_root
+
+        requested = (
+            runtime_config.pipeline_root if runtime_config else None
+        ) or manifest.get('metadata', {}).get('annotations', {}).get(ROOT)
+        return bind_namespace_root(
+            manifest,
+            spec,
+            lambda name: self._config_map(namespace, name),
+            requested,
+        )
+
     def _prepare_staging(self, spec, namespace):
         from kfp.client._artifact_repository import prepare_staging
 
-        prepare_staging(
-            spec,
-            lambda name: self.transport.request(
-                'GET', self._maps_path(namespace) + '/' + segment(name)
-            ),
-        )
+        prepare_staging(spec, lambda name: self._config_map(namespace, name))
 
     def _run(self, resource, storage_state='AVAILABLE', pod_uids=None):
         from kfp.client._task_details import tasks
@@ -514,6 +527,7 @@ class NativeBackend:
         manifest, spec, parameters = self._workflow_spec(
             run, enable_caching, cache_key
         )
+        root = self._bind_root(manifest, spec, namespace, run.runtime_config)
         self._prepare_staging(spec, namespace)
         annotations = {
             'pipelines.kubeflow.org/storage-state': 'AVAILABLE',
@@ -539,11 +553,6 @@ class NativeBackend:
         if run.pipeline_version_reference:
             labels[VERSION_ID] = manifest['metadata']['uid']
             annotations[TEMPLATE] = manifest['metadata']['name']
-        root = (
-            run.runtime_config.pipeline_root if run.runtime_config else None
-        ) or manifest.get('metadata', {}).get('annotations', {}).get(
-            'pipelines.kubeflow.org/artifact-repository'
-        )
         if root:
             annotations['pipelines.kubeflow.org/pipeline-root'] = root
         prefix = (
@@ -1221,6 +1230,9 @@ class NativeBackend:
         )
         experiment = self._experiment_for_run(recurring_run)
         namespace = experiment['metadata']['namespace']
+        root = self._bind_root(
+            manifest, workflow, namespace, recurring_run.runtime_config
+        )
         self._prepare_staging(workflow, namespace)
         name = 'schedule-' + str(uuid4())
         labels = {
@@ -1243,13 +1255,6 @@ class NativeBackend:
                 .items()
                 if key in (*ROOT_KEYS, PARAMETER_TYPES)
             }
-        )
-        root = (
-            recurring_run.runtime_config.pipeline_root
-            if recurring_run.runtime_config
-            else None
-        ) or manifest.get('metadata', {}).get('annotations', {}).get(
-            'pipelines.kubeflow.org/artifact-repository'
         )
         if root:
             workflow_annotations['pipelines.kubeflow.org/pipeline-root'] = root
