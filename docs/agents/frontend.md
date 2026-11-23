@@ -18,6 +18,11 @@ SDK viewer assets after changing shared widgets. The native production-bundle
 smoke checks endpoint boundaries and credentials; the deployment smoke uses real
 namespace-scoped tokens and checks denied mutations.
 
+Artifact visualizations dispatch on the v2 artifact type in `NativeInspectors`; a legacy
+`mlpipeline-ui-metadata` artifact goes through `lib/NativeUiMetadata.ts` and the
+`NativeUiMetadata` viewer, whose sources are inline or sibling artifacts served by
+Argo Server. Keep HTML (typed or `web-app`) inside `SandboxedHtml`.
+
 Use effects only for external synchronization. Derive display data during render,
 perform mutations in event handlers, and preserve selections across refreshes.
 Test graph expansion/selection and error recovery when changing those paths.

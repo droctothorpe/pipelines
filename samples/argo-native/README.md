@@ -363,6 +363,14 @@ container-definition serializer and shared authoring/configuration schemas remai
 for SDK loading and image building. The Docker Python dependency is used for image
 building. See [the stock-KFP feature gap inventory](../../docs/compatibility.md).
 
+Artifact visualizations follow the v2 artifact types (Dataset and Model previews,
+Metrics, ClassificationMetrics, Markdown and sandboxed HTML). A legacy
+`mlpipeline-ui-metadata` output artifact is also routed the stock way: its `outputs`
+entries render as table, confusion matrix, ROC, Markdown or sandboxed web-app viewers.
+Entry sources must be `inline` or the URI of a sibling output artifact of the same task,
+since the UI reads artifacts through Argo Server rather than the object store directly.
+TensorBoard entries show the log directory; no viewer pods are launched.
+
 Resource discovery follows native continuation tokens; table search, sorting and
 pagination operate on the namespace inventory in the browser. The global artifact
 list covers the 50 most recent runs, with an explicit truncation notice, and

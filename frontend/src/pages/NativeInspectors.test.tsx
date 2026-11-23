@@ -62,3 +62,94 @@ it('renders Markdown structure without raw HTML execution or automatic external 
   expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
   expect(vi.mocked(fetch).mock.calls).toHaveLength(1);
 });
+
+it('routes a legacy mlpipeline-ui-metadata artifact to the kept viewers', async () => {
+  const producer = { run: 'run-id', task: 'pod', namespace: 'team' };
+  const metadata = {
+    schema: 'kfp-argo/v1',
+    producer,
+    inputs: [],
+    metrics: {},
+    artifacts: [
+      {
+        port: 'mlpipeline_ui_metadata',
+        type: 'system.Artifact@0.0.1',
+        uri: 's3://bucket/run/pod/mlpipeline_ui_metadata',
+        metadata: {},
+        producer,
+      },
+      {
+        port: 'table',
+        type: 'system.Artifact@0.0.1',
+        uri: 's3://bucket/run/pod/table',
+        metadata: {},
+        producer,
+      },
+    ],
+  };
+  const uiMetadata = {
+    outputs: [
+      {
+        type: 'table',
+        format: 'csv',
+        header: ['model', 'accuracy'],
+        source: 's3://bucket/run/pod/table',
+      },
+      {
+        type: 'confusion_matrix',
+        format: 'csv',
+        schema: [{ name: 'target' }, { name: 'predicted' }, { name: 'count' }],
+        labels: ['neg', 'pos'],
+        storage: 'inline',
+        source: 'neg,neg,3\nneg,pos,1\npos,neg,1\npos,pos,5\n',
+      },
+      { type: 'markdown', storage: 'inline', source: '## Legacy summary' },
+      { type: 'tensorboard', source: 's3://bucket/run/pod/logs' },
+      { type: 'table', format: 'csv', header: ['x'], source: 's3://elsewhere/data.csv' },
+    ],
+  };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          url.endsWith('/table') ? 'baseline,0.81\ntuned,0.94\n' : JSON.stringify(uiMetadata),
+        ),
+    ),
+  );
+  render(
+    <MemoryRouter>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <NativeArtifactContent
+          run={{ metadata: { name: 'wf', uid: 'run-id', namespace: 'team' }, spec: {} }}
+          node={{
+            id: 'node',
+            displayName: 'summarize',
+            type: 'Pod',
+            outputs: { parameters: [{ name: 'kfp-metadata', value: JSON.stringify(metadata) }] },
+          }}
+          port='mlpipeline_ui_metadata'
+        />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  await screen.findByText('system.Artifact@0.0.1');
+  fireEvent.click(screen.getByRole('button', { name: 'Visualization', exact: true }));
+  const table = await screen.findByRole('table', { name: 'Legacy table' });
+  expect(table.textContent).toContain('tuned');
+  expect(await screen.findByRole('heading', { name: 'Legacy summary' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'confusion_matrix visualization' })).toBeTruthy();
+  expect(screen.getByText(/TensorBoard viewers are not launched/).textContent).toContain(
+    's3://bucket/run/pod/logs',
+  );
+  expect(screen.getByText(/not an output artifact of this task/).textContent).toContain(
+    's3://elsewhere/data.csv',
+  );
+  const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+  expect(urls).toEqual([
+    '/argo/artifacts/team/wf/node/mlpipeline_ui_metadata',
+    '/argo/artifacts/team/wf/node/table',
+  ]);
+});

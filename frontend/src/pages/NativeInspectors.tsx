@@ -16,6 +16,7 @@ import CollapseButtonSingle from 'src/components/CollapseButtonSingle';
 import { NativeArtifactPreview } from 'src/components/viewers/NativeArtifactPreview';
 import { NativeClassificationMetrics } from 'src/components/viewers/NativeClassificationMetrics';
 import MarkdownViewer from 'src/components/viewers/MarkdownViewer';
+import { NativeUiMetadata, SandboxedHtml } from 'src/components/viewers/NativeUiMetadata';
 import { PlotType } from 'src/components/viewers/Viewer';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { useInventory } from 'src/lib/NativeQueries';
@@ -40,6 +41,7 @@ import {
   enc,
 } from 'src/lib/NativeUi';
 import { formatDateString } from 'src/lib/UiUtils';
+import { isLegacyUiMetadata, readBoundedText } from 'src/lib/NativeUiMetadata';
 import { setScheduleSuspended } from 'src/lib/ArgoResources';
 import { action, runColumns, runRows } from './NativePages';
 
@@ -68,24 +70,7 @@ export function NativeArtifactContent({
     queryFn: async ({ signal }) => {
       const response = await argoRequest(argoArtifactUrl(run, node, port), signal);
       // Stream with a hard bound rather than downloading a large model into browser memory.
-      const reader = response.body?.getReader();
-      if (!reader) return '';
-      const decoder = new TextDecoder();
-      let text = '',
-        size = 0;
-      try {
-        while (true) {
-          const result = await reader.read();
-          if (result.done) break;
-          size += result.value.byteLength;
-          if (size > 1024 * 1024)
-            throw new Error('Artifact exceeds the 1 MiB preview limit. Download it instead.');
-          text += decoder.decode(result.value, { stream: true });
-        }
-        return text + decoder.decode();
-      } finally {
-        await reader.cancel();
-      }
+      return readBoundedText(response, 1024 * 1024);
     },
   });
   return (
@@ -147,17 +132,19 @@ export function NativeArtifactContent({
             <Alert severity='error'>{preview.error.message}</Alert>
           ) : preview.isPending ? (
             <CircularProgress aria-label='Loading visualization' size={24} />
+          ) : isLegacyUiMetadata(port) ? (
+            <NativeUiMetadata
+              run={run}
+              node={node}
+              artifacts={metadata.data?.artifacts || []}
+              content={preview.data || ''}
+            />
           ) : artifact?.type.includes('Markdown') ? (
             <MarkdownViewer
               configs={[{ type: PlotType.MARKDOWN, markdownContent: preview.data || '' }]}
             />
           ) : artifact?.type.includes('HTML') ? (
-            <iframe
-              title='Artifact visualization'
-              sandbox=''
-              style={{ border: 0, width: '100%', height: '100%' }}
-              srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">${preview.data || ''}`}
-            />
+            <SandboxedHtml html={preview.data || ''} title='Artifact visualization' />
           ) : (
             <pre style={{ whiteSpace: 'pre-wrap', overflow: 'auto' }}>{preview.data}</pre>
           )}

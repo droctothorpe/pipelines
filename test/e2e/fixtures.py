@@ -62,6 +62,10 @@ def create(client, namespace, kind):
         from e2e.pipelines.visualizations import markdown_pipeline
 
         return _run(client, markdown_pipeline)
+    if kind == 'ui-metadata':
+        from e2e.pipelines.visualizations import ui_metadata_pipeline
+
+        return _run(client, ui_metadata_pipeline)
     if kind == 'classification':
         from e2e.pipelines.visualizations import classification_pipeline
 
