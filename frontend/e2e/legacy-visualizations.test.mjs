@@ -42,7 +42,12 @@ test(
       await page.getByRole('heading', { name: 'Legacy summary' }).waitFor();
       const frame = page.frameLocator('iframe[title="Legacy web app 5"]');
       await frame.getByRole('heading', { name: 'Legacy web app' }).waitFor();
-      assert.notEqual(await page.title(), 'x', 'Sandboxed web apps must not run scripts');
+      assert.equal(
+        await frame.locator('html').evaluate((el) => el.ownerDocument.title),
+        'x',
+        'Web app scripts run inside the stock allow-scripts sandbox',
+      );
+      assert.notEqual(await page.title(), 'x', 'Web app scripts never reach the UI document');
       await page.getByText(/TensorBoard viewers are not launched/).waitFor();
       await shot(page, 'legacy-ui-metadata', { fullPage: true });
       await mobile(page, 'legacy-ui-metadata');

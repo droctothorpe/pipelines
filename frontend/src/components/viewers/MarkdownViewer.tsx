@@ -103,28 +103,11 @@ interface MarkdownAdvancedProps {
 function preventEventBubbling(e: React.MouseEvent): void {
   e.stopPropagation();
 }
-const renderExternalLink = (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
-  try {
-    if (
-      !props.href ||
-      !['http:', 'https:'].includes(new URL(props.href, 'https://artifact.invalid').protocol)
-    )
-      return <span>{props.children}</span>;
-  } catch {
-    return <span>{props.children}</span>;
-  }
-  return <ExternalLink {...props} onClick={preventEventBubbling} />;
-};
-const renderImage = (props: React.ImgHTMLAttributes<HTMLImageElement>) =>
-  /^data:image\/(png|jpeg|gif|webp);base64,/i.test(props.src || '') ? (
-    <img {...props} alt={props.alt || ''} />
-  ) : (
-    <span title='External and active-format images are blocked in artifact previews'>
-      [Image preview blocked: {props.alt || 'image'}]
-    </span>
-  );
+const renderExternalLink = (props: {}) => (
+  <ExternalLink {...props} onClick={preventEventBubbling} />
+);
 const markdownOptions = {
-  overrides: { a: { component: renderExternalLink }, img: { component: renderImage } },
+  overrides: { a: { component: renderExternalLink } },
   disableParsingRawHTML: true,
 };
 
