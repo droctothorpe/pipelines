@@ -67,7 +67,8 @@ uv run python -m pytest test/e2e -p no:randomly -k samples                # the 
 ```
 
 Every pull request runs everything but `prerequisite` cases through
-`test/native-deployment.sh` on a disposable Kind cluster, in parallel with
+`test/native-deployment.sh` on a disposable Kind cluster, once per Kubernetes
+version in stock's matrix (`KFP_TEST_K8S_VERSION` picks the `kindest/node` tag), in parallel with
 pytest-xdist (`-n`, grouped by module with `--dist loadfile` so module fixtures
 keep their order; `KFP_TEST_WORKERS` sets the count). Markers: `smoke` is the quick
 representative subset for a local check; `full` is the rest; `prerequisite` cases
