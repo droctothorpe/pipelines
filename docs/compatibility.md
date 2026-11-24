@@ -31,8 +31,11 @@ No C/L/U entry should be called an inherent Argo limitation without further evid
 
 Counts below are from the two trees on 2026-11-23: `def test_` for Python, `it(`/`test(`
 for TypeScript, parametrized expansions not counted (the runners report more: the
-offline Python suite is 1,346 passed, vitest 320). The backend and its API tests are
-retired by design and are not part of the comparison.
+offline Python suite is 1,731 passed, vitest 804). The backend and its API tests are
+retired by design and are not part of the comparison. On 2026-11-24 the `CI` workflow
+passed end to end on the pull request for the first time, including the live tier on
+Kubernetes 1.33 and 1.36 and on Argo 4.1.6 and 4.0.13 (93 to 94 live cases and all
+browser journeys per leg).
 
 | Surface | Stock (`master`) | Native | Reading |
 |---|---|---|---|
