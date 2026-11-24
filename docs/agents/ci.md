@@ -4,7 +4,11 @@
 packaging, the frontend and offline viewer, and a real disposable Kind deployment
 on stock's Kubernetes matrix (`kindest/node` v1.33.12 and v1.36.1, passed to
 `test/native-deployment.sh` as `KFP_TEST_K8S_VERSION`; keep the list in step with
-stock's `e2e-test-frontend.yml` and `kfp-sdk-client-tests.yml`).
+stock's `e2e-test-frontend.yml` and `kfp-sdk-client-tests.yml`). Stock also ran the
+previous Argo minor; native does not, because Argo 4.0.x evaluates a skipped task's
+arguments before its `when` and fails the nullable guards (L25 in
+`docs/compatibility.md`). `KFP_ARGO_VERSION`, read by `deploy.py` and the CLI install
+step, deploys another release for a manual check.
 The aggregate `ci-passed` job requires all native jobs to succeed. Backend/Go image
 producers, old integration matrices, releases and merge-queue automation are
 retired; external branch-protection rules are not changed by this code cleanup.

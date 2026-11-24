@@ -18,13 +18,18 @@ UI authentication modes:
 
 import argparse
 import copy
+import os
 import urllib.request
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = (ROOT / 'third_party/argo/VERSION').read_text().strip()
+# KFP_ARGO_VERSION overrides the pinned release (CI's Argo matrix leg).
+VERSION = (
+    os.environ.get('KFP_ARGO_VERSION')
+    or (ROOT / 'third_party/argo/VERSION').read_text().strip()
+)
 
 
 AUTH_MODES = ('token', 'single-user', 'multi-user')
