@@ -15,6 +15,7 @@ export interface ArgoNode {
   outboundNodes?: string[];
   startedAt?: string;
   finishedAt?: string;
+  podName?: string;
   inputs?: {
     artifacts?: Array<{ name: string; s3?: { bucket?: string; key?: string } }>;
     parameters?: Array<{ name: string; value?: string }>;

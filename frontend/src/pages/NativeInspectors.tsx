@@ -188,7 +188,7 @@ export function NativeCompare() {
   const ids = [...new Set((search.get('runlist') || '').split(',').filter(Boolean))];
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const results = useQueries({
-    queries: (ids.length > 5 ? [] : ids).map((id) => ({
+    queries: (ids.length > 10 ? [] : ids).map((id) => ({
       queryKey: ['native', namespace, 'comparison', id],
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const run = await getUiRun(namespace, id, signal);
@@ -228,8 +228,8 @@ export function NativeCompare() {
       title='Compare runs'
       breadcrumbs={[{ displayName: 'Experiments', href: '/experiments' }]}
       error={
-        ids.length > 5
-          ? new Error('Compare up to five runs at a time.')
+        ids.length > 10
+          ? new Error('Compare up to ten runs at a time.')
           : results.find((result) => result.error)?.error
       }
       actions={{

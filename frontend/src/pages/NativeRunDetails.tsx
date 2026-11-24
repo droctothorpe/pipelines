@@ -36,9 +36,18 @@ import {
   downloadArtifact,
 } from 'src/lib/NativeUi';
 import { formatDateString, hasFinishedV2 } from 'src/lib/UiUtils';
+import { formatTaskElapsed } from 'src/lib/v2/RunTaskTiming';
 import type { LayerFlowElement } from 'src/lib/v2/FlowTypes';
 import { getTaskNodeKey } from 'src/lib/v2/StaticFlow';
 import type { TaskTimingView } from 'src/lib/NativeViewTypes';
+
+/** Elapsed time since the run started; stock showed it on the Detail tab. */
+function runDuration(run: { status?: { startedAt?: string; finishedAt?: string } }) {
+  const started = run.status?.startedAt;
+  if (!started) return '-';
+  const end = run.status?.finishedAt ? Date.parse(run.status.finishedAt) : Date.now();
+  return formatTaskElapsed(end - Date.parse(started));
+}
 
 export default function NativeRunDetails() {
   const { runId = '' } = useParams();
@@ -216,7 +225,9 @@ export default function NativeRunDetails() {
                     run.metadata.annotations?.['pipelines.kubeflow.org/description'] || '',
                   ],
                   ['Created at', formatDateString(run.metadata.creationTimestamp)],
+                  ['Started at', formatDateString(run.status?.startedAt)],
                   ['Finished at', formatDateString(run.status?.finishedAt)],
+                  ['Duration', runDuration(run)],
                   ['Namespace', namespace],
                   ['Workflow', run.metadata.name],
                   ['Pipeline Version', run.spec.workflowTemplateRef?.name || '-'],
@@ -366,6 +377,7 @@ function Task({
               ['Created At', formatDateString(node.startedAt)],
               ['Finished At', formatDateString(node.finishedAt)],
               ['Parent task ID', node.boundaryID || '-'],
+              ['Pod name', node.type === 'Pod' ? node.podName || node.id : '-'],
               ['Message', node.message || '-'],
             ]}
           />

@@ -377,7 +377,7 @@ export function NativeListPage({
             'Compare runs',
             () => navigate(`/compare?runlist=${selected.map(enc).join(',')}`),
             {
-              disabled: selected.length < 2 || selected.length > 5,
+              disabled: selected.length < 2 || selected.length > 10,
               style: { minWidth: 125 },
               id: 'compareBtn',
               disabledTitle: 'Select at least two runs to compare',
@@ -467,7 +467,7 @@ export function NativeListPage({
             'Compare runs',
             () => navigate(`/compare?runlist=${selected.map(enc).join(',')}`),
             {
-              disabled: selected.length < 2 || selected.length > 5,
+              disabled: selected.length < 2 || selected.length > 10,
               style: { minWidth: 125 },
               id: 'compareBtn',
             },
