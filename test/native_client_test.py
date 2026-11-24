@@ -1222,3 +1222,210 @@ def test_experiment_run_and_schedule_timestamps_are_derived(
         ).updated_at.isoformat()
         == '2026-01-02T12:00:00+00:00'
     )
+
+
+def test_upload_pipeline_version_from_a_package_path(
+    native_api, native_store, tmp_path, capsys
+):
+    from kfp import compiler
+
+    client, _, _ = native_api
+    package = str(tmp_path / 'pipeline.yaml')
+    compiler.Compiler().compile(stock_program, package)
+    pipeline = client.upload_pipeline(
+        package, pipeline_name='Packaged', namespace='team'
+    )
+    capsys.readouterr()
+    version = client.upload_pipeline_version(
+        package,
+        'Second cut',
+        pipeline_id=pipeline.pipeline_id,
+        description='Regenerated package',
+    )
+    assert isinstance(version, server_api.V2PipelineVersion)
+    assert version.pipeline_id == pipeline.pipeline_id
+    assert version.display_name == 'Second cut'
+    assert version.description == 'Regenerated package'
+    assert version.pipeline_spec['kind'] == 'WorkflowTemplate'
+    assert (
+        client.get_pipeline_version(
+            pipeline.pipeline_id, version.pipeline_version_id
+        ).description
+        == 'Regenerated package'
+    )
+    assert client.list_pipeline_versions(pipeline.pipeline_id).total_size == 2
+    stored = next(
+        item
+        for item in native_store['versions'].values()
+        if item['metadata']['uid'] == version.pipeline_version_id
+    )
+    assert (
+        stored['metadata']['labels']['pipelines.kubeflow.org/pipeline']
+        == pipeline.pipeline_id
+    )
+    assert (
+        stored['metadata']['annotations'][
+            'pipelines.kubeflow.org/version-display-name'
+        ]
+        == 'Second cut'
+    )
+    assert (
+        f'?namespace=team#/pipelines/details/{pipeline.pipeline_id}'
+        f'/version/{version.pipeline_version_id}' in capsys.readouterr().out
+    )
+    with pytest.raises(server_api.ApiException) as duplicate:
+        client.upload_pipeline_version(
+            package, 'Second cut', pipeline_id=pipeline.pipeline_id
+        )
+    assert duplicate.value.status == 409
+    assert client.list_pipeline_versions(pipeline.pipeline_id).total_size == 2
+
+
+def test_upload_pipeline_version_resolves_shared_pipeline_names(
+    native_api, tmp_path
+):
+    from kfp import compiler
+
+    client, _, _ = native_api
+    package = str(tmp_path / 'pipeline.yaml')
+    compiler.Compiler().compile(stock_program, package)
+    shared = client.upload_pipeline(package, pipeline_name='Shared program')
+    assert shared.namespace is None
+    version = client.upload_pipeline_version(
+        package, 'By name', pipeline_name='Shared program'
+    )
+    assert version.pipeline_id == shared.pipeline_id
+    assert (
+        client.get_pipeline_version(
+            shared.pipeline_id, version.pipeline_version_id
+        ).display_name
+        == 'By name'
+    )
+    for selector in [
+        {},
+        {'pipeline_id': shared.pipeline_id, 'pipeline_name': 'Shared program'},
+    ]:
+        with pytest.raises(
+            ValueError, match='Either pipeline_id or pipeline_name is required'
+        ):
+            client.upload_pipeline_version(package, 'Rejected', **selector)
+    with pytest.raises(server_api.ApiException) as missing:
+        client.upload_pipeline_version(
+            package, 'Orphan', pipeline_name='No such pipeline'
+        )
+    assert missing.value.status == 404
+    assert client.list_pipeline_versions(shared.pipeline_id).total_size == 2
+
+
+def test_get_pipeline_returns_private_and_shared_records(native_api):
+    client, _, requests_seen = native_api
+    private = client.upload_pipeline_from_pipeline_func(
+        stock_program, pipeline_name='Private', namespace='team'
+    )
+    shared = client.upload_pipeline_from_pipeline_func(
+        stock_program, pipeline_name='Shared'
+    )
+    requests_seen.clear()
+    fetched = client.get_pipeline(private.pipeline_id)
+    assert isinstance(fetched, server_api.V2Pipeline)
+    assert fetched.to_dict() == private.to_dict()
+    assert fetched.namespace == 'team'
+    assert client.get_pipeline(shared.pipeline_id).to_dict() == shared.to_dict()
+    assert client.get_pipeline(shared.pipeline_id).namespace is None
+    with pytest.raises(server_api.ApiException) as error:
+        client.get_pipeline('missing')
+    assert error.value.status == 404
+    assert all('/apis/v2' not in path for _, path, _ in requests_seen)
+
+
+def test_get_kfp_healthz_probes_argo_info(native_api):
+    client, _, requests_seen = native_api
+    requests_seen.clear()
+    response = client.get_kfp_healthz()
+    assert isinstance(response, server_api.V2GetHealthzResponse)
+    assert [(method, path) for method, path, _ in requests_seen] == [
+        ('GET', '/argo/api/v1/info')
+    ]
+
+
+def test_get_kfp_healthz_reports_the_deployment_scope(native_api, monkeypatch):
+    """C40 (docs/compatibility.md): a namespaced Argo Server, which the
+    fixture's ``managedNamespace`` models, is a single-namespace deployment; a
+    cluster-wide server is the multi-user one."""
+    client, _, _ = native_api
+    response = client.get_kfp_healthz()
+    assert response.multi_user is False
+    assert response.pipeline_store == 'kubernetes'
+    original = requests.Session.request
+
+    def request(session, method, url, **kwargs):
+        response = original(session, method, url, **kwargs)
+        if urlsplit(url).path.endswith('/argo/api/v1/info'):
+            response._content = json.dumps({'modals': {}}).encode()
+        return response
+
+    monkeypatch.setattr(requests.Session, 'request', request)
+    assert client.get_kfp_healthz().multi_user is True
+
+
+def test_get_kfp_healthz_retries_then_reports_the_failure(
+    native_api, monkeypatch
+):
+    client, _, requests_seen = native_api
+    original = requests.Session.request
+    status = {'code': 503}
+
+    def request(session, method, url, **kwargs):
+        if urlsplit(url).path.endswith('/argo/api/v1/info'):
+            response = requests.Response()
+            response.status_code = status['code']
+            response.reason = 'Unavailable'
+            response._content = b'{}'
+            requests_seen.append((method, urlsplit(url).path, kwargs))
+            return response
+        return original(session, method, url, **kwargs)
+
+    monkeypatch.setattr(requests.Session, 'request', request)
+    requests_seen.clear()
+    with pytest.raises(TimeoutError, match='after 2 attempts'):
+        client.get_kfp_healthz(sleep_duration=0, max_attempts=2)
+    assert len(requests_seen) == 2
+    status['code'] = 404
+    with pytest.raises(RuntimeError, match='does not expose'):
+        client.get_kfp_healthz(sleep_duration=0, max_attempts=3)
+    with pytest.raises(ValueError, match='max_attempts must be an integer'):
+        client.get_kfp_healthz(max_attempts=0)
+
+
+def test_deprecated_job_aliases_delegate_to_recurring_runs(
+    native_api, native_store
+):
+    client, _, _ = native_api
+    pipeline = client.upload_pipeline_from_pipeline_func(
+        stock_program, namespace='team'
+    )
+    schedule = client.create_recurring_run(
+        job_name='Aliased',
+        pipeline_id=pipeline.pipeline_id,
+        cron_expression='0 * * * *',
+        namespace='team',
+    )
+    recurring_run_id = schedule.recurring_run_id
+    for alias, target, status in [
+        ('disable_job', 'disable_recurring_run', 'DISABLED'),
+        ('enable_job', 'enable_recurring_run', 'ENABLED'),
+        ('delete_job', 'delete_recurring_run', None),
+    ]:
+        with pytest.warns(DeprecationWarning) as warned:
+            assert getattr(client, alias)(recurring_run_id) == {}
+        assert len(warned) == 1
+        assert str(warned[0].message) == (
+            f'`{alias}` is deprecated. Please use `{target}` instead.'
+            f'\nReroute to calling `{target}(recurring_run_id="{recurring_run_id}")`'
+        )
+        assert warned[0].filename == __file__, (
+            'The warning must point at the caller, as stock does'
+        )
+        if status:
+            assert client.get_recurring_run(recurring_run_id).status == status
+    assert native_store['schedules'] == {}
