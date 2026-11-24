@@ -301,11 +301,58 @@ class _Scope:
     def conditions(self, group):
         expressions = []
         for condition in group.conditions:
-            expression = f'({self.expression(condition.left_operand)} {condition.operator} {self.expression(condition.right_operand)})'
+            left, right = self._comparable(
+                condition.left_operand, condition.right_operand
+            )
+            expression = f'({left} {condition.operator} {right})'
             expressions.append(
                 '!' + expression if condition.negate else expression
             )
         return '{{=' + ' && '.join(expressions) + '}}'
+
+    def _comparable(self, *operands):
+        """Render condition operands with stock's coercion: mixed types
+        compare as strings when either side is a string, as booleans
+        (numbers by truthiness) when either side is a boolean, otherwise
+        as numbers."""
+        STRING, BOOLEAN, INTEGER, DOUBLE = (
+            type_utils.get_parameter_type(name)
+            for name in ('str', 'bool', 'int', 'float')
+        )
+
+        def kind(operand):
+            if isinstance(operand, pipeline_channel.PipelineChannel):
+                return type_utils.get_parameter_type(operand.channel_type)
+            return type_utils.get_parameter_type(type(operand).__name__)
+
+        kinds = {kind(operand) for operand in operands}
+        canonical = (
+            STRING if STRING in kinds else BOOLEAN if BOOLEAN in kinds else None
+        )
+        rendered = []
+        for operand in operands:
+            own = kind(operand)
+            channel = isinstance(operand, pipeline_channel.PipelineChannel)
+            if canonical is None or own == canonical:
+                rendered.append(self.expression(operand))
+            elif canonical == STRING:
+                # The raw reference is already a string; constants become
+                # their string spelling, booleans lowercase as stock did.
+                rendered.append(
+                    _expression_reference(self.resolve(operand))
+                    if channel
+                    else _json(
+                        str(operand).lower()
+                        if isinstance(operand, bool)
+                        else str(operand)
+                    )
+                )
+            elif channel:
+                zero = '0.0' if own == DOUBLE else '0'
+                rendered.append(f'({self.expression(operand)} != {zero})')
+            else:
+                rendered.append(_json(bool(operand)))
+        return rendered
 
     def arguments(self, task, final_status=None):
         arguments = {'parameters': [], 'artifacts': []}

@@ -235,3 +235,37 @@ def test_retry_attempts_carry_pod_resources(client, record):
         assert main['resources']['requests']['cpu'] == '50m'
         assert main['resources']['limits']['memory'] == '64Mi'
     record(run_id=submitted.run_id, state=done.state)
+
+
+@dsl.component(**COMPONENT)
+def mark(text: str) -> str:
+    return text
+
+
+@dsl.pipeline(name='native-condition-coercion')
+def condition_coercion(value: int = 2):
+    """C52: a number compared with a boolean is tested by truthiness, as
+    stock did; the literal typed comparison would skip both branches."""
+    count = number(value=value)
+    with dsl.If(count.output == True):  # noqa: E712
+        mark(text='truthy')
+    with dsl.If(count.output == False):  # noqa: E712
+        mark(text='falsy')
+
+
+@pytest.mark.smoke
+def test_number_compared_with_bool_uses_truthiness(client, record):
+    submitted, done = support.run_pipeline(
+        client, condition_coercion, {'value': 2}
+    )
+    raw = support.workflow(client, done)
+    assert done.state == 'SUCCEEDED', support.phases(raw)
+    phases = {
+        node['displayName']: node['phase']
+        for node in support.nodes(raw)
+        if node['displayName'].startswith('condition-')
+    }
+    assert phases == {'condition-1': 'Succeeded', 'condition-2': 'Skipped'}, (
+        support.phases(raw)
+    )
+    record(run_id=submitted.run_id, branches=phases)

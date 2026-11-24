@@ -1514,10 +1514,17 @@ class _Compiler:
                         'PVC binding does not reference a registered pipeline parameter.'
                     )
                 name = str(channel)
-            volume = f'kfp-pvc-{index}'
-            template.setdefault('volumes', []).append(
-                {'name': volume, 'persistentVolumeClaim': {'claimName': name}}
-            )
+            # Stock named the volume after the claim; init containers mount it by that name.
+            volume = name
+            if not any(
+                v['name'] == volume for v in template.get('volumes', [])
+            ):
+                template.setdefault('volumes', []).append(
+                    {
+                        'name': volume,
+                        'persistentVolumeClaim': {'claimName': name},
+                    }
+                )
             container.setdefault('volumeMounts', []).append(
                 {
                     'name': volume,
@@ -1580,11 +1587,13 @@ def compile_argo(
         if isinstance(declaration.get('value'), str):
             declaration['value'] = builder.value(declaration['value'])
         arguments.append(declaration)
+    from kfp.compiler import argo_kubernetes
+
     spec = {
         'entrypoint': entrypoint,
         'serviceAccountName': options.service_account_name,
         'arguments': {'parameters': arguments},
-        'templates': builder.templates,
+        'templates': argo_kubernetes.harden(builder.templates),
     }
     graph = component.component_spec.implementation.graph
     if isinstance(graph, structures.CapturedGraph):

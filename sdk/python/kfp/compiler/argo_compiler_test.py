@@ -1347,3 +1347,100 @@ def test_artifacts_carry_keys_only_and_follow_the_namespace_repository(
     assert annotations[argo_artifacts.ROOT] == 'gs://exports/team'
     assert annotations[argo_artifacts.BUCKET] == 'exports'
     assert annotations[argo_artifacts.PREFIX] == 'team/'
+
+
+def _container_templates(path):
+    return [
+        template
+        for template in yaml.safe_load(path.read_text())['spec']['templates']
+        if 'container' in template
+    ]
+
+
+def test_kubernetes_volumes_are_named_after_their_objects(tmp_path):
+    """C45: stock named secret, ConfigMap and PVC volumes after the object, and
+    documented init containers mounting them by that name."""
+    from kfp import kubernetes
+
+    @dsl.container_component
+    def step():
+        return dsl.ContainerSpec(image='alpine', command=['true'])
+
+    @dsl.pipeline(name='volumes')
+    def pipeline():
+        task = step()
+        kubernetes.use_secret_as_volume(
+            task, secret_name='creds', mount_path='/secrets'
+        )
+        kubernetes.use_config_map_as_volume(
+            task, config_map_name='settings', mount_path='/config'
+        )
+        kubernetes.mount_pvc(task, pvc_name='scratch', mount_path='/data')
+        kubernetes.add_init_container(
+            task,
+            name='prepare',
+            image='alpine',
+            command=['sh', '-c', 'ls /data'],
+            volume_mounts={'scratch': '/data'},
+        )
+
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    (template,) = _container_templates(path)
+    volumes = {volume['name']: volume for volume in template['volumes']}
+    assert volumes['creds']['secret']['secretName'] == 'creds'
+    assert volumes['settings']['configMap']['name'] == 'settings'
+    assert volumes['scratch']['persistentVolumeClaim']['claimName'] == 'scratch'
+    mounts = {
+        m['name']: m['mountPath'] for m in template['container']['volumeMounts']
+    }
+    assert mounts == {
+        'creds': '/secrets',
+        'settings': '/config',
+        'scratch': '/data',
+    }
+    (init,) = template['initContainers']
+    assert init['volumeMounts'] == [{'name': 'scratch', 'mountPath': '/data'}]
+
+
+def test_every_container_gets_the_stock_baseline_hardening(tmp_path):
+    """C46: stock applied the restricted-profile baseline to every user and init
+    container, not only when a security context was requested."""
+    from kfp import kubernetes
+
+    @dsl.component
+    def plain():
+        pass
+
+    @dsl.container_component
+    def raw():
+        return dsl.ContainerSpec(image='alpine', command=['true'])
+
+    @dsl.pipeline(name='hardened')
+    def pipeline():
+        plain()
+        task = raw()
+        kubernetes.add_init_container(
+            task, name='prepare', image='alpine', command=['true']
+        )
+        kubernetes.set_security_context(raw(), run_as_user=1000)
+
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    baseline = {
+        'allowPrivilegeEscalation': False,
+        'capabilities': {'drop': ['ALL']},
+        'seccompProfile': {'type': 'RuntimeDefault'},
+    }
+    templates = _container_templates(path)
+    assert len(templates) == 3
+    contexts = []
+    for template in templates:
+        contexts.append(template['container']['securityContext'])
+        contexts.extend(
+            c['securityContext'] for c in template.get('initContainers', [])
+        )
+    assert len(contexts) == 4
+    for context in contexts:
+        assert baseline.items() <= context.items()
+    assert any(context.get('runAsUser') == 1000 for context in contexts)

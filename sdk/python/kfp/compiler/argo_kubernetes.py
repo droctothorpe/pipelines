@@ -8,6 +8,26 @@ import json
 from kfp.compiler.argo_structured import CLAIM_REFS, CLAIMS, MARKER, MERGE
 from kfp.dsl.types import type_utils
 
+# Stock applied the restricted-profile baseline to every user and init
+# container; a requested security context only adds identity fields.
+BASELINE_HARDENING = {
+    'allowPrivilegeEscalation': False,
+    'capabilities': {'drop': ['ALL']},
+    'seccompProfile': {'type': 'RuntimeDefault'},
+}
+
+
+def harden(templates):
+    """Apply the stock container baseline to every compiled container."""
+    for template in templates:
+        containers = [template['container']] if 'container' in template else []
+        containers.extend(template.get('initContainers', []))
+        for container in containers:
+            context = container.setdefault('securityContext', {})
+            for key, value in BASELINE_HARDENING.items():
+                context.setdefault(key, copy.deepcopy(value))
+    return templates
+
 
 def parameter(task, declaration, legacy=None, require_string=True):
     runtime = declaration.get('runtimeValue', {})
@@ -79,14 +99,15 @@ def lower(task, template, config):
         ('secretAsVolume', 'secret', 'secret'),
         ('configMapAsVolume', 'configMap', 'configMap'),
     ]:
-        for index, value in enumerate(config.pop(source, [])):
+        for value in config.pop(source, []):
             name = parameter(
                 task,
                 value.get(field + 'NameParameter', {}),
                 value.get(field + 'Name'),
             )
+            # Stock named the volume after the object; init containers mount it by that name.
             volume(
-                f'kfp-{driver.lower()}-{index}',
+                name,
                 {
                     driver: {
                         'secretName' if driver == 'secret' else 'name': name,
@@ -172,12 +193,7 @@ def lower(task, template, config):
         for name in ('runAsUser', 'runAsGroup'):
             if name in context:
                 context[name] = int(context[name])
-        container['securityContext'] = {
-            **context,
-            'allowPrivilegeEscalation': False,
-            'capabilities': {'drop': ['ALL']},
-            'seccompProfile': {'type': 'RuntimeDefault'},
-        }
+        container['securityContext'] = {**context, **BASELINE_HARDENING}
     for value in config.pop('initContainers', []):
         if value['name'] in (
             'init',

@@ -312,3 +312,23 @@ def test_client_resolves_argo_server_like_the_argo_cli(monkeypatch, tmp_path):
         host='https://proxy.example', existing_token='t', argo_server='x'
     )._existing_config
     assert getattr(config, '_native_argo_server', None) is None
+
+
+def test_direct_path_probes_argo_server_when_configured(monkeypatch):
+    """C40: with an Argo Server address the health probe reads Argo's info
+    (which names a managed namespace); without one it stays on the Kubernetes
+    discovery document, which needs no Argo Server."""
+    recorded = record_requests(monkeypatch)
+    monkeypatch.delenv('ARGO_TOKEN', raising=False)
+    configuration = Configuration(host='https://kube.invalid/proxy')
+    configuration._native_kubernetes_host = 'https://kube.invalid'
+    configuration._native_argo_server = 'https://argo.invalid'
+    configuration._native_argo_verify = True
+    transport = NativeTransport(configuration)
+    transport.request('GET', '/argo/api/v1/info')
+    assert recorded[-1]['url'] == 'https://argo.invalid/api/v1/info'
+    configuration._native_argo_server = None
+    NativeTransport(configuration).request('GET', '/argo/api/v1/info')
+    assert (
+        recorded[-1]['url'] == 'https://kube.invalid/apis/argoproj.io/v1alpha1'
+    )
