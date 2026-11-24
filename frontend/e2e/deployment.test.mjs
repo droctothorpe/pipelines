@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
+import { boundArtifactAnnotations } from './live.mjs';
 
 const context = process.env.ARGO_CONTEXT || 'orbstack';
 const namespace = process.env.ARGO_NAMESPACE || 'kfp-argo';
@@ -326,6 +327,8 @@ test(
             metadata: {
               generateName: 'native-approval-',
               labels: { 'pipelines.kubeflow.org/pipeline': 'native-approval' },
+              // The template expects its submitter to bind the artifact root.
+              annotations: await boundArtifactAnnotations(version),
             },
             spec,
           },

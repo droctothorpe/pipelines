@@ -118,6 +118,41 @@ export async function archivedRun(uid, token = reader) {
   }
 }
 
+/**
+ * Compiled templates carry artifact keys only and expect the submitter to bind
+ * the namespace's repository (`artifact-root-binding: v1`), as the SDK and the
+ * UI do. A journey that posts a Workflow itself must bind the same way.
+ */
+export async function boundArtifactAnnotations(version, token = editor) {
+  const keys = [
+    'pipelines.kubeflow.org/artifact-repository',
+    'pipelines.kubeflow.org/artifact-bucket',
+    'pipelines.kubeflow.org/artifact-key-prefix',
+    'pipelines.kubeflow.org/artifact-root-binding',
+  ];
+  const annotations = Object.fromEntries(
+    Object.entries(version.metadata.annotations || {}).filter(([key]) => keys.includes(key)),
+  );
+  if (annotations[keys[3]] !== 'v1' || annotations[keys[0]]) return annotations;
+  const repositories = await json(
+    `/kubernetes/api/v1/namespaces/${encode(namespace)}/configmaps/artifact-repositories`,
+    {},
+    token,
+  );
+  const entry =
+    repositories.data[
+      repositories.metadata.annotations['workflows.argoproj.io/default-artifact-repository']
+    ];
+  const bucket = /bucket:\s*['"]?([^'"\s]+)/.exec(entry)?.[1];
+  assert.ok(bucket, 'The namespace repository names no bucket');
+  return {
+    ...annotations,
+    [keys[0]]: `s3://${bucket}`,
+    [keys[1]]: bucket,
+    [keys[2]]: '',
+  };
+}
+
 export function nodeWithArtifact(run, name) {
   return Object.values(run.status.nodes).find((node) =>
     node.outputs?.artifacts?.some((artifact) => artifact.name === name),
