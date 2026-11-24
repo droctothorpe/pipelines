@@ -54,7 +54,9 @@ class NativeTransport:
                 url = self.kubernetes_host.rstrip('/') + path.removeprefix(
                     '/kubernetes'
                 )
-            elif path == '/argo/api/v1/info':
+            elif path == '/argo/api/v1/info' and not self.argo_server:
+                # Without Argo Server the probe is the Kubernetes API's
+                # discovery document for the Argo group.
                 url = (
                     self.kubernetes_host.rstrip('/')
                     + '/apis/argoproj.io/v1alpha1'

@@ -139,9 +139,17 @@ class NativeBackend:
         )
 
     def healthz_service_get_healthz(self):
-        self.transport.request('GET', '/argo/api/v1/info')
+        # Argo Server's info names its managed namespace when it is
+        # namespaced (token and single-user deployments); the multi-user
+        # deployment runs it cluster-wide. On the direct Kubernetes path
+        # without an Argo Server address the probe is the API discovery
+        # document, and the client serves one namespace.
+        info = self.transport.request('GET', '/argo/api/v1/info')
+        multi_user = info.get('kind') != 'APIResourceList' and not info.get(
+            'managedNamespace'
+        )
         return models.V2GetHealthzResponse(
-            multi_user=True, pipeline_store='kubernetes'
+            multi_user=multi_user, pipeline_store='kubernetes'
         )
 
     def _experiment(self, resource, latest_runs=None):

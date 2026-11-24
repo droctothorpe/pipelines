@@ -44,3 +44,31 @@ def test_run_inventory_falls_back_to_live_workflows_without_archive_access():
     # Mutations that must reach every run keep seeing the failure.
     with pytest.raises(models.ApiException):
         backend._workflow_resources('team')
+
+
+class _InfoTransport:
+    def __init__(self, info):
+        self.info = info
+
+    def request(self, method, path):
+        assert (method, path) == ('GET', '/argo/api/v1/info')
+        return self.info
+
+
+@pytest.mark.parametrize(
+    'info, multi_user',
+    [
+        ({'managedNamespace': 'kfp-argo'}, False),
+        ({'modals': {}}, True),
+        ({'kind': 'APIResourceList', 'resources': []}, False),
+    ],
+    ids=['namespaced-argo', 'cluster-wide-argo', 'kubernetes-discovery'],
+)
+def test_healthz_reports_the_deployment_scope(info, multi_user):
+    """C40: multi-user is the cluster-wide Argo Server deployment; namespaced
+    servers and the direct Kubernetes probe report a single namespace."""
+    backend = NativeBackend.__new__(NativeBackend)
+    backend.transport = _InfoTransport(info)
+    response = backend.healthz_service_get_healthz()
+    assert response.multi_user is multi_user
+    assert response.pipeline_store == 'kubernetes'

@@ -145,6 +145,12 @@ def parse_parameters(parameters: Optional[str]) -> Dict:
     help='JSON map of local image names to verified sha256 build identities.',
 )
 @click.option(
+    '--disable-type-check',
+    is_flag=True,
+    default=False,
+    help='Whether to disable type checking.',
+)
+@click.option(
     '--disable-caching',
     is_flag=True,
     help='Disable all memoization, including explicit per-task settings. Useful for offline previews.',
@@ -169,6 +175,7 @@ def compile_(
     service_account: str = 'argo-workflow',
     cache_config_map: str = 'kfp-cache',
     image_digests: Optional[str] = None,
+    disable_type_check: bool = False,
     disable_caching: bool = False,
     disable_execution_caching_by_default: bool = False,
 ) -> None:
@@ -192,6 +199,7 @@ def compile_(
             pipeline_name=pipeline_name,
             pipeline_display_name=pipeline_display_name,
             pipeline_parameters=parse_parameters(pipeline_parameters),
+            type_check=not disable_type_check,
             resource_kind=resource_kind,
             schedule=schedule,
             namespace=namespace,
