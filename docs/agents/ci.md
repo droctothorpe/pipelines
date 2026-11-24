@@ -1,6 +1,6 @@
-# Native CI
+# CI
 
-`.github/workflows/native.yml` checks Python 3.11/3.13, schema regeneration,
+`.github/workflows/ci.yml` checks Python 3.11/3.13, schema regeneration,
 packaging, the frontend and offline viewer, and a real disposable Kind deployment
 on stock's Kubernetes matrix (`kindest/node` v1.33.12 and v1.36.1, passed to
 `test/native-deployment.sh` as `KFP_TEST_K8S_VERSION`; keep the list in step with
