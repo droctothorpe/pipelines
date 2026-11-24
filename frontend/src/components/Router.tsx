@@ -75,7 +75,16 @@ function Workspace({
           {/* The central dashboard has its own navigation for these pages. */}
           {!embedded() && <SideNavigation page={location.pathname} />}
           {connected ? (
-            <Routes>
+            // Stock remounted a page per location so list selections and
+            // query-seeded forms never leak across navigations; run details
+            // keeps its instance across query changes (tab, task selection).
+            <Routes
+              key={
+                location.pathname.startsWith('/runs/details/')
+                  ? location.pathname
+                  : `${location.pathname}${location.search}${location.hash}`
+              }
+            >
               <Route path='/pipelines' element={<NativeListPage kind='pipelines' />} />
               <Route path='/pipeline_versions/new' element={<NativeUpload />} />
               <Route

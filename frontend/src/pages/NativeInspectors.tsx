@@ -43,6 +43,8 @@ import {
 import { formatDateString } from 'src/lib/UiUtils';
 import { isLegacyUiMetadata, readBoundedText } from 'src/lib/NativeUiMetadata';
 import { setScheduleSuspended } from 'src/lib/ArgoResources';
+import { scheduleTrigger } from 'src/lib/NativeScheduling';
+import type { NativeResource } from 'src/lib/ArgoResources';
 import { action, runColumns, runRows } from './NativePages';
 
 export function NativeArtifactContent({
@@ -287,6 +289,11 @@ export function NativeCompare() {
     </NativePage>
   );
 }
+const scheduleWindow = (schedule: NativeResource) => {
+  const trigger = scheduleTrigger(schedule).trigger;
+  return trigger?.cron_schedule || trigger?.periodic_schedule;
+};
+
 export function NativeScheduleDetails() {
   const { scheduleId = '' } = useParams();
   const { namespace, fail, confirm } = useNativeUi();
@@ -377,8 +384,9 @@ export function NativeScheduleDetails() {
                       ? '1'
                       : schedule.spec?.concurrencyPolicy || 'Allow',
                   ],
-                  ['Catchup', String(!!schedule.spec?.startingDeadlineSeconds)],
-                  ['Start time', ''],
+                  ['Catchup', String(scheduleTrigger(schedule).catchup)],
+                  ['Start time', formatDateString(scheduleWindow(schedule)?.start_time) ?? ''],
+                  ['End time', formatDateString(scheduleWindow(schedule)?.end_time) ?? ''],
                 ]}
               />
               <DetailsTable
