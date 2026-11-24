@@ -1,6 +1,9 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Native export validation and filesystem/HTTP safety. Browser behavior has a real smoke test."""
+"""Native export validation and filesystem/HTTP safety.
+
+Browser behavior has a real smoke test.
+"""
 
 import json
 import os

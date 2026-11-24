@@ -1,6 +1,7 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Public native-execution contract, including absence of in-process runners."""
+"""Public native-execution contract, including absence of in-process
+runners."""
 
 import importlib.util
 

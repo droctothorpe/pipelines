@@ -846,7 +846,8 @@ class ComponentSpec:
         return component_spec
 
     def save_to_component_yaml(self, output_file: str) -> None:
-        """Save a portable container definition, without compiling a pipeline."""
+        """Save a portable container definition, without compiling a
+        pipeline."""
         from pathlib import Path
 
         target = Path(output_file)
@@ -859,7 +860,8 @@ class ComponentSpec:
         )
 
     def to_pipeline_spec(self) -> pipeline_spec_pb2.PipelineSpec:
-        """Return the shared schema representation of a container definition."""
+        """Return the shared schema representation of a container
+        definition."""
         from kfp.dsl.component_definition import serialize
 
         return serialize(self)

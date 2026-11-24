@@ -1,6 +1,9 @@
 # Copyright 2026 The Kubeflow Authors
 # SPDX-License-Identifier: Apache-2.0
-"""Graph naming/traversal shared with the DSL. No execution IR builder."""
+"""Graph naming/traversal shared with the DSL.
+
+No execution IR builder.
+"""
 
 from kfp.dsl import pipeline_channel
 

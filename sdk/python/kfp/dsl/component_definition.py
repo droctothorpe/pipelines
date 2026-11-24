@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Portable container component definitions, not pipeline execution IR.
 
-The shared schema remains useful for component YAML and Kubernetes argument
-bindings. This serializer never builds a DAG, registers tasks or selects a backend.
+The shared schema remains useful for component YAML and Kubernetes
+argument bindings. This serializer never builds a DAG, registers tasks
+or selects a backend.
 """
 
 from google.protobuf import json_format, struct_pb2
