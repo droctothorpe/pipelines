@@ -311,10 +311,9 @@ class _Scope:
         return '{{=' + ' && '.join(expressions) + '}}'
 
     def _comparable(self, *operands):
-        """Render condition operands with stock's coercion: mixed types
-        compare as strings when either side is a string, as booleans
-        (numbers by truthiness) when either side is a boolean, otherwise
-        as numbers."""
+        """Render condition operands with stock's coercion: mixed types compare
+        as strings when either side is a string, as booleans (numbers by
+        truthiness) when either side is a boolean, otherwise as numbers."""
         STRING, BOOLEAN, INTEGER, DOUBLE = (
             type_utils.get_parameter_type(name)
             for name in ('str', 'bool', 'int', 'float')
