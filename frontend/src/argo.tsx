@@ -32,7 +32,7 @@ const requested = new URLSearchParams(window.location.search).get('namespace');
  * multi-user proxy names no namespace of its own, so it stays empty until one
  * of the others answers.
  */
-function App() {
+export function App() {
   const config = useQuery({
     queryKey: ['ui-config'],
     queryFn: ({ signal }) => getUiConfig(signal),
@@ -50,13 +50,16 @@ function App() {
     (config.data?.authMode === 'multi-user' ? '' : 'argo');
   useEffect(() => {
     // Switching namespace in the dashboard leaves the list route in place, but a
-    // detail page belongs to the old namespace: fall back to its list.
+    // detail page belongs to the old namespace: fall back to its list. Only a
+    // change after the proxy's config is known counts; the provisional value
+    // before it loads is not a switch, and a deep link must survive it.
+    if (!config.data) return;
     const segments = window.location.hash.replace(/^#\/?/, '').split('/');
     if (previous.current && previous.current !== namespace && segments.length > 1) {
       window.location.hash = '#/' + segments[0];
     }
     previous.current = namespace;
-  }, [namespace]);
+  }, [namespace, config.data]);
   if (!config.data) return null;
   return (
     <Router
@@ -68,14 +71,17 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <QueryClientProvider client={new QueryClient()}>
-      <StyledEngineProvider injectFirst>
-        <ThemeProvider theme={theme}>
-          <App />
-        </ThemeProvider>
-      </StyledEngineProvider>
-    </QueryClientProvider>
-  </StrictMode>,
-);
+const root = document.getElementById('root');
+if (root) {
+  createRoot(root).render(
+    <StrictMode>
+      <QueryClientProvider client={new QueryClient()}>
+        <StyledEngineProvider injectFirst>
+          <ThemeProvider theme={theme}>
+            <App />
+          </ThemeProvider>
+        </StyledEngineProvider>
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}

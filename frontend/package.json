@@ -48,7 +48,7 @@
     "test:ui:coverage": "vitest run --coverage",
     "test:viewer": "npm run build:viewer && node --test scripts/standalone-viewer.smoke.mjs",
     "test:bundle": "npm run build && node --test scripts/native-bundle.smoke.mjs",
-    "test:e2e": "node --test --test-concurrency=4 e2e/markdown.test.mjs e2e/component-wrapper.test.mjs e2e/nested-task.test.mjs e2e/optional-inputs.test.mjs e2e/artifact-list.test.mjs e2e/artifact-preview.test.mjs e2e/legacy-visualizations.test.mjs e2e/stock-ui.test.mjs e2e/sdk-ui-interop.test.mjs e2e/pipeline-lifecycle.test.mjs e2e/stock-ui-parity.test.mjs",
+    "test:e2e": "node --test --test-concurrency=4 e2e/markdown.test.mjs e2e/component-wrapper.test.mjs e2e/nested-task.test.mjs e2e/optional-inputs.test.mjs e2e/artifact-list.test.mjs e2e/artifact-preview.test.mjs e2e/legacy-visualizations.test.mjs e2e/stock-ui.test.mjs e2e/sdk-ui-interop.test.mjs e2e/pipeline-lifecycle.test.mjs e2e/stock-ui-parity.test.mjs e2e/deep-links.test.mjs",
     "test:deployment": "node --test e2e/deployment.test.mjs",
     "test:ci": "npm run format:check && npm run build && npm test && npm run test:viewer && node --test scripts/native-bundle.smoke.mjs"
   },
