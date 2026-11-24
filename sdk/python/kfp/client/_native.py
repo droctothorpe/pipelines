@@ -193,11 +193,17 @@ class NativeBackend:
 
     def experiment_service_create_experiment(self, experiment):
         namespace = self._namespace(experiment.namespace)
+        # Stock kept experiment names unique per namespace (409 on a repeat).
+        # Naming the ConfigMap after the display name lets the API server
+        # enforce that atomically, including for concurrent creators.
+        digest = hashlib.sha256(
+            f'{namespace}/{experiment.display_name}'.encode()
+        ).hexdigest()[:16]
         resource = {
             'apiVersion': 'v1',
             'kind': 'ConfigMap',
             'metadata': {
-                'name': 'experiment-' + str(uuid4()),
+                'name': 'experiment-' + digest,
                 'namespace': namespace,
                 'labels': {RESOURCE: 'experiment'},
             },
@@ -207,16 +213,23 @@ class NativeBackend:
                 'storageState': 'AVAILABLE',
             },
         }
-        return self._experiment(
-            self.transport.request(
+        try:
+            created = self.transport.request(
                 'POST', self._maps_path(namespace), body=resource
             )
-        )
+        except models.ApiException as error:
+            if error.status != 409:
+                raise
+            raise models.ApiException(
+                status=409,
+                reason=f'Experiment {experiment.display_name!r} already exists in namespace {namespace}.',
+            ) from error
+        return self._experiment(created)
 
     def experiment_service_list_experiments(
         self,
         page_token='',
-        page_size=10,
+        page_size=20,
         sort_by='',
         namespace=None,
         filter=None,
@@ -302,7 +315,15 @@ class NativeBackend:
         return self._experiment_storage(experiment_id, 'AVAILABLE')
 
     def experiment_service_delete_experiment(self, experiment_id):
-        return self._delete_map(self._find_map('experiment', experiment_id))
+        experiment = self._find_map('experiment', experiment_id)
+        if experiment.get('data', {}).get('displayName') == 'Default':
+            # Stock refuses as well; the default experiment anchors runs
+            # created without one.
+            raise models.ApiException(
+                status=400,
+                reason='The default experiment cannot be deleted.',
+            )
+        return self._delete_map(experiment)
 
     def _workflow_spec(self, run, enable_caching=None, cache_key=None):
         if run.pipeline_spec:
@@ -734,7 +755,7 @@ class NativeBackend:
         self,
         namespace=None,
         page_token='',
-        page_size=10,
+        page_size=20,
         sort_by='',
         filter=None,
     ):
@@ -867,7 +888,7 @@ class NativeBackend:
         )
 
     def pipeline_service_list_pipeline_versions(
-        self, pipeline_id, page_token='', page_size=10, sort_by='', filter=None
+        self, pipeline_id, page_token='', page_size=20, sort_by='', filter=None
     ):
         pipeline = self._pipeline_record(pipeline_id)
         values = [
@@ -925,10 +946,16 @@ class NativeBackend:
 
     def pipeline_service_delete_pipeline(self, pipeline_id):
         pipeline = self._pipeline_record(pipeline_id)
-        for version in self.pipeline_service_list_pipeline_versions(
+        versions = self.pipeline_service_list_pipeline_versions(
             pipeline_id, page_size=1000000
-        ).pipeline_versions:
-            self._delete_version(version)
+        ).pipeline_versions
+        if versions:
+            # Stock refuses without the API's cascade flag, which the SDK
+            # never sends; delete the versions first.
+            raise models.ApiException(
+                status=400,
+                reason=f'Pipeline {pipeline_id} still has {len(versions)} version(s); delete them before the pipeline.',
+            )
         return self._delete_map(pipeline)
 
     def _run_states(self, namespace):
@@ -1039,7 +1066,7 @@ class NativeBackend:
     def run_service_list_runs(
         self,
         page_token='',
-        page_size=10,
+        page_size=20,
         sort_by='',
         experiment_id=None,
         namespace=None,
@@ -1335,7 +1362,7 @@ class NativeBackend:
     def recurring_run_service_list_recurring_runs(
         self,
         page_token='',
-        page_size=10,
+        page_size=20,
         sort_by='',
         experiment_id=None,
         namespace=None,

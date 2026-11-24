@@ -17,7 +17,10 @@ MARKER = '__kfp_native_json__'
 CLAIMS = '__kfp_native_claims__'
 CLAIM_REFS = '__kfp_native_claim_refs__'
 MERGE = '__kfp_native_merge__'
-MARKERS = {MARKER, CLAIMS, CLAIM_REFS, MERGE}
+# A dynamic value that may be one object or a list of them (stock's
+# toleration JSON accepted either); spread into the surrounding list.
+SPREAD = '__kfp_native_spread__'
+MARKERS = {MARKER, CLAIMS, CLAIM_REFS, MERGE, SPREAD}
 REFERENCE = re.compile(
     r'\{\{(inputs\.parameters\.[^{}]+|workflow\.annotations\.[^{}]+|workflow\.(?:name|uid|namespace)|pod\.name)\}\}'
 )
@@ -121,6 +124,16 @@ def expression(value):
             decoded = 'fromJSON(' + reference(match[1]) + ')'
             if marker == MARKER:
                 return decoded
+            if marker == SPREAD:
+                return (
+                    '(sprig.kindIs("slice", '
+                    + decoded
+                    + ') ? '
+                    + decoded
+                    + ' : ['
+                    + decoded
+                    + '])'
+                )
             items = (
                 '(sprig.kindIs("slice", '
                 + decoded
@@ -144,6 +157,19 @@ def expression(value):
             + ')'
         )
     if isinstance(value, list):
+        if any(deferred(v) and next(iter(v)) == SPREAD for v in value):
+            parts, literal_run = [], []
+            for item in value:
+                if deferred(item) and next(iter(item)) == SPREAD:
+                    if literal_run:
+                        parts.append('[' + ','.join(literal_run) + ']')
+                        literal_run = []
+                    parts.append(expression(item))
+                else:
+                    literal_run.append(expression(item))
+            if literal_run:
+                parts.append('[' + ','.join(literal_run) + ']')
+            return 'concat(' + ', '.join(parts) + ')'
         return '[' + ','.join(expression(v) for v in value) + ']'
     if value is None:
         return 'nil'

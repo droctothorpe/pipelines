@@ -20,11 +20,6 @@ from kfp.dsl.types import type_utils
 
 LOOP_ESCAPE = 'must be wrapped in dsl.Collected'
 CONDITION_ESCAPE = 'Conditional output escapes its branch'
-NO_STOCK_GUARD = (
-    'Compiler gap (no compatibility row): native accepts a dependency stock '
-    'rejects with InvalidTopologyException and lifts it onto the enclosing '
-    'group; C28 covers only the inside-to-outside direction.'
-)
 
 
 @dsl.component
@@ -79,6 +74,15 @@ def root_template(manifest):
 
 def dag_tasks(template):
     return {task['name']: task for task in template['dag']['tasks']}
+
+
+def depends_on(manifest, consumer, upstream):
+    """A23: a dependency into a group is lifted onto that group in the DAG
+    that owns the consumer."""
+    dag = template_with_task(manifest, consumer)
+    assert upstream in dag_tasks(dag)[consumer].get('dependencies', []), (
+        dag_tasks(dag)[consumer]
+    )
 
 
 def template_with_task(manifest, task_name):
@@ -218,19 +222,21 @@ class TestTopologyValidation:
         with pytest.raises(ValueError, match=CONDITION_ESCAPE):
             compile_manifest(my_pipeline, tmp_path)
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_condition_2(self, tmp_path):
+    def test_dependency_into_condition_is_lifted(self, tmp_path):
+        # Stock: InvalidTopologyException. Native (A23): depend on the group.
         @dsl.pipeline
         def my_pipeline(foo: str):
             with dsl.Condition(foo == 'bar'):
                 one = print_and_return(text='foo')
             print_and_return(text='baz').after(one)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'print-and-return-2',
+            'condition-1',
+        )
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_condition_3(self, tmp_path):
+    def test_dependency_into_nested_condition_is_lifted(self, tmp_path):
         @dsl.pipeline
         def my_pipeline(foo: str):
             with dsl.Condition(foo == 'bar'):
@@ -238,11 +244,13 @@ class TestTopologyValidation:
                     one = print_and_return(text='foo')
                 print_and_return(text='baz').after(one)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'print-and-return-2',
+            'condition-2',
+        )
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_condition_4(self, tmp_path):
+    def test_dependency_between_sibling_conditions_is_lifted(self, tmp_path):
         @dsl.pipeline
         def my_pipeline(foo: str):
             with dsl.Condition(foo == 'foo'):
@@ -250,8 +258,11 @@ class TestTopologyValidation:
             with dsl.Condition(foo == 'bar'):
                 print_and_return(text='bar').after(one)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'condition-2',
+            'condition-1',
+        )
 
     def test_valid_condition_1(self, tmp_path):
         @dsl.pipeline
@@ -309,8 +320,7 @@ class TestTopologyValidation:
             'print-and-return'
         ]
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_exithandler_1(self, tmp_path):
+    def test_output_of_exit_handler_body_is_forwarded(self, tmp_path):
         @dsl.pipeline
         def my_pipeline(foo: str):
             exit_task = print_and_return(text='foo')
@@ -318,11 +328,13 @@ class TestTopologyValidation:
                 one = print_and_return(text='foo')
             print_and_return(text=one.output)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'print-and-return-3',
+            'exit-handler-1',
+        )
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_exithandler_2(self, tmp_path):
+    def test_dependency_into_exit_handler_is_lifted(self, tmp_path):
         @dsl.pipeline
         def my_pipeline(foo: str):
             exit_task = print_and_return(text='foo')
@@ -330,11 +342,13 @@ class TestTopologyValidation:
                 one = print_and_return(text='foo')
             print_and_return(text='baz').after(one)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'print-and-return-3',
+            'exit-handler-1',
+        )
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_exithandler_3(self, tmp_path):
+    def test_condition_consuming_exit_handler_output_is_lifted(self, tmp_path):
         @dsl.pipeline
         def my_pipeline(foo: str):
             exit_task = print_and_return(text='foo')
@@ -343,11 +357,13 @@ class TestTopologyValidation:
             with dsl.Condition(foo == 'bar'):
                 print_and_return(text=one.output)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'condition-2',
+            'exit-handler-1',
+        )
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_invalid_exithandler_4(self, tmp_path):
+    def test_dependency_between_exit_handlers_is_lifted(self, tmp_path):
         @dsl.pipeline
         def my_pipeline():
             exit_task_1 = print_and_return(text='foo')
@@ -357,8 +373,11 @@ class TestTopologyValidation:
             with dsl.ExitHandler(exit_task_2):
                 print_and_return(text='bat').after(one)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'exit-handler-2',
+            'exit-handler-1',
+        )
 
     def test_valid_exithandler_1(self, tmp_path):
         @dsl.pipeline
@@ -700,12 +719,6 @@ class TestCrossTasksGroupFanInCollection:
             '{{tasks.for-loop-2.outputs.parameters.'
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler gap (no compatibility row): the custom '
-        'dsl.ParallelFor(name=...) display name is not recorded anywhere '
-        'in the manifest; stock kept it in task_info.name for the UI.',
-    )
     def test_parallel_for_custom_name_is_recorded(self, tmp_path):
         @dsl.component
         def echo(item: str) -> str:
@@ -750,12 +763,6 @@ class TestCrossTasksGroupFanInCollection:
             '{{tasks.' + inner_loop + '.outputs.parameters.'
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler gap (no compatibility row): dsl.Collected on a '
-        'producer in the same loop as its consumer compiles to a plain '
-        'per-iteration reference; stock rejects it.',
-    )
     def test_producer_and_consumer_in_same_context(self, tmp_path):
         @dsl.pipeline
         def math_pipeline():
@@ -766,12 +773,6 @@ class TestCrossTasksGroupFanInCollection:
         with pytest.raises(ValueError):
             compile_manifest(math_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler gap (no compatibility row): dsl.Collected on a '
-        'producer outside any dsl.ParallelFor compiles to a plain '
-        'reference; stock rejects it.',
-    )
     def test_no_parallelfor_context(self, tmp_path):
         @dsl.pipeline
         def math_pipeline():
@@ -867,10 +868,7 @@ class TestMultipleExitHandlerCompilation:
                     print_op(message='Inside condition.')
                 print_op(message='After condition.').after(if_group)
 
-    @pytest.mark.xfail(strict=True, reason=NO_STOCK_GUARD)
-    def test_task_after_task_inside_exit_handler_is_still_invalid(
-        self, tmp_path
-    ):
+    def test_task_after_task_inside_exit_handler_is_lifted(self, tmp_path):
         @dsl.pipeline(name='pipeline-after-task-inside-exit-handler')
         def my_pipeline():
             exit_task = print_op(message='Exit task.')
@@ -878,8 +876,11 @@ class TestMultipleExitHandlerCompilation:
                 inner_task = print_op(message='Inside exit handler.')
             print_op(message='After exit handler.').after(inner_task)
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        depends_on(
+            compile_manifest(my_pipeline, tmp_path),
+            'print-op-3',
+            'exit-handler-1',
+        )
 
     def test_task_after_exit_handler_group_can_use_task_final_status(
         self, tmp_path
@@ -922,13 +923,6 @@ class TestMultipleExitHandlerCompilation:
         with pytest.raises(ValueError, match="'missing-task'"):
             compile_manifest(my_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler bug (no compatibility row): a component task named '
-        'like an exit-handler group yields two root DAG tasks called '
-        '"exit-handler-1", which Argo rejects; stock raised "Ambiguous '
-        'dependency name".',
-    )
     def test_task_after_exit_handler_group_raises_on_ambiguous_name(
         self, tmp_path
     ):
@@ -949,12 +943,8 @@ class TestMultipleExitHandlerCompilation:
         with pytest.raises(ValueError, match='Ambiguous'):
             compile_manifest(my_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler bug (no compatibility row): see the ambiguous-name '
-        'case above; the root DAG lists "exit-handler-1" twice.',
-    )
     def test_root_dag_task_names_are_unique(self, tmp_path):
+        # Stock raised the same error for a task that shadows a group name.
         @dsl.component
         def exit_handler_1():
             pass
@@ -966,9 +956,8 @@ class TestMultipleExitHandlerCompilation:
             with dsl.ExitHandler(exit_task):
                 print_op(message='Inside exit handler.')
 
-        root = root_template(compile_manifest(my_pipeline, tmp_path))
-        names = [task['name'] for task in root['dag']['tasks']]
-        assert len(set(names)) == len(names), names
+        with pytest.raises(ValueError, match='Ambiguous dependency name'):
+            compile_manifest(my_pipeline, tmp_path)
 
     @pytest.mark.xfail(
         strict=True,

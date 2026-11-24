@@ -39,6 +39,11 @@ def pipeline(
         'effect': 'NoExecute',
         'tolerationSeconds': 60,
     },
+    # C47: a JSON toleration parameter may hold a list, as stock accepted.
+    extra_tolerations: list = [
+        {'key': 'compatibility-extra-a', 'operator': 'Exists'},
+        {'key': 'compatibility-extra-b', 'operator': 'Exists'},
+    ],
     affinity: dict = {
         'preferredDuringSchedulingIgnoredDuringExecution': [
             {
@@ -91,6 +96,7 @@ def pipeline(
     )
     kubernetes.add_node_affinity_json(task, affinity)
     kubernetes.add_toleration_json(task, toleration)
+    kubernetes.add_toleration_json(task, extra_tolerations)
 
 
 @pytest.fixture
@@ -138,6 +144,9 @@ def test_settings_reach_the_pod(client, record, config_map):
         t.get('key') == 'compatibility-fixture' and t['tolerationSeconds'] == 60
         for t in pods[0]['spec']['tolerations']
     )
+    assert {'compatibility-extra-a', 'compatibility-extra-b'} <= {
+        t.get('key') for t in pods[0]['spec']['tolerations']
+    }
     node_affinity = pods[0]['spec']['affinity']['nodeAffinity']
     assert node_affinity['requiredDuringSchedulingIgnoredDuringExecution'] == {
         'nodeSelectorTerms': [

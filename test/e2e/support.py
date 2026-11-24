@@ -6,6 +6,8 @@ import os
 import time
 from uuid import uuid4
 
+from kfp.server_api import ApiException
+
 EXPERIMENT = 'SDK end-to-end'
 TERMINAL = ('SUCCEEDED', 'FAILED', 'CANCELED')
 
@@ -33,14 +35,21 @@ def as_user(client, user=None):
 def submit(client, function, arguments=None, name=None, **options):
     """Create a run in the suite's experiment with a unique, searchable
     name."""
-    return client.create_run_from_pipeline_func(
-        function,
-        arguments=arguments or {},
-        run_name=(name or function.name) + ' ' + uuid4().hex[:8],
-        experiment_name=EXPERIMENT,
-        namespace=client.get_user_namespace(),
-        **options,
-    )
+    for attempt in range(2):
+        try:
+            return client.create_run_from_pipeline_func(
+                function,
+                arguments=arguments or {},
+                run_name=(name or function.name) + ' ' + uuid4().hex[:8],
+                experiment_name=EXPERIMENT,
+                namespace=client.get_user_namespace(),
+                **options,
+            )
+        except ApiException as error:
+            # Parallel workers race to create the shared experiment on a
+            # fresh cluster; the loser gets stock's 409 and simply retries.
+            if error.status != 409 or attempt:
+                raise
 
 
 def run_pipeline(client, function, arguments=None, timeout=600, **options):
@@ -102,6 +111,14 @@ def node_output(entry, name='Output'):
     return next(
         p['value']
         for p in entry.get('outputs', {}).get('parameters', [])
+        if p['name'] == name
+    )
+
+
+def node_input(entry, name):
+    return next(
+        p['value']
+        for p in entry.get('inputs', {}).get('parameters', [])
         if p['name'] == name
     )
 

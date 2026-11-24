@@ -3,6 +3,8 @@
 """Native control flow: nesting, branches, loops, exit handlers, retries,
 container artifacts across a nested boundary and large metadata."""
 
+import json
+
 import pytest
 from kfp import dsl
 
@@ -269,3 +271,35 @@ def test_number_compared_with_bool_uses_truthiness(client, record):
         support.phases(raw)
     )
     record(run_id=submitted.run_id, branches=phases)
+
+
+@dsl.component(**COMPONENT)
+def identity(job_id: str, job_name: str, task_name: str) -> dict:
+    return {'job_id': job_id, 'job_name': job_name, 'task_name': task_name}
+
+
+@dsl.pipeline(name='native-identity-placeholders')
+def identity_pipeline():
+    identity(
+        job_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        job_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
+        task_name=dsl.PIPELINE_TASK_NAME_PLACEHOLDER,
+    )
+
+
+@pytest.mark.smoke
+def test_identity_placeholders_resolve_at_run_time(client, record):
+    """C41: the run id, run name and task name reach the component."""
+    submitted, done = support.run_pipeline(
+        client, identity_pipeline, {}, name='Identity check'
+    )
+    raw = support.workflow(client, done)
+    assert done.state == 'SUCCEEDED', support.phases(raw)
+    output = json.loads(support.node_output(support.node(raw, 'identity')))
+    assert output == {
+        'job_id': submitted.run_id,
+        'job_name': done.display_name,
+        'task_name': 'identity',
+    }
+    assert output['job_name'].startswith('Identity check')
+    record(run_id=submitted.run_id, identity=output)

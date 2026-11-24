@@ -184,6 +184,7 @@ class _Compiler:
             port,
             resolver or self.value,
             self.nullable_source,
+            task_name=task.name,
         )
 
     def compile_component(self, component_spec, task=None):
@@ -304,12 +305,24 @@ class _Compiler:
                 key: value for key, value in inputs.items() if value
             }
         dependencies = {}
+        root_tasks = {task.name for task in root.tasks}
         for task in root.tasks:
             target = self.compile_component(task.component_spec, task)
             arguments = {'parameters': [], 'artifacts': []}
             for name, port in (task.component_spec.inputs or {}).items():
                 if name in task.inputs:
                     value = task.inputs[name]
+                    if (
+                        isinstance(value, for_loop.Collected)
+                        and value.output.task_name in root_tasks
+                    ):
+                        # Stock: Collected fans in a loop's outputs; a producer
+                        # beside its consumer is not inside any dsl.ParallelFor.
+                        raise ValueError(
+                            'dsl.Collected() collects the outputs of a task inside a '
+                            f'dsl.ParallelFor; {value.output.task_name!r} is in the same '
+                            f'scope as {task.name!r}.'
+                        )
                 elif port.optional and port.default is not None:
                     value = port.default
                 elif port.optional:
@@ -888,6 +901,9 @@ class _Compiler:
                 value = _json(value)
             for old, new in replacements.items():
                 value = value.replace(old, new)
+            value = argo_parameters.identity_placeholders(
+                value, task.name, pod_scope=True
+            )
             value = self.workspace_value(value)
             if '{{$.' in value or '{{$}}' in value:
                 raise ValueError(
@@ -1439,10 +1455,20 @@ class _Compiler:
                         else value.get('labels', {})
                     )
                 if source == 'tolerations':
+                    from kfp.compiler.argo_structured import MARKER, SPREAD
+
                     value = [
                         argo_kubernetes.structured(task, item['tolerationJson'])
                         if item.get('tolerationJson')
                         else dict(item)
+                        for item in value
+                    ]
+                    # A runtime toleration may be one object or a list (stock
+                    # accepted both); spread it into the pod's list.
+                    value = [
+                        {SPREAD: item[MARKER]}
+                        if isinstance(item, dict) and set(item) == {MARKER}
+                        else item
                         for item in value
                     ]
                     for item in value:

@@ -3,6 +3,7 @@
 """The portable bridge prepared by this SDK executes under unmodified PyPI
 KFP."""
 
+import os
 import shutil
 import subprocess
 import sys
@@ -21,10 +22,18 @@ def test_bridge_runs_under_stock_kfp(tmp_path):
     if shutil.which('uv') is None:
         pytest.skip('uv is required to create the stock KFP environment')
     stock_runtime.prepare(tmp_path)
+    # CI activates the repository environment (editable kfp); the stock
+    # interpreter must not inherit it.
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ('VIRTUAL_ENV', 'UV_PROJECT_ENVIRONMENT', 'PYTHONPATH')
+    }
     result = subprocess.run(
         [
             'uv',
             'run',
+            '--isolated',
             '--no-project',
             '--python',
             '3.11',
@@ -39,6 +48,7 @@ def test_bridge_runs_under_stock_kfp(tmp_path):
         capture_output=True,
         text=True,
         timeout=600,
+        env=environment,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Passed with unmodified KFP ' + STOCK in result.stdout, result.stdout

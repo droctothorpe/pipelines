@@ -64,7 +64,41 @@ def source_nullable(channel, component, graph, seen=None):
     return source_nullable(output, task.component_spec, inner, seen)
 
 
-def bind(value, port, resolver, is_nullable, allow_nullable=True):
+# Stock's driver substituted these at runtime; Argo exposes the same facts.
+IDENTITY_PLACEHOLDERS = {
+    '{{$.pipeline_job_name}}': '{{workflow.annotations.pipelines.kubeflow.org/display-name}}',
+    '{{$.pipeline_job_resource_name}}': '{{workflow.name}}',
+    '{{$.pipeline_job_uuid}}': '{{workflow.uid}}',
+    '{{$.pipeline_job_create_time_utc}}': '{{workflow.creationTimestamp}}',
+    '{{$.pipeline_job_schedule_time_utc}}': (
+        "{{=workflow.annotations['workflows.argoproj.io/scheduled-time'] ?? ''}}"
+    ),
+}
+TASK_UUID_PLACEHOLDER = '{{$.pipeline_task_uuid}}'
+
+
+def identity_placeholders(value, task_name, pod_scope):
+    """Replace KFP's runtime identity placeholders in a string.
+
+    ``pod_scope`` is true for container command/args, where Argo resolves the
+    pod name; parameter values are bound before any pod exists.
+    """
+    if not isinstance(value, str) or '{{$.pipeline_' not in value:
+        return value
+    for placeholder, replacement in IDENTITY_PLACEHOLDERS.items():
+        value = value.replace(placeholder, replacement)
+    value = value.replace('{{$.pipeline_task_name}}', task_name)
+    if TASK_UUID_PLACEHOLDER in value:
+        if not pod_scope:
+            raise ValueError(
+                'PIPELINE_TASK_ID_PLACEHOLDER is resolved by the pod; use it in the '
+                'container command or arguments, not in a parameter value.'
+            )
+        value = value.replace(TASK_UUID_PLACEHOLDER, '{{pod.name}}')
+    return value
+
+
+def bind(value, port, resolver, is_nullable, allow_nullable=True, task_name=''):
     from kfp.compiler.argo_compiler import _kind
     from kfp.compiler.argo_groups import _expression_reference
 
@@ -102,6 +136,7 @@ def bind(value, port, resolver, is_nullable, allow_nullable=True):
             )
         return source
     if isinstance(value, str):
+        value = identity_placeholders(value, task_name, pod_scope=False)
         channels = {
             str(c): c
             for c in pipeline_channel.extract_pipeline_channels_from_string(

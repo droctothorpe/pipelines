@@ -1444,3 +1444,99 @@ def test_every_container_gets_the_stock_baseline_hardening(tmp_path):
     for context in contexts:
         assert baseline.items() <= context.items()
     assert any(context.get('runAsUser') == 1000 for context in contexts)
+
+
+def test_runtime_identity_placeholders_resolve_to_argo_facts(tmp_path):
+    """C41: stock's driver substituted these at run time; native maps them to
+    Argo's workflow facts, and the task id to the pod in container scope."""
+
+    @dsl.container_component
+    def shout():
+        return dsl.ContainerSpec(
+            image='alpine',
+            command=['echo'],
+            args=[
+                dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
+                dsl.PIPELINE_JOB_RESOURCE_NAME_PLACEHOLDER,
+                dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+                dsl.PIPELINE_JOB_CREATE_TIME_UTC_PLACEHOLDER,
+                dsl.PIPELINE_JOB_SCHEDULE_TIME_UTC_PLACEHOLDER,
+                dsl.PIPELINE_TASK_NAME_PLACEHOLDER,
+                dsl.PIPELINE_TASK_ID_PLACEHOLDER,
+            ],
+        )
+
+    @dsl.component
+    def record(text: str) -> str:
+        return text
+
+    @dsl.pipeline(name='identity')
+    def pipeline():
+        shout()
+        record(text='run ' + dsl.PIPELINE_JOB_ID_PLACEHOLDER)
+
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    templates = {
+        t['name']: t
+        for t in yaml.safe_load(path.read_text())['spec']['templates']
+    }
+    shout_template = next(
+        t for n, t in templates.items() if n.endswith('shout')
+    )
+    assert shout_template['container']['args'] == [
+        '{{workflow.annotations.pipelines.kubeflow.org/display-name}}',
+        '{{workflow.name}}',
+        '{{workflow.uid}}',
+        '{{workflow.creationTimestamp}}',
+        "{{=workflow.annotations['workflows.argoproj.io/scheduled-time'] ?? ''}}",
+        'shout',
+        '{{pod.name}}',
+    ]
+    spec = yaml.safe_load(path.read_text())['spec']
+    root = templates[spec['entrypoint']]
+    record_task = next(t for t in root['dag']['tasks'] if t['name'] == 'record')
+    assert (
+        record_task['arguments']['parameters'][0]['value']
+        == 'run {{workflow.uid}}'
+    )
+
+
+def test_task_id_placeholder_in_a_parameter_is_rejected(tmp_path):
+    @dsl.component
+    def record(text: str) -> str:
+        return text
+
+    @dsl.pipeline(name='identity-parameter')
+    def pipeline():
+        record(text=dsl.PIPELINE_TASK_ID_PLACEHOLDER)
+
+    with pytest.raises(ValueError, match='PIPELINE_TASK_ID_PLACEHOLDER'):
+        compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+
+
+def test_dynamic_toleration_json_may_be_a_list(tmp_path):
+    """C47: stock accepted one toleration object or a list in the JSON
+    parameter; native spreads either into the pod's list."""
+    from kfp import kubernetes
+
+    @dsl.container_component
+    def step():
+        return dsl.ContainerSpec(image='alpine', command=['true'])
+
+    @dsl.pipeline(name='tolerations')
+    def pipeline(tolerations: list):
+        task = step()
+        kubernetes.add_toleration(task, key='static', operator='Exists')
+        kubernetes.add_toleration_json(task, tolerations)
+
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    (template,) = _container_templates(path)
+    patch = template['podSpecPatch']
+    assert patch.startswith('{{=toJson(')
+    assert (
+        'concat([sprig.dict("key","static","operator","Exists")], (sprig.kindIs("slice", '
+        in patch
+    )
+    assert patch.count('fromJSON(inputs.parameters["kfp-config-0"])') == 3

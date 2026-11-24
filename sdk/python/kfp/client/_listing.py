@@ -29,11 +29,55 @@ def _scalar(value):
     return value
 
 
+# Stock accepted its storage column names as filter and sort keys and matched
+# names and descriptions without regard to case.
+ALIASES = {'name': 'display_name', 'status': 'state'}
+CASE_INSENSITIVE = {'display_name', 'description'}
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 200
+
+
+def _field(item, key):
+    key = (key or '').lower()
+    if key in item.openapi_types:
+        return key
+    alias = ALIASES.get(key)
+    if alias in item.openapi_types:
+        return alias
+    if key == 'id':
+        for candidate in item.openapi_types:
+            if (
+                candidate.endswith('_id')
+                and not candidate.startswith(
+                    ('pipeline_version', 'experiment', 'pipeline')
+                )
+                or candidate
+                == type(item).__name__.removeprefix('V2').lower() + '_id'
+            ):
+                return candidate
+        identities = [
+            name for name in item.openapi_types if name.endswith('_id')
+        ]
+        if identities:
+            return identities[0]
+    return None
+
+
+def _fold(key, value):
+    return (
+        value.lower()
+        if key in CASE_INSENSITIVE and isinstance(value, str)
+        else value
+    )
+
+
 def _matches(item, predicate):
-    key = predicate.get('key')
-    if key not in item.openapi_types:
-        raise ApiException(status=400, reason=f'Unknown filter field: {key}')
-    value = _scalar(getattr(item, key, None))
+    key = _field(item, predicate.get('key'))
+    if key is None:
+        raise ApiException(
+            status=400, reason=f'Unknown filter field: {predicate.get("key")}'
+        )
+    value = _fold(key, _scalar(getattr(item, key, None)))
     operation = predicate.get('operation')
     operation = OPERATIONS.get(operation, operation)
     provided = [
@@ -69,7 +113,8 @@ def _matches(item, predicate):
             raise ApiException(
                 status=400, reason='IN requires a list of values.'
             )
-        return value in expected
+        return value in [_fold(key, candidate) for candidate in expected]
+    expected = _fold(key, expected)
     if operation == 'EQUALS':
         return value == expected
     if operation == 'NOT_EQUALS':
@@ -100,7 +145,15 @@ def _matches(item, predicate):
     )
 
 
-def page(items, *, scope, page_token='', page_size=10, sort_by='', filter=None):
+def page(
+    items,
+    *,
+    scope,
+    page_token='',
+    page_size=DEFAULT_PAGE_SIZE,
+    sort_by='',
+    filter=None,
+):
     if (
         isinstance(page_size, bool)
         or not isinstance(page_size, int)
@@ -109,7 +162,7 @@ def page(items, *, scope, page_token='', page_size=10, sort_by='', filter=None):
         raise ApiException(
             status=400, reason='page_size must be a non-negative integer.'
         )
-    page_size = page_size or 10
+    page_size = min(page_size or DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
     try:
         predicates = json.loads(unquote(filter))['predicates'] if filter else []
         if not isinstance(predicates, list):
@@ -126,9 +179,9 @@ def page(items, *, scope, page_token='', page_size=10, sort_by='', filter=None):
         for item in items
         if all(_matches(item, predicate) for predicate in predicates)
     ]
+    # Stock sorted by creation time ascending when no order was given.
     fields = [
-        part.strip().split()
-        for part in (sort_by or 'created_at desc').split(',')
+        part.strip().split() for part in (sort_by or 'created_at').split(',')
     ]
     for field in reversed(fields):
         if (
@@ -137,13 +190,15 @@ def page(items, *, scope, page_token='', page_size=10, sort_by='', filter=None):
             or (len(field) == 2 and field[1].lower() not in ('asc', 'desc'))
         ):
             raise ApiException(status=400, reason='Invalid sort_by expression.')
-        name = field[0]
-        if values and name not in values[0].openapi_types:
-            raise ApiException(status=400, reason=f'Unknown sort field: {name}')
+        name = _field(values[0], field[0]) if values else field[0].lower()
+        if name is None:
+            raise ApiException(
+                status=400, reason=f'Unknown sort field: {field[0]}'
+            )
         values.sort(
             key=lambda item: (
                 getattr(item, name, None) is not None,
-                _scalar(getattr(item, name, None)) or '',
+                _fold(name, _scalar(getattr(item, name, None))) or '',
             ),
             reverse=len(field) == 2 and field[1].lower() == 'desc',
         )

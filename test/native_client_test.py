@@ -727,6 +727,17 @@ def test_unchanged_pipeline_upload_version_and_submission(native_api):
         == {}
     )
     assert client.list_pipeline_versions(pipeline.pipeline_id).total_size == 1
+    # C37: as in stock, a pipeline with versions is not deleted silently.
+    with pytest.raises(kfp.server_api.ApiException) as refused:
+        client.delete_pipeline(pipeline.pipeline_id)
+    assert refused.value.status == 400
+    assert 'version' in refused.value.reason
+    for remaining in client.list_pipeline_versions(
+        pipeline.pipeline_id
+    ).pipeline_versions:
+        client.delete_pipeline_version(
+            pipeline.pipeline_id, remaining.pipeline_version_id
+        )
     assert client.delete_pipeline(pipeline.pipeline_id) == {}
     assert client.list_pipelines(namespace='team').total_size == 0
 
@@ -1429,3 +1440,54 @@ def test_deprecated_job_aliases_delegate_to_recurring_runs(
         if status:
             assert client.get_recurring_run(recurring_run_id).status == status
     assert native_store['schedules'] == {}
+
+
+def test_default_experiment_cannot_be_deleted(native_api):
+    """C38: stock refused to delete the default experiment."""
+    client, _, _ = native_api
+
+    @dsl.component
+    def step():
+        pass
+
+    @dsl.pipeline
+    def pipeline():
+        step()
+
+    run = client.create_run_from_pipeline_func(pipeline, arguments={})
+    default = client.get_experiment(experiment_name='Default', namespace='team')
+    assert client.get_run(run.run_id).experiment_id == default.experiment_id
+    with pytest.raises(kfp.server_api.ApiException) as refused:
+        client.delete_experiment(default.experiment_id)
+    assert refused.value.status == 400
+    assert (
+        client.get_experiment(experiment_id=default.experiment_id).display_name
+        == 'Default'
+    )
+
+
+def test_experiment_names_are_unique_per_namespace(native_api):
+    """C55: stock refused a second experiment with the same name (409); the
+    ConfigMap name derives from the display name so Kubernetes enforces it."""
+    client, _, _ = native_api
+    first = client.create_experiment('Shared name', namespace='team')
+    # The stock wrapper looks the name up first and returns the existing one.
+    assert (
+        client.create_experiment('Shared name', namespace='team').experiment_id
+        == first.experiment_id
+    )
+    # A concurrent creator that lost the race gets stock's 409 from the API.
+    with pytest.raises(kfp.server_api.ApiException) as refused:
+        client._experiment_api.experiment_service_create_experiment(
+            server_api.V2Experiment(
+                display_name='Shared name', namespace='team'
+            )
+        )
+    assert refused.value.status == 409
+    assert 'already exists' in refused.value.reason
+    assert (
+        client.get_experiment(
+            experiment_name='Shared name', namespace='team'
+        ).experiment_id
+        == first.experiment_id
+    )

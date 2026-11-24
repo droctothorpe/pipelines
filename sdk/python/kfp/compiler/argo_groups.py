@@ -127,6 +127,12 @@ class _Scope:
             }
             if group.parallelism_limit:
                 self.wrapper['parallelism'] = group.parallelism_limit
+            if getattr(group, 'display_name', None):
+                self.wrapper['metadata'] = {
+                    'annotations': {
+                        'workflows.argoproj.io/display-name': group.display_name
+                    }
+                }
             compiler.templates.append(self.wrapper)
         elif self.exit_handler:
             # Both are targets: otherwise a successful cleanup masks a failed
@@ -373,6 +379,16 @@ class _Scope:
                     )
                 raise ValueError(f'Missing input {name!r} on {task.name!r}.')
             value = task.inputs[name]
+            if isinstance(value, for_loop.Collected):
+                # Stock: Collected fans in a loop's outputs; the producer must
+                # sit in a dsl.ParallelFor the consumer is outside of.
+                producer = self.owners.get(value.output.task_name)
+                if producer is not None and not isinstance(producer, _Scope):
+                    raise ValueError(
+                        'dsl.Collected() collects the outputs of a task inside a '
+                        f'dsl.ParallelFor; {value.output.task_name!r} is in the same '
+                        f'scope as {task.name!r}.'
+                    )
             if port.is_artifact_list or self.compiler.staged_source(value):
                 arguments['parameters'].extend(
                     {
@@ -586,6 +602,13 @@ class _Scope:
             if isinstance(child.group, tasks_group._ConditionBase):
                 item['when'] = self.conditions(child.group)
             self.template['dag']['tasks'].append(item)
+        names = [item['name'] for item in self.template['dag']['tasks']]
+        for name in sorted(set(names)):
+            if names.count(name) > 1:
+                raise ValueError(
+                    f'Ambiguous dependency name {name!r}: a task and a group share it. '
+                    'Rename the task.'
+                )
         if self.exit_handler:
             task = self.group.exit_task
             target = self.compiler.compile_component(task.component_spec, task)
