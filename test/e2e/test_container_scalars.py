@@ -6,7 +6,10 @@ errors that stop the consumer."""
 import pytest
 
 from e2e import support
-from e2e.pipelines.container_scalars import pipeline
+from e2e.pipelines.container_scalars import (
+    executor_input_pipeline,
+    pipeline,
+)
 
 
 @pytest.mark.smoke
@@ -51,3 +54,19 @@ def test_invalid_output_fails_the_producer_not_the_consumer(
         for n in support.nodes(raw)
     )
     record(run_id=submitted.run_id, bad=bad, state=done.state)
+
+
+@pytest.mark.smoke
+def test_executor_input_placeholder_reaches_a_raw_container(client, record):
+    """C42: the container parses ``{{$}}`` and writes through the output file
+    the document names."""
+    submitted, done = support.run_pipeline(
+        client, executor_input_pipeline, {'text': 'hi', 'count': 2}
+    )
+    raw = support.workflow(client, done)
+    assert done.state == 'SUCCEEDED', support.failures(done)
+    assert (
+        support.node_output(support.node(raw, 'executor-input-echo'), 'result')
+        == 'HI4'
+    )
+    record(run_id=submitted.run_id, result='HI4')

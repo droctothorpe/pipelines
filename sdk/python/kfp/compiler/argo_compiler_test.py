@@ -1540,3 +1540,77 @@ def test_dynamic_toleration_json_may_be_a_list(tmp_path):
         in patch
     )
     assert patch.count('fromJSON(inputs.parameters["kfp-config-0"])') == 3
+
+
+def test_executor_input_placeholder_expands_for_raw_containers(tmp_path):
+    """C42: stock's launcher substituted ``{{$}}`` with the ExecutorInput JSON;
+    native assembles the same document from the per-port references."""
+
+    @dsl.container_component
+    def shout(
+        text: str,
+        count: int,
+        data: dsl.Input[dsl.Dataset],
+        result: dsl.OutputPath(str),
+        model: dsl.Output[dsl.Model],
+    ):
+        return dsl.ContainerSpec(
+            image='alpine',
+            command=['sh', '-c', 'echo'],
+            args=[dsl.PIPELINE_TASK_EXECUTOR_INPUT_PLACEHOLDER],
+        )
+
+    @dsl.component
+    def dataset(data: dsl.Output[dsl.Dataset]):
+        pass
+
+    @dsl.pipeline(name='executor-input')
+    def pipeline(text: str = 'hi', count: int = 2):
+        shout(text=text, count=count, data=dataset().outputs['data'])
+
+    path = tmp_path / 'pipeline.yaml'
+    compiler.Compiler().compile(pipeline, str(path))
+    template = next(
+        t for t in _container_templates(path) if t['name'].endswith('shout')
+    )
+    (argument,) = template['container']['args']
+    assert argument.startswith('{{=toJson(sprig.dict(') and argument.endswith(
+        ')}}'
+    )
+    assert (
+        '"parameterValues",sprig.dict("text",inputs.parameters["text"],"count",fromJSON(inputs.parameters["count"]))'
+        in argument
+    )
+    assert (
+        '"data",sprig.dict("artifacts",[sprig.dict("name","data","uri",inputs.parameters["kfp-uri-data"],"metadata",(fromJSON(inputs.parameters["kfp-meta-data"]).metadata ?? sprig.dict()),"type",sprig.dict("schemaTitle","system.Dataset"))])'
+        in argument
+    )
+    assert (
+        '"parameters",sprig.dict("result",sprig.dict("outputFile","/tmp/kfp-result"))'
+        in argument
+    )
+    assert (
+        '"model",sprig.dict("artifacts",[sprig.dict("name","model","uri",'
+        in argument
+    )
+    assert (
+        'outputFile",' in argument
+        and '"outputs",sprig.dict("parameters"' in argument
+    )
+
+
+def test_executor_output_path_placeholder_is_refused_with_guidance(tmp_path):
+    @dsl.container_component
+    def writer(result: dsl.OutputPath(str)):
+        return dsl.ContainerSpec(
+            image='alpine',
+            command=['sh', '-c', 'echo'],
+            args=[dsl.PIPELINE_TASK_EXECUTOR_OUTPUT_PATH_PLACEHOLDER],
+        )
+
+    @dsl.pipeline(name='executor-output')
+    def pipeline():
+        writer()
+
+    with pytest.raises(ValueError, match='A30'):
+        compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))

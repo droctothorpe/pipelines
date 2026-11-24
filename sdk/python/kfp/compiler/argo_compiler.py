@@ -542,6 +542,89 @@ class _Compiler:
             and self.root_absent(value.name)
         )
 
+    def executor_input(self, spec, contract, replacements):
+        """Stock's PIPELINE_TASK_EXECUTOR_INPUT_PLACEHOLDER (``{{$}}``) for raw
+        containers: the ExecutorInput JSON, assembled from the same references
+        the per-port placeholders use. Artifact metadata comes from the producer
+        identity Argo passes along; the full metadata file is at the staged
+        path. There is no ``outputFile``: outputs are collected per port (A30).
+        """
+        from kfp.compiler import argo_structured
+        from kfp.compiler.argo_groups import _expression_reference
+
+        def expr(tag):
+            return argo_structured._Expression(_expression_reference(tag))
+
+        def schema(port):
+            return {'schemaTitle': port.type.split('@')[0]}
+
+        inputs = {'parameterValues': {}, 'artifacts': {}}
+        for name, port in (spec.inputs or {}).items():
+            if name not in contract['inputs']:
+                continue
+            if structures.spec_type_is_parameter(port.type):
+                tag = replacements.get(f"{{{{$.inputs.parameters['{name}']}}}}")
+                if tag is None:
+                    continue
+                if not tag.startswith('{{'):
+                    inputs['parameterValues'][name] = tag
+                elif tag.startswith('{{=') or _kind(port) == 'String':
+                    inputs['parameterValues'][name] = expr(tag)
+                else:
+                    # Stock's parameterValues are typed; the argument string is
+                    # the JSON spelling of a non-string value.
+                    inputs['parameterValues'][name] = (
+                        argo_structured._Expression(
+                            'fromJSON(' + _expression_reference(tag) + ')'
+                        )
+                    )
+            elif not (
+                contract['inputs'][name].get('artifactList')
+                or contract['inputs'][name].get('stagedArtifact')
+            ):
+                inputs['artifacts'][name] = {
+                    'artifacts': [
+                        {
+                            'name': name,
+                            'uri': expr(
+                                _ref('inputs.parameters', 'kfp-uri-' + name)
+                            ),
+                            'metadata': argo_structured._Expression(
+                                '(fromJSON(inputs.parameters['
+                                + _json('kfp-meta-' + name)
+                                + ']).metadata ?? sprig.dict())'
+                            ),
+                            'type': schema(port),
+                        }
+                    ]
+                }
+        outputs = {'parameters': {}, 'artifacts': {}}
+        for name, port in (spec.outputs or {}).items():
+            if structures.spec_type_is_parameter(port.type):
+                outputs['parameters'][name] = {
+                    'outputFile': replacements[
+                        f"{{{{$.outputs.parameters['{name}'].output_file}}}}"
+                    ]
+                }
+            else:
+                outputs['artifacts'][name] = {
+                    'artifacts': [
+                        {
+                            'name': name,
+                            'uri': replacements[
+                                f"{{{{$.outputs.artifacts['{name}'].uri}}}}"
+                            ],
+                            'metadata': {},
+                            'type': schema(port),
+                        }
+                    ]
+                }
+        return (
+            '{{=toJson('
+            + argo_structured.expression({'inputs': inputs, 'outputs': outputs})
+            + ')}}'
+        )
+
     def input_port(self, inputs, name, port, allow_nullable=True, staged=False):
         if port.is_artifact_list or staged:
             inputs['parameters'].extend(
@@ -929,6 +1012,8 @@ class _Compiler:
                     if output.get('path') == old:
                         output['path'] = new
 
+        executor_input = self.executor_input(spec, contract, replacements)
+
         def convert(value):
             if isinstance(value, pipeline_channel.PipelineChannel):
                 value = str(value)
@@ -940,6 +1025,14 @@ class _Compiler:
                 value, task.name, pod_scope=True
             )
             value = self.workspace_value(value)
+            if '{{$.outputs.output_file}}' in value:
+                raise ValueError(
+                    f'Task {task.name!r} uses PIPELINE_TASK_EXECUTOR_OUTPUT_PATH_PLACEHOLDER; '
+                    'native collects outputs per port, so write each output to its '
+                    "{{$.outputs.parameters['<name>'].output_file}} or artifact path (A30)."
+                )
+            if '{{$}}' in value:
+                value = value.replace('{{$}}', executor_input)
             if '{{$.' in value or '{{$}}' in value:
                 raise ValueError(
                     f'Task {task.name!r} contains an unsupported KFP placeholder; replace it with a supported parameter/path.'

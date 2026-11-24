@@ -66,3 +66,27 @@ def pipeline(bad: str = ''):
         mapping=source.outputs['mapping'],
         data=source.outputs['data'],
     )
+
+
+@dsl.container_component
+def executor_input_echo(text: str, count: int, result: dsl.OutputPath(str)):
+    """C42: a raw container reads stock's ExecutorInput JSON from ``{{$}}``
+    and writes its result to the per-port output file named inside it."""
+    return dsl.ContainerSpec(
+        image='python:3.11',
+        command=[
+            'python',
+            '-c',
+            'import json,pathlib,sys; executor=json.loads(sys.argv[1]); '
+            'values=executor["inputs"]["parameterValues"]; '
+            'target=pathlib.Path(executor["outputs"]["parameters"]["result"]["outputFile"]); '
+            'target.parent.mkdir(parents=True, exist_ok=True); '
+            'target.write_text(values["text"].upper() + str(values["count"] * 2))',
+        ],
+        args=[dsl.PIPELINE_TASK_EXECUTOR_INPUT_PLACEHOLDER],
+    )
+
+
+@dsl.pipeline(name='native-executor-input-placeholder')
+def executor_input_pipeline(text: str = 'hi', count: int = 2) -> str:
+    return executor_input_echo(text=text, count=count).outputs['result']
