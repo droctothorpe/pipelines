@@ -6,6 +6,11 @@ Two definitions fail stock compilation and are expected failures.
 Samples that need hardware or credentials skip unless
 KFP_TEST_PREREQUISITES=1. Set KFP_TEST_DISABLE_CACHING=1 for a cold pass
 and KFP_TEST_SERVICE_ACCOUNT for the PVC sample.
+
+Every run must reach the sample's expected state; samples that stock's
+per-sample runner tests also checked (branches taken, loop items and
+outputs, cache hits, retries, exit handlers, OOM failures) carry those
+assertions in ``e2e.samples.EXPECTATIONS``, read from the Argo workflow.
 """
 
 import os
@@ -14,7 +19,13 @@ from uuid import uuid4
 import pytest
 
 from e2e import support
-from e2e.samples import cases, compile_case, frozen_baseline, verify_previews
+from e2e.samples import (
+    Outcome,
+    cases,
+    compile_case,
+    frozen_baseline,
+    verify_previews,
+)
 
 BASELINE = frozen_baseline()
 
@@ -43,17 +54,21 @@ def test_sample_runs_unchanged(client, settings, namespace, record, case):
         pytest.skip(case.prerequisite)
     package = compile_case(case, settings.output)
     cold = bool(os.environ.get('KFP_TEST_DISABLE_CACHING'))
-    submitted = client.create_run_from_pipeline_package(
-        str(package),
-        arguments=case.parameters,
-        run_name='Stock sample ' + case.pipeline + ' ' + uuid4().hex[:8],
-        experiment_name='Stock sample compatibility',
-        namespace=namespace,
-        service_account=os.environ.get('KFP_TEST_SERVICE_ACCOUNT') or None,
-        enable_caching=False if cold else None,
-    )
-    done = submitted.wait_for_run_completion(timeout=case.timeout)
-    raw = support.workflow(client, done)
+
+    def submit(arguments):
+        submitted = client.create_run_from_pipeline_package(
+            str(package),
+            arguments=arguments,
+            run_name='Stock sample ' + case.pipeline + ' ' + uuid4().hex[:8],
+            experiment_name='Stock sample compatibility',
+            namespace=namespace,
+            service_account=os.environ.get('KFP_TEST_SERVICE_ACCOUNT') or None,
+            enable_caching=False if cold else None,
+        )
+        done = submitted.wait_for_run_completion(timeout=case.timeout)
+        return submitted, done, support.workflow(client, done)
+
+    submitted, done, raw = submit(case.parameters)
     nodes = (raw.get('status') or {}).get('nodes', {})
     assert done.state == case.expected_state, support.phases(raw)
     entry = {
@@ -61,6 +76,20 @@ def test_sample_runs_unchanged(client, settings, namespace, record, case):
         'state': done.state,
         'caching': 'disabled' if cold else 'default',
     }
+
+    def rerun(arguments=None):
+        """The stock assertions' second submission of the same package."""
+        merged = {**case.parameters, **(arguments or {})}
+        again, completed, workflow = submit(merged)
+        entry.setdefault('reruns', []).append(
+            {
+                'run_id': again.run_id,
+                'state': completed.state,
+                'arguments': merged,
+            }
+        )
+        return Outcome(client, completed, workflow, cold, rerun)
+
     if case.expected_state == 'FAILED':
         cleanup = [
             n
@@ -79,4 +108,7 @@ def test_sample_runs_unchanged(client, settings, namespace, record, case):
             nodes,
             disabled='disabled' in case.pipeline,
         )
+    if case.expect:
+        details = case.expect(Outcome(client, done, raw, cold, rerun))
+        entry.update(details or {})
     record(sample=case.id, **entry)
