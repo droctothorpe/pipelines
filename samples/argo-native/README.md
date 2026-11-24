@@ -214,15 +214,17 @@ immutability; do not mutate content-named resources outside this convention.
 Use **Pipelines → Upload pipeline** to upload a compiled WorkflowTemplate YAML
 file. Expand a pipeline row or use its graph's **Show Summary** card to select a
 version. **Create run** opens the normal run form with parameters, an experiment
-selector and one-off/recurring choices. Recurring runs create suspended
-CronWorkflows; enable them from their details page. Versions are create-only;
+selector and one-off/recurring choices. Recurring runs create CronWorkflows that
+start enabled; their details page disables and re-enables them. Versions are
+create-only;
 the editor role cannot update them. Experiments are ConfigMaps, and membership is
 a label rather than an owner reference.
 
 **Runs → Active / Archived** separates live Workflow CRs from archive-only records.
 **Archive** verifies SQL persistence before deleting a completed live Workflow and
-its pods. Its artifacts and logs remain accessible by UID. **Restore**, experiment
-archival and namespace metadata transfer are explicitly unavailable. Experiment
+its pods. Its artifacts and logs remain accessible by UID. **Restore** returns an
+archived run to the active list; experiments archive and restore as a unit (A16).
+Namespace metadata transfer is unavailable. Experiment
 ConfigMap deletion remains a Kubernetes operation, not a custom UI button.
 
 The CLI also supports native output:
