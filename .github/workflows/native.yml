@@ -67,6 +67,8 @@ jobs:
       matrix:
         # Stock's end-to-end Kubernetes matrix (oldest supported and newest kind
         # release); the older leg runs the live suite on stock's live Python (3.11).
+        # No Argo leg: the pinned release is required (L25 in docs/compatibility.md);
+        # KFP_ARGO_VERSION remains available for a manual check of another release.
         include:
           - k8s_version: v1.33.12
             python: '3.11'
@@ -97,7 +99,7 @@ jobs:
           curl -fsSLO "$kind_base/kind-linux-amd64.sha256sum"
           sha256sum --check kind-linux-amd64.sha256sum
           sudo install kind-linux-amd64 /usr/local/bin/kind
-          version=$(< "$GITHUB_WORKSPACE/third_party/argo/VERSION")
+          version=${KFP_ARGO_VERSION:-$(< "$GITHUB_WORKSPACE/third_party/argo/VERSION")}
           argo_base="https://github.com/argoproj/argo-workflows/releases/download/$version"
           curl -fsSLO "$argo_base/argo-linux-amd64.gz"
           curl -fsSLO "$argo_base/argo-workflows-cli-checksums.txt"
