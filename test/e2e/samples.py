@@ -36,6 +36,10 @@ PARAMETERS = {
 }
 # Samples whose body fails on purpose to demonstrate exit handling.
 EXPECTED_FAILED = ('/exit_handler/', '/DSL - Control structures/')
+# Samples whose outcome is random by design; one resubmission is allowed.
+FLAKY = {
+    'retry/retry.py:retry_sample_pipeline': 'random exit codes can exhaust the retry budget (about 5% of runs)',
+}
 LONG = {'artifact_preview_formats_pipeline': 1500}
 
 

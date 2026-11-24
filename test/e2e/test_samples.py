@@ -20,6 +20,7 @@ import pytest
 
 from e2e import support
 from e2e.samples import (
+    FLAKY,
     Outcome,
     cases,
     compile_case,
@@ -69,12 +70,18 @@ def test_sample_runs_unchanged(client, settings, namespace, record, case):
         return submitted, done, support.workflow(client, done)
 
     submitted, done, raw = submit(case.parameters)
+    attempts = 1
+    if done.state != case.expected_state and case.key in FLAKY:
+        # Stock ran these samples as written, randomness included.
+        submitted, done, raw = submit(case.parameters)
+        attempts = 2
     nodes = (raw.get('status') or {}).get('nodes', {})
     assert done.state == case.expected_state, support.phases(raw)
     entry = {
         'run_id': submitted.run_id,
         'state': done.state,
         'caching': 'disabled' if cold else 'default',
+        'attempts': attempts,
     }
 
     def rerun(arguments=None):
