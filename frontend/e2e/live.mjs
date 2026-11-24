@@ -101,12 +101,21 @@ export async function json(path, options, token) {
 }
 
 /** A run by uid, from the archive (every finished run is persisted there). */
-export function archivedRun(uid, token = reader) {
-  return json(
-    `/argo/api/v1/archived-workflows/${encode(uid)}?namespace=${encode(namespace)}`,
-    {},
-    token,
-  );
+export async function archivedRun(uid, token = reader) {
+  // The archive lags the workflow's completion (noticeably on Argo 4.0.x);
+  // poll until the record exists rather than failing on the first 404.
+  const path = `/argo/api/v1/archived-workflows/${encode(uid)}?namespace=${encode(namespace)}`;
+  const deadline = Date.now() + 120000;
+  for (;;) {
+    const response = await fetch(origin + path, {
+      headers: { Authorization: `Bearer ${token}`, ...identity },
+    });
+    if (response.ok) return response.json();
+    if (response.status !== 404 || Date.now() > deadline) {
+      assert.fail(`GET ${path}: HTTP ${response.status}: ${await response.text()}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
 }
 
 export function nodeWithArtifact(run, name) {

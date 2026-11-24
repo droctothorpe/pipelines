@@ -221,10 +221,14 @@ test(
           const image = pod.spec.containers.find((container) => container.name === 'main').image;
           const digest = image.match(/:kfp-([0-9a-f]{64})$/)?.[1];
           assert.ok(digest, 'Component image was not a content-named snapshot');
+          // Docker-backed nodes report the build identity as the image ID;
+          // containerd (kind) reports the manifest digest and keeps the
+          // content-named tag on the running image instead.
+          const status = pod.status.containerStatuses.find(
+            (container) => container.name === 'main',
+          );
           assert.ok(
-            pod.status.containerStatuses
-              .find((container) => container.name === 'main')
-              .imageID.endsWith(digest),
+            status.imageID.endsWith(digest) || status.image.endsWith(`:kfp-${digest}`),
             'Running image differs from its declared build identity',
           );
         }
