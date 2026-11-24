@@ -78,6 +78,24 @@ test(
         sdk(
           `s=c.get_recurring_run('${uiSchedule.metadata.uid}'); assert s.max_concurrency=='3'; assert s.no_catchup is True; assert s.trigger.periodic_schedule.interval_second=='7'; assert s.trigger.periodic_schedule.start_time.isoformat()=='${sdkSchedule.start}'; assert s.trigger.periodic_schedule.end_time.isoformat()=='${sdkSchedule.end}'; assert s.runtime_config.pipeline_root=='${customRoot}'; assert s.runtime_config.parameters=={'value':'schedule clone'}`,
         );
+        // C31/C36: the list shows the schedule window and links the experiment.
+        // The form navigates to the new schedule once the response lands.
+        await page.waitForURL(/#\/recurringrun\/details\//);
+        await go(page, '/recurringruns');
+        await page
+          .getByLabel('Filter recurring runs', { exact: true })
+          .fill(`UI schedule clone ${f.run_id}`);
+        const scheduleRow = page.locator(`[data-row-id="${uiSchedule.metadata.name}"]`);
+        await scheduleRow.waitFor();
+        const expectedStart = await page.evaluate(
+          (iso) => new Date(iso).toLocaleString(),
+          sdkSchedule.start,
+        );
+        assert.ok(
+          (await scheduleRow.innerText()).includes(expectedStart),
+          'Recurring run list shows the start time',
+        );
+        await scheduleRow.getByRole('link', { name: f.experiment_name, exact: true }).waitFor();
       } finally {
         sdk(`c.disable_recurring_run('${uiSchedule.metadata.uid}')`);
       }

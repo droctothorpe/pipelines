@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { NativeUiContext, type Confirmation } from 'src/lib/NativeUiContext';
 import { setExperimentStorage } from 'src/lib/NativeUi';
+import { setScheduleSuspended } from 'src/lib/ArgoResources';
 import NativeExperimentDetails from './NativeExperimentDetails';
 
 const mocks = vi.hoisted(() => ({ inventory: undefined as any }));
@@ -28,6 +29,10 @@ vi.mock('src/atoms/MD2Tabs', () => ({
 vi.mock('src/lib/NativeUi', async (original) => ({
   ...(await original<typeof import('src/lib/NativeUi')>()),
   setExperimentStorage: vi.fn(),
+}));
+vi.mock('src/lib/ArgoResources', async (original) => ({
+  ...(await original<typeof import('src/lib/ArgoResources')>()),
+  setScheduleSuspended: vi.fn(async () => undefined),
 }));
 afterEach(cleanup);
 beforeEach(() => vi.clearAllMocks());
@@ -92,3 +97,28 @@ it.each([false, true])(
       );
   },
 );
+
+it('toggles a recurring run from the manage dialog, as stock does (C36)', async () => {
+  setup();
+  const schedule = {
+    apiVersion: 'argoproj.io/v1alpha1',
+    kind: 'CronWorkflow',
+    metadata: { name: 'nightly', uid: 'cron-1', namespace: 'team' },
+    spec: {
+      schedules: ['0 2 * * *'],
+      suspend: false,
+      workflowMetadata: { labels: { 'pipelines.kubeflow.org/experiment': 'exp-id' } },
+    },
+  };
+  mocks.inventory.schedules = { data: [schedule], refetch: vi.fn(async () => ({})) };
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+  });
+  const toggle = screen.getByLabelText('Enable nightly') as HTMLInputElement;
+  expect(toggle.checked).toBe(true);
+  await act(async () => {
+    fireEvent.click(toggle);
+  });
+  expect(vi.mocked(setScheduleSuspended)).toHaveBeenCalledWith('team', schedule, true);
+  expect(mocks.inventory.schedules.refetch).toHaveBeenCalled();
+});

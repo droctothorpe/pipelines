@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogActions,
   Paper,
+  Switch,
   Tooltip,
 } from '@mui/material';
 import PopOutIcon from '@mui/icons-material/OpenInNew';
@@ -20,6 +21,7 @@ import Toolbar from 'src/components/Toolbar';
 import MD2Tabs from 'src/atoms/MD2Tabs';
 import { useInventory } from 'src/lib/NativeQueries';
 import { useNativeUi } from 'src/lib/NativeUiContext';
+import { setScheduleSuspended } from 'src/lib/ArgoResources';
 import {
   EXPERIMENT,
   displayName,
@@ -94,6 +96,14 @@ export default function NativeExperimentDetails() {
     resourceMatches(experiment, schedule.spec?.workflowMetadata?.labels?.[EXPERIMENT]),
   );
   const active = schedules.filter((schedule) => !schedule.spec?.suspend).length;
+  const toggleSchedule = async (schedule: (typeof schedules)[number], suspend: boolean) => {
+    try {
+      await setScheduleSuspended(namespace, schedule, suspend);
+      await inventory.schedules.refetch();
+    } catch (error) {
+      fail(error);
+    }
+  };
   const text = experiment ? description(experiment) : '';
   const rows = runRows(
     (inventory.runs.data || []).filter(
@@ -282,11 +292,19 @@ export default function NativeExperimentDetails() {
                 >
                   {displayName(schedule)}
                 </Link>,
+                <Switch
+                  size='small'
+                  color='primary'
+                  checked={!schedule.spec?.suspend}
+                  inputProps={{ 'aria-label': `Enable ${displayName(schedule)}` }}
+                  onChange={(_, checked) => void toggleSchedule(schedule, !checked)}
+                />,
                 schedule.spec?.suspend ? 'Disabled' : 'Enabled',
               ],
             }))}
             columns={[
               { label: 'Recurring Run Name', customRenderer: ({ value }) => <>{value}</> },
+              { label: 'Enabled', customRenderer: ({ value }) => <>{value}</> },
               { label: 'Status' },
             ]}
             filterLabel='Filter recurring runs'

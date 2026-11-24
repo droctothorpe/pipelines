@@ -27,6 +27,7 @@ import { argoStaticView, type ArgoManifest } from 'src/lib/ArgoGraph';
 import { useNativeUi } from 'src/lib/NativeUiContext';
 import { useInventory, useArtifactInventory } from 'src/lib/NativeQueries';
 import type { NativeResource } from 'src/lib/ArgoResources';
+import { scheduleTrigger } from 'src/lib/NativeScheduling';
 import {
   archiveRun,
   restoreRun,
@@ -206,6 +207,7 @@ export function NativeListPage({
   const inventory = useInventory();
   const artifacts = useArtifactInventory(kind === 'artifacts');
   const [selected, setSelected] = useState<string[]>([]);
+  const [selectedVersions, setSelectedVersions] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
   const versions = inventory.versions.data || [],
     pipelines = inventory.pipelines.data || [],
@@ -227,6 +229,7 @@ export function NativeListPage({
   const complete = async (operation: () => Promise<unknown>, removed: string[] = []) => {
     await operation();
     setSelected([]);
+    setSelectedVersions([]);
     await refresh();
     for (let attempt = 0; attempt < 8 && removed.length && !gone(removed); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -303,16 +306,25 @@ export function NativeListPage({
       refresh: action('Refresh', () => refresh().catch(fail), { id: 'refreshBtn' }),
       delete: action(
         'Delete',
-        () =>
-          confirm({
-            title: `Delete ${selected.length} pipeline(s)?`,
+        () => {
+          // Versions picked inside an expanded row, as stock allowed, unless
+          // their pipeline is itself selected.
+          const extraVersions = versions.filter(
+            (version) =>
+              selectedVersions.includes(version.metadata.name) &&
+              !selected.includes(pipelineId(version)),
+          );
+          return confirm({
+            title: extraVersions.length
+              ? `Delete ${selected.length} pipeline(s) and ${extraVersions.length} pipeline version(s)?`
+              : `Delete ${selected.length} pipeline(s)?`,
             content:
               'Delete all selected WorkflowTemplate versions. Existing runs, archives, and artifacts will not be deleted.',
             action: () =>
               complete(
                 () =>
-                  Promise.all(
-                    selected.map(async (id) => {
+                  Promise.all([
+                    ...selected.map(async (id) => {
                       await Promise.all(
                         (groups.get(id) || []).map((version) =>
                           deleteNativeResource(namespace, version),
@@ -321,17 +333,22 @@ export function NativeListPage({
                       const record = pipelines.find((pipeline) => resourceId(pipeline) === id);
                       if (record) await deleteNativeResource(namespace, record);
                     }),
-                  ),
-                selected.flatMap((id) => [
-                  id,
-                  ...(groups.get(id) || []).map((version) => version.metadata.uid || ''),
-                ]),
+                    ...extraVersions.map((version) => deleteNativeResource(namespace, version)),
+                  ]),
+                [
+                  ...selected.flatMap((id) => [
+                    id,
+                    ...(groups.get(id) || []).map((version) => version.metadata.uid || ''),
+                  ]),
+                  ...extraVersions.map((version) => version.metadata.uid || ''),
+                ],
               ),
-          }),
+          });
+        },
         {
           id: 'deletePipelinesBtn',
-          disabled: none,
-          disabledTitle: 'Select at least one pipeline to delete',
+          disabled: none && !selectedVersions.length,
+          disabledTitle: 'Select at least one pipeline or version to delete',
         },
       ),
     };
@@ -480,21 +497,32 @@ export function NativeListPage({
       { label: 'Experiment', flex: 1, customRenderer: cell },
       { label: 'Created at', flex: 1, sortKey: 'created_at' },
     ];
-    rows = schedules.map((schedule) => ({
-      id: schedule.metadata.name,
-      name: displayName(schedule),
-      created: schedule.metadata.creationTimestamp,
-      otherFields: [
-        link(`/recurringrun/details/${enc(schedule.metadata.name)}`, displayName(schedule)),
-        schedule.spec?.suspend ? 'Disabled' : 'Enabled',
-        (schedule.spec?.schedules || []).join(', '),
-        '-',
-        '-',
-        schedule.spec?.suspend ? 'Suspended' : 'Scheduled',
-        schedule.spec?.workflowMetadata?.labels?.[EXPERIMENT] || '-',
-        formatDateString(schedule.metadata.creationTimestamp),
-      ],
-    }));
+    rows = schedules.map((schedule) => {
+      const trigger = scheduleTrigger(schedule).trigger;
+      const window = trigger?.cron_schedule || trigger?.periodic_schedule;
+      const experimentName = schedule.spec?.workflowMetadata?.labels?.[EXPERIMENT];
+      const experiment = experiments.find((exp) => resourceMatches(exp, experimentName));
+      return {
+        id: schedule.metadata.name,
+        name: displayName(schedule),
+        created: schedule.metadata.creationTimestamp,
+        otherFields: [
+          link(`/recurringrun/details/${enc(schedule.metadata.name)}`, displayName(schedule)),
+          schedule.spec?.suspend ? 'Disabled' : 'Enabled',
+          (schedule.spec?.schedules || []).join(', '),
+          window?.start_time ? formatDateString(window.start_time) : '-',
+          window?.end_time ? formatDateString(window.end_time) : '-',
+          schedule.spec?.suspend ? 'Suspended' : 'Scheduled',
+          experimentName
+            ? link(
+                experimentHref(experimentName),
+                experiment ? displayName(experiment) : experimentName,
+              )
+            : '-',
+          formatDateString(schedule.metadata.creationTimestamp),
+        ],
+      };
+    });
     actions = {
       create: createAction(
         'Create recurring run',
@@ -606,6 +634,16 @@ export function NativeListPage({
                   <NativeTable
                     rows={versionRows(groups.get(row.id) || [])}
                     columns={versionColumns}
+                    selected={selectedVersions}
+                    select={(ids) =>
+                      setSelectedVersions((current) => [
+                        ...current.filter(
+                          (name) =>
+                            !(groups.get(row.id) || []).some((v) => v.metadata.name === name),
+                        ),
+                        ...ids,
+                      ])
+                    }
                     filterLabel='Filter pipeline versions'
                   />
                 ) : (
