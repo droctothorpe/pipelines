@@ -346,8 +346,10 @@ test(
       await connect(page, reader);
       await openTask(page, gate, 'approval');
       await page.getByRole('button', { name: 'Resume', exact: true }).click();
+      // Kubernetes forbids the update either way; Argo Server 4.1 maps that
+      // to 403, 4.0.x reports it as 500 (gRPC Internal).
       await page
-        .getByText(/Argo request failed \(403\)/)
+        .getByText(/Argo request failed \((403|500)\)/)
         .first()
         .waitFor();
       assert.equal((await json(workflowUrl(gate.metadata.name))).status.phase, 'Running');
