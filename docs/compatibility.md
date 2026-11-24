@@ -37,7 +37,7 @@ retired by design and are not part of the comparison.
 | Surface | Stock (`master`) | Native | Reading |
 |---|---|---|---|
 | SDK offline tests (`sdk/python`, `test/`) | 1,588 in 83 files | 1,117 in 59 + 11 files (runner: 1,692 passed, 29 strict xfails) | About 560 stock tests covered removed features (`kfp.local` runners, `kubeflow_client`, the IR builder and its 116-golden round trip). Stock's compiler validation and control-flow classes are ported (`argo_validation_test.py`, `argo_control_flow_test.py`; strict xfails point at C49–C53, L02, L03, A21, C44). |
-| Compiler golden corpus | 157 IR YAML + 154 Argo YAML round-tripped in CI | none yet | Native asserts fields in code; `test/data/stock_samples.json` checks that 29 stock samples compile, not their output shape. |
+| Compiler golden corpus | 157 IR YAML + 154 Argo YAML round-tripped in CI | 27 Argo manifests in `test/data/golden`, one per compiling stock sample | `test/stock_samples_test.py` compares each compiled sample byte for byte and regenerates with `KFP_UPDATE_GOLDENS=1`; generation is deterministic (two runs identical). |
 | `kfp.Client` | 77 unit + 14 live | 68 unit + 41 live functions | `upload_pipeline_version`, `get_pipeline`, `get_kfp_healthz`, `delete_job`, `enable_job`, `disable_job` have no native test. |
 | `kfp.kubernetes` | 177 unit + 17 goldens | 181 (stock's setter suites ported verbatim, plus lowered-pod assertions) | Every setter is referenced once; the per-setter validation and error-path depth is gone. |
 | `kfp` CLI | 21 | 53 (includes visualize) | Aliases, autocomplete, `--version`, deprecation warnings untested. |
@@ -46,9 +46,8 @@ retired by design and are not part of the comparison.
 | Live sample semantics | 16 `samples/core/*_test.py` runners asserting per-sample outputs | `test/e2e/test_samples.py` asserts terminal state and preview presence for 29 samples; control flow, OneOf, importer and failure tolerance have dedicated modules | Per-sample output assertions (cache hits, branch taken, loop outputs) are not all carried over. |
 | CI axes (live) | Kubernetes v1.33.12 / v1.34.13 / v1.36.1; Argo v4.0.13 / v4.1.6; Python 3.11; cache on/off, proxy, pod-to-pod TLS, MySQL/PostgreSQL, multi-user, fake GPU, DRA driver, 120-node scale, release→HEAD upgrade | Kubernetes v1.33.12 (Python 3.11) and v1.36.1 (Python 3.13); Argo v4.1.6; single-user then multi-user in one script | Missing axes: second Argo version, Kubernetes 1.34 (stock's DRA lane), GPU/DRA drivers (P01), scale, upgrade of a native deployment. |
 
-Remaining coverage work on surviving surfaces, in priority order: an Argo golden
-corpus for the stock sample set, deeper `Native*` page tests, per-sample output
-assertions, and an Argo version matrix leg. Compiler validation, `kfp.kubernetes`
+Remaining coverage work on surviving surfaces, in priority order: deeper `Native*`
+page tests and per-sample output assertions for the live sample sweep. Compiler validation, `kfp.kubernetes`
 setters, the `Client` methods and the surviving UI components were closed on
 2026-11-23. The rows below record behavior; this table records how much of
 that behavior is exercised.

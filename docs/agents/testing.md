@@ -66,6 +66,10 @@ uv run python -m pytest test/e2e -m smoke -p no:randomly                  # quic
 uv run python -m pytest test/e2e -p no:randomly -k samples                # the stock sample corpus only
 ```
 
+`test/stock_samples_test.py` pins every compiling stock sample to a golden Argo
+manifest in `test/data/golden`. A compiler change that alters output fails there;
+regenerate with `KFP_UPDATE_GOLDENS=1` and review the diff as part of the change.
+
 Every pull request runs everything but `prerequisite` cases through
 `test/native-deployment.sh` on a disposable Kind cluster, once per Kubernetes
 version in stock's matrix (`KFP_TEST_K8S_VERSION` picks the `kindest/node` tag), in parallel with
