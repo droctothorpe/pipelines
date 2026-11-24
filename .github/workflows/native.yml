@@ -56,6 +56,7 @@ jobs:
         working-directory: frontend
       - run: npm run test:ci
         working-directory: frontend
+      - run: node --test samples/argo-native/ui-proxy.test.mjs
       - run: git diff --exit-code -- sdk/python/kfp/cli/viewer_assets
 
   deployment:
@@ -64,9 +65,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Stock's end-to-end Kubernetes matrix (oldest supported and newest kind release).
-        k8s_version: ['v1.33.12', 'v1.36.1']
-    name: deployment (K8s ${{ matrix.k8s_version }})
+        # Stock's end-to-end Kubernetes matrix (oldest supported and newest kind
+        # release); the older leg runs the live suite on stock's live Python (3.11).
+        include:
+          - k8s_version: v1.33.12
+            python: '3.11'
+          - k8s_version: v1.36.1
+            python: '3.13'
+    name: deployment (K8s ${{ matrix.k8s_version }}, Python ${{ matrix.python }})
     env:
       KFP_TEST_K8S_VERSION: ${{ matrix.k8s_version }}
     steps:
@@ -75,7 +81,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: frontend/.nvmrc
