@@ -331,6 +331,15 @@ class _Scope:
             return type_utils.get_parameter_type(type(operand).__name__)
 
         kinds = {kind(operand) for operand in operands}
+        # None (`x == None`) and non-primitive operands keep the direct
+        # rendering; coercion applies to primitive comparisons only.
+        if any(operand is None for operand in operands) or not kinds <= {
+            STRING,
+            BOOLEAN,
+            INTEGER,
+            DOUBLE,
+        }:
+            return [self.expression(operand) for operand in operands]
         canonical = (
             STRING if STRING in kinds else BOOLEAN if BOOLEAN in kinds else None
         )
@@ -379,6 +388,13 @@ class _Scope:
                     )
                 raise ValueError(f'Missing input {name!r} on {task.name!r}.')
             value = task.inputs[name]
+            if self.compiler.absent_channel(value):
+                if port.optional:
+                    continue
+                raise ValueError(
+                    f'Pipeline input {value.name!r} has no artifact at run time, '
+                    f'but {task.name!r} requires one for {name!r}.'
+                )
             if isinstance(value, for_loop.Collected):
                 # Stock: Collected fans in a loop's outputs; the producer must
                 # sit in a dsl.ParallelFor the consumer is outside of.
@@ -1085,6 +1101,8 @@ def compile_graph(compiler, component_spec, graph):
     # Root parameters must keep declarations even if unused, including defaults.
     ports = {'parameters': [], 'artifacts': []}
     for name, port in (component_spec.inputs or {}).items():
+        if compiler.root_absent(name):
+            continue
         compiler.input_port(
             ports, name, port, staged=name in compiler.staged_graph_inputs
         )

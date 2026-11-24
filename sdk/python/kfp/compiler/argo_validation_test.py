@@ -979,13 +979,6 @@ class TestMultipleExitHandlerCompilation:
             compile_manifest(my_pipeline, tmp_path)
 
 
-ROOT_ARTIFACT_INPUT = (
-    'L02: root artifact inputs are rejected natively ("Root artifact inputs '
-    'need an explicit native artifact source"); stock declared them as '
-    'optional root artifacts.'
-)
-
-
 class TestCompileOptionalArtifacts:
     @pytest.mark.parametrize(
         'annotation', [Optional[Input[Artifact]], Optional[Input[Model]]]
@@ -1021,7 +1014,6 @@ class TestCompileOptionalArtifacts:
 
         assert comp.component_spec.inputs['x'].optional is True
 
-    @pytest.mark.xfail(strict=True, reason=ROOT_ARTIFACT_INPUT)
     def test_python_comp_compiles_as_root(self, tmp_path):
         @dsl.component
         def comp(x: Optional[Input[Artifact]] = None):
@@ -1039,7 +1031,6 @@ class TestCompileOptionalArtifacts:
 
         assert my_pipeline.component_spec.inputs['x'].optional is True
 
-    @pytest.mark.xfail(strict=True, reason=ROOT_ARTIFACT_INPUT)
     def test_pipeline_compiles_with_optional_artifact_input(self, tmp_path):
         @dsl.pipeline
         def my_pipeline(x: Optional[Input[Artifact]] = None):
@@ -1255,7 +1246,6 @@ class TestPythonicArtifactAuthoring:
         assert spec.is_artifact_list is is_list
         assert spec.optional is optional
 
-    @pytest.mark.xfail(strict=True, reason=ROOT_ARTIFACT_INPUT)
     @pytest.mark.parametrize(
         'annotation', [Artifact, Optional[Artifact], List[Artifact]]
     )
@@ -1567,3 +1557,61 @@ class TestYamlComments:
         compiler.Compiler().compile(my_pipeline, str(path))
         loaded = components.load_component_from_file(str(path))
         assert loaded.description == 'My description.'
+
+
+class TestRootArtifactInputs:
+    """L02: optional root artifact inputs are absent at run time, as stock's
+    run API could not supply them; required ones are refused up front."""
+
+    def test_optional_root_artifact_is_absent_for_optional_consumers(
+        self, tmp_path
+    ):
+        @dsl.component
+        def describe(model: Optional[Input[Artifact]] = None) -> str:
+            return 'absent' if model is None else model.uri
+
+        @dsl.pipeline
+        def my_pipeline(model: Optional[Input[Artifact]] = None):
+            describe(model=model)
+
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        root = root_template(manifest)
+        assert 'artifacts' not in root.get('inputs', {})
+        assert 'artifacts' not in manifest['spec']['arguments']
+        assert 'arguments' not in dag_tasks(root)['describe'] or not dag_tasks(
+            root
+        )['describe']['arguments'].get('artifacts')
+        # The consumer tolerates the omission: empty URI/metadata defaults and
+        # an optional artifact input, which the runtime turns into None.
+        describe = templates(manifest)[dag_tasks(root)['describe']['template']]
+        parameters = {p['name']: p for p in describe['inputs']['parameters']}
+        assert parameters['kfp-uri-model']['default'] == ''
+        assert parameters['kfp-meta-model']['default'] == ''
+        artifacts = {a['name']: a for a in describe['inputs']['artifacts']}
+        assert artifacts['model']['optional'] is True
+
+    def test_required_root_artifact_is_refused(self, tmp_path):
+        @dsl.component
+        def describe(model: Input[Artifact]) -> str:
+            return model.uri
+
+        @dsl.pipeline
+        def my_pipeline(model: Input[Artifact]):
+            describe(model=model)
+
+        with pytest.raises(ValueError, match='Root artifact input'):
+            compile_manifest(my_pipeline, tmp_path)
+
+    def test_optional_root_artifact_cannot_feed_a_required_consumer(
+        self, tmp_path
+    ):
+        @dsl.component
+        def describe(model: Input[Artifact]) -> str:
+            return model.uri
+
+        @dsl.pipeline
+        def my_pipeline(model: Optional[Input[Artifact]] = None):
+            describe(model=model)
+
+        with pytest.raises(ValueError, match='has no artifact at run time'):
+            compile_manifest(my_pipeline, tmp_path)

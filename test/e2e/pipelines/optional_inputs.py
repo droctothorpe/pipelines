@@ -3,7 +3,10 @@
 """Optional values across pipeline and condition boundaries, for Python
 components."""
 
+from typing import Optional
+
 from kfp import dsl
+from kfp.dsl import Artifact, Input
 
 
 @dsl.component
@@ -44,3 +47,15 @@ def pipeline(expected: str = 'null', value: str = None):
         check(expected=expected, value=value)
         interpolation(value=f'prefix:{value}', original=value)
     check(expected=expected, value=dsl.OneOf(missing.output, present.output))
+
+
+@dsl.component
+def describe(model: Optional[Input[Artifact]] = None) -> str:
+    return 'absent' if model is None else model.uri
+
+
+@dsl.pipeline(name='optional-root-artifact-compatibility')
+def root_artifact_pipeline(model: Optional[Input[Artifact]] = None):
+    """L02: an optional root artifact input is absent at run time, as in
+    stock, whose run API carried no artifact values."""
+    describe(model=model)

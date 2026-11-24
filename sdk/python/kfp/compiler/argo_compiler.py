@@ -115,6 +115,9 @@ class _Compiler:
         self.workspace = None
         self.graph_context = (None, None)
         self.staged_graph_inputs = set()
+        # Optional root artifact inputs defaulting to None: absent at run time,
+        # as they were in stock, whose run API carried no artifact values.
+        self.absent_root_artifacts = set()
         self.root_annotations = root_annotations(options.artifact_repository)
         self.prefix = reference(PREFIX)
         self.uri = reference(ROOT)
@@ -297,6 +300,8 @@ class _Compiler:
         self.templates.append(template)
         inputs = {'parameters': [], 'artifacts': []}
         for name, port in (component_spec.inputs or {}).items():
+            if self.root_absent(name):
+                continue
             self.input_port(
                 inputs, name, port, staged=name in self.staged_graph_inputs
             )
@@ -312,6 +317,13 @@ class _Compiler:
             for name, port in (task.component_spec.inputs or {}).items():
                 if name in task.inputs:
                     value = task.inputs[name]
+                    if self.absent_channel(value):
+                        if port.optional:
+                            continue
+                        raise ValueError(
+                            f'Pipeline input {value.name!r} has no artifact at run time, '
+                            f'but {task.name!r} requires one for {name!r}.'
+                        )
                     if (
                         isinstance(value, for_loop.Collected)
                         and value.output.task_name in root_tasks
@@ -519,6 +531,17 @@ class _Compiler:
             }
         return template['name']
 
+    def root_absent(self, name):
+        return name in self.absent_root_artifacts and not self.nested_tasks
+
+    def absent_channel(self, value):
+        """A reference to an optional root artifact input nothing supplies."""
+        return (
+            isinstance(value, pipeline_channel.PipelineArtifactChannel)
+            and not value.task_name
+            and self.root_absent(value.name)
+        )
+
     def input_port(self, inputs, name, port, allow_nullable=True, staged=False):
         if port.is_artifact_list or staged:
             inputs['parameters'].extend(
@@ -537,9 +560,12 @@ class _Compiler:
                 )
             inputs['parameters'].append(item)
         else:
+            # An optional artifact the caller omits (or an absent root artifact)
+            # arrives as empty URI/metadata; the runtime passes None.
+            absent = {'optional': True} if port.optional else {}
             inputs['artifacts'].extend(
                 [
-                    {'name': name, 'path': '/tmp/kfp/inputs/' + name},
+                    {'name': name, 'path': '/tmp/kfp/inputs/' + name, **absent},
                     {
                         'name': name + '-metadata',
                         'path': '/tmp/kfp/inputs/' + name + '.json',
@@ -548,7 +574,11 @@ class _Compiler:
                 ]
             )
             inputs['parameters'].extend(
-                [{'name': 'kfp-uri-' + name}, {'name': 'kfp-meta-' + name}]
+                {
+                    'name': prefix + name,
+                    **({'default': ''} if port.optional else {}),
+                }
+                for prefix in ('kfp-uri-', 'kfp-meta-')
             )
 
     def leaf(self, task):
@@ -638,6 +668,11 @@ class _Compiler:
             staged = self.staged_source(task.inputs.get(name))
             self.input_port(inputs, name, port, staged=staged)
             declaration = {'type': argo_parameters.input_kind(port)}
+            if port.optional and not structures.spec_type_is_parameter(
+                port.type
+            ):
+                # The runtime passes None when nothing supplies the artifact.
+                declaration['optional'] = True
             if port.type == 'TaskConfig':
                 declaration['taskConfig'] = True
             if port.is_artifact_list or staged:
@@ -1588,6 +1623,16 @@ def compile_argo(
     if isinstance(graph, structures.CapturedGraph) and graph.config:
         builder.artifact_previews = graph.config.artifact_previews
         builder.workspace = graph.config.workspace
+    for name, port in (component.component_spec.inputs or {}).items():
+        if structures.spec_type_is_parameter(port.type):
+            continue
+        if port.optional and port.default is None:
+            builder.absent_root_artifacts.add(name)
+            continue
+        raise ValueError(
+            f'Root artifact input {name!r} has no run-time source (stock could not supply one either). '
+            'Make it Optional with a None default, or produce the artifact inside the pipeline with an importer or a task.'
+        )
     entrypoint = builder.compile_component(component.component_spec)
     arguments = []
     unknown = set(parameters) - set(component.component_spec.inputs or {})
@@ -1595,9 +1640,7 @@ def compile_argo(
         raise ValueError(f'Unknown pipeline parameters: {sorted(unknown)}.')
     for name, port in (component.component_spec.inputs or {}).items():
         if not structures.spec_type_is_parameter(port.type):
-            raise ValueError(
-                'Root artifact inputs need an explicit native artifact source; pass a produced artifact through a nested DAG.'
-            )
+            continue
         declaration = {'name': name}
         value = parameters.get(name, port.default)
         if value is not None or argo_parameters.nullable(port):

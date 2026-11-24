@@ -349,6 +349,13 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
                 )
             continue
         metadata_path = Path(port['metadataPath'])
+        if (
+            port.get('optional')
+            and not metadata_path.exists()
+            and not values.get('kfp-meta-' + name)
+        ):
+            # Omitted optional artifact: the component receives None.
+            continue
         if metadata_path.exists():
             metadata = json.loads(metadata_path.read_text())
         else:

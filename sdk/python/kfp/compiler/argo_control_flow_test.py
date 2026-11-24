@@ -939,3 +939,21 @@ class TestBooleanInputCompiledCorrectly:
         assert parameters(
             dag_tasks(root_template(manifest))['comp']['arguments']
         ) == {'boolean1': 'true', 'boolean2': 'false'}
+
+
+def test_none_comparison_keeps_the_nil_check(tmp_path):
+    """Regression: `value == None` must compare with nil, not the string
+    "None"; the stock coercion applies to primitive operands only."""
+
+    @dsl.component
+    def check(value: str = None) -> str:
+        return str(value)
+
+    @dsl.pipeline(name='none-condition')
+    def pipeline(value: str = None):
+        with dsl.If(value == None):  # noqa: E711
+            check(value=value)
+
+    conditions = whens(compile_manifest(pipeline, tmp_path))
+    (expression,) = conditions.values()
+    assert expression == '{{=(fromJSON(inputs.parameters["value"]) == nil)}}'

@@ -8,7 +8,7 @@ import json
 import pytest
 
 from e2e import support
-from e2e.pipelines.optional_inputs import pipeline
+from e2e.pipelines.optional_inputs import pipeline, root_artifact_pipeline
 
 
 @pytest.mark.parametrize(
@@ -35,3 +35,12 @@ def test_optional_values_keep_identity(client, record, value):
         'fallback' if value is None else value
     )
     record(run_id=submitted.run_id, value=value, state=done.state)
+
+
+@pytest.mark.smoke
+def test_optional_root_artifact_input_is_absent(client, record):
+    submitted, done = support.run_pipeline(client, root_artifact_pipeline, {})
+    raw = support.workflow(client, done)
+    assert done.state == 'SUCCEEDED', support.failures(done)
+    assert support.node_output(support.node(raw, 'describe')) == 'absent'
+    record(run_id=submitted.run_id, model='absent')

@@ -511,3 +511,49 @@ def test_bound_root_must_match_where_argo_stores_artifacts(tmp_path):
         argo_runtime.check_archive_location(contract, template)
     template.write_text('{"archiveLocation": {"plugin": {"name": "x"}}}')
     argo_runtime.check_archive_location(contract, template)
+
+
+def test_omitted_optional_artifact_input_is_none(tmp_path, monkeypatch):
+    """L02: an optional artifact nobody supplied (empty URI and metadata
+    defaults, no staged file) reaches the component as None."""
+    from typing import Optional
+
+    from kfp import dsl
+
+    for key, value in [
+        ('KFP_ARGO_RUN_UID', 'run'),
+        ('KFP_ARGO_NODE_ID', 'task'),
+        ('KFP_ARGO_NAMESPACE', 'ns'),
+    ]:
+        monkeypatch.setenv(key, value)
+    seen = {}
+
+    def describe(model: Optional[dsl.Input[dsl.Artifact]] = None) -> str:
+        seen['model'] = model
+        return 'absent' if model is None else model.uri
+
+    contract = {
+        'schema': argo_runtime.SCHEMA,
+        'outputDirectory': str(tmp_path),
+        'inputs': {
+            'model': {
+                'type': 'system.Artifact@0.0.1',
+                'optional': True,
+                'path': str(tmp_path / 'inputs' / 'model'),
+                'metadataPath': str(tmp_path / 'inputs' / 'model.json'),
+            }
+        },
+        'outputs': {
+            'Output': {'type': 'String', 'path': str(tmp_path / 'Output')}
+        },
+    }
+    argo_runtime.execute(
+        describe,
+        contract,
+        [
+            {'name': 'kfp-uri-model', 'value': ''},
+            {'name': 'kfp-meta-model', 'value': ''},
+        ],
+    )
+    assert seen == {'model': None}
+    assert (tmp_path / 'Output').read_text() == 'absent'
