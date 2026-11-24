@@ -134,6 +134,15 @@ def test_task_config_projection_respects_apply_to_task(client, record):
 def test_resource_claim_pod_fields_without_allocation(client, record):
     """Pod fields are checked while the pod waits for a claim template that
     does not exist; the owned run is then terminated."""
+    version = client._run_api.transport.request('GET', '/kubernetes/version')
+    minor = int(version['minor'].rstrip('+'))
+    if minor < 34:
+        # DynamicResourceAllocation is gated off by default before 1.34, and
+        # the API server drops the pod's claim fields; stock ran its DRA lane
+        # on 1.34 as well (P01).
+        pytest.skip(
+            f'Kubernetes 1.{minor} drops resourceClaims without the DRA gate'
+        )
     name = 'kfp-unavailable-' + uuid4().hex[:8]
     submitted = support.submit(
         client,

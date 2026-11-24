@@ -67,16 +67,21 @@ jobs:
       matrix:
         # Stock's end-to-end Kubernetes matrix (oldest supported and newest kind
         # release); the older leg runs the live suite on stock's live Python (3.11).
-        # No Argo leg: the pinned release is required (L25 in docs/compatibility.md);
-        # KFP_ARGO_VERSION remains available for a manual check of another release.
         include:
           - k8s_version: v1.33.12
             python: '3.11'
+            argo_version: ''
           - k8s_version: v1.36.1
             python: '3.13'
-    name: deployment (K8s ${{ matrix.k8s_version }}, Python ${{ matrix.python }})
+            argo_version: ''
+          # Stock also ran its end-to-end suites on the previous Argo minor.
+          - k8s_version: v1.36.1
+            python: '3.13'
+            argo_version: v4.0.13
+    name: deployment (K8s ${{ matrix.k8s_version }}, Python ${{ matrix.python }}${{ matrix.argo_version && format(', Argo {0}', matrix.argo_version) || '' }})
     env:
       KFP_TEST_K8S_VERSION: ${{ matrix.k8s_version }}
+      KFP_ARGO_VERSION: ${{ matrix.argo_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -119,7 +124,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-report-k8s-${{ matrix.k8s_version }}
+          name: e2e-report-k8s-${{ matrix.k8s_version }}${{ matrix.argo_version && format('-argo-{0}', matrix.argo_version) || '' }}
           path: /tmp/kfp-e2e
           if-no-files-found: ignore
 
