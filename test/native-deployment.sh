@@ -7,7 +7,13 @@ cluster=native-kfp
 namespace=kfp-argo
 kubeconfig=$(mktemp)
 export KUBECONFIG="$kubeconfig"
-kind create cluster --name "$cluster" --kubeconfig "$kubeconfig" --wait 120s
+# KFP_TEST_K8S_VERSION selects a kindest/node release (CI runs stock's matrix);
+# unset, kind uses the node image its release defaults to.
+node_image=()
+if [[ -n "${KFP_TEST_K8S_VERSION:-}" ]]; then
+  node_image=(--image "kindest/node:$KFP_TEST_K8S_VERSION")
+fi
+kind create cluster --name "$cluster" --kubeconfig "$kubeconfig" --wait 120s "${node_image[@]}"
 forward_pid=''
 cleanup() {
   if [[ -n "$forward_pid" ]]; then kill "$forward_pid" 2>/dev/null || true; fi

@@ -61,6 +61,14 @@ jobs:
   deployment:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Stock's end-to-end Kubernetes matrix (oldest supported and newest kind release).
+        k8s_version: ['v1.33.12', 'v1.36.1']
+    name: deployment (K8s ${{ matrix.k8s_version }})
+    env:
+      KFP_TEST_K8S_VERSION: ${{ matrix.k8s_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -103,7 +111,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-report
+          name: e2e-report-k8s-${{ matrix.k8s_version }}
           path: /tmp/kfp-e2e
           if-no-files-found: ignore
 
