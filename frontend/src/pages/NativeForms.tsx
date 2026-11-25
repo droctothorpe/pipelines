@@ -205,6 +205,10 @@ export function NativeNewRun() {
     enabled: !!cloneId,
   });
   const versions = inventory.versions.data || [];
+  // Stock defaults a pipeline to its latest version; the inventory order is not that.
+  const newestFirst = [...versions].sort((a, b) =>
+    (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
+  );
   const requestedPipeline = search.get('pipelineId');
   const version =
     versions.find((version) =>
@@ -220,11 +224,7 @@ export function NativeNewRun() {
     ) ||
     // A pipeline without a version (from "Create experiment") selects its newest version.
     (requestedPipeline && !versionName
-      ? versions
-          .filter((entry) => pipelineId(entry) === requestedPipeline)
-          .sort((a, b) =>
-            (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
-          )[0]
+      ? newestFirst.find((entry) => pipelineId(entry) === requestedPipeline)
       : undefined);
   const experiment = inventory.experiments.data?.find((exp) =>
     resourceMatches(
@@ -284,7 +284,10 @@ export function NativeNewRun() {
     (rootEnabled && !selectedRoot) ||
     !name.trim() ||
     specs.some((parameter) => parameter.value === undefined && !values[parameter.name]);
-  const unique = new Map(versions.map((version) => [pipelineId(version), version]));
+  const unique = new Map<string | undefined, (typeof versions)[number]>();
+  for (const entry of newestFirst) {
+    if (!unique.has(pipelineId(entry))) unique.set(pipelineId(entry), entry);
+  }
   const choices =
     picker === 'Experiment'
       ? inventory.experiments.data || []

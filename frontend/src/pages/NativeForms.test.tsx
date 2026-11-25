@@ -269,6 +269,24 @@ describe('new run form', () => {
     expect(chooser(1)).toBeEnabled();
   });
 
+  it('offers each pipeline through its newest version, whatever the inventory order', async () => {
+    // U49: stock defaults a chosen pipeline to its latest version.
+    setup();
+    await click(chooser(0));
+    const dialog = screen.getByRole('dialog');
+    const rows = Array.from(dialog.querySelectorAll('[data-row-id]')).map((row) =>
+      row.getAttribute('data-row-id')!,
+    );
+    expect(rows.filter((row) => row.startsWith('trainer-'))).toEqual(['trainer-v2']);
+    cleanup();
+    setup('/runs/new', { versions: [trainerOld, trainer, plain, nullable] });
+    await click(chooser(0));
+    const reordered = Array.from(screen.getByRole('dialog').querySelectorAll('[data-row-id]')).map(
+      (row) => row.getAttribute('data-row-id')!,
+    );
+    expect(reordered.filter((row) => row.startsWith('trainer-'))).toEqual(['trainer-v2']);
+  });
+
   it('lists only the selected pipeline versions and resets edited parameters on switch', async () => {
     setup('/runs/new?pipelineVersionId=trainer-v2');
     fireEvent.change(field('epochs'), { target: { value: '42' } });
