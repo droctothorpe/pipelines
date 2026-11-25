@@ -513,20 +513,23 @@ class TestCannotReturnFromWithinControlFlowGroup:
         with pytest.raises(ValueError, match=LOOP_ESCAPE):
             compile_manifest(my_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler gap (no compatibility row): a pipeline output '
-        'returned from inside dsl.ExitHandler compiles, forwarded through '
-        'the exit wrapper; stock rejects it with InvalidTopologyException.',
-    )
-    def test_exit_handler_raises(self, tmp_path):
+    def test_exit_handler_return_is_forwarded(self, tmp_path):
+        """A31: stock refused a pipeline output from inside an ExitHandler;
+        native forwards it through the exit wrapper (verified live in
+        ``test/e2e/test_exit_handler_shapes.py``)."""
+
         @dsl.pipeline
         def my_pipeline(string: str = 'string') -> str:
             with dsl.ExitHandler(print_and_return(text='exit task')):
                 return print_and_return(text=string).output
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        root = root_template(manifest)
+        (output,) = root['outputs']['parameters']
+        assert output['name'] == 'Output'
+        assert output['valueFrom']['parameter'].startswith(
+            '{{tasks.exit-handler-1.outputs.parameters.'
+        )
 
 
 class TestCrossTasksGroupFanInCollection:
@@ -646,13 +649,10 @@ class TestCrossTasksGroupFanInCollection:
         with pytest.raises(ValueError, match=CONDITION_ESCAPE):
             compile_manifest(my_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler gap (no compatibility row): dsl.Collected from a '
-        'loop inside dsl.ExitHandler consumed outside compiles, forwarded '
-        'through the exit wrapper; stock rejects it.',
-    )
-    def test_producer_exit_handler_illegal1(self, tmp_path):
+    def test_collected_escapes_an_exit_handler(self, tmp_path):
+        """A31: stock refused dsl.Collected from a loop inside an
+        ExitHandler consumed outside it; native forwards the collection."""
+
         @dsl.component
         def exit_comp():
             print('Running exit task!')
@@ -664,8 +664,10 @@ class TestCrossTasksGroupFanInCollection:
                     t = double(num=v)
             add(nums=dsl.Collected(t.output))
 
-        with pytest.raises(ValueError):
-            compile_manifest(my_pipeline, tmp_path)
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        consumer = dag_tasks(root_template(manifest))['add']
+        value = parameters(consumer['arguments'])['nums']
+        assert value.startswith('{{tasks.exit-handler-1.outputs.parameters.')
 
     @pytest.mark.xfail(
         strict=True,
@@ -959,13 +961,10 @@ class TestMultipleExitHandlerCompilation:
         with pytest.raises(ValueError, match='Ambiguous dependency name'):
             compile_manifest(my_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='Compiler gap (no compatibility row): nested dsl.ExitHandler '
-        'compiles to nested exit wrappers; stock rejects it ("ExitHandler '
-        'can only be used within the outermost scope").',
-    )
-    def test_nested_unsupported(self, tmp_path):
+    def test_nested_exit_handlers_compile(self, tmp_path):
+        """A31: stock refused nested ExitHandlers ("only ... the outermost
+        scope"); native compiles nested exit wrappers, inner exit first."""
+
         @dsl.pipeline(name='pipeline-with-multiple-exit-handlers')
         def my_pipeline():
             first_exit_task = print_op(message='First exit task.')
@@ -975,8 +974,10 @@ class TestMultipleExitHandlerCompilation:
                 with dsl.ExitHandler(second_exit_task):
                     print_op(message='Inside second exit handler.')
 
-        with pytest.raises(ValueError, match='outermost scope'):
-            compile_manifest(my_pipeline, tmp_path)
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        names = list(templates(manifest))
+        for wrapper in ('exit-handler-1-exit', 'exit-handler-2-exit'):
+            assert any(wrapper in name for name in names), names
 
 
 class TestCompileOptionalArtifacts:
