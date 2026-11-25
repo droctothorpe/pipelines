@@ -1,0 +1,8 @@
+**
+!frontend/
+!frontend/build/
+!frontend/build/**
+!samples/
+!samples/argo-native/
+!samples/argo-native/nginx.conf.template
+!samples/argo-native/ui-proxy.js

@@ -14,11 +14,9 @@
 """Pipeline as a component (aka graph component)."""
 
 import inspect
-import uuid
 from typing import Callable, List, Optional
 
 from kfp import dsl
-from kfp.compiler import pipeline_spec_builder as builder
 from kfp.dsl import (
     base_component,
     pipeline_channel,
@@ -28,7 +26,7 @@ from kfp.dsl import (
     structures,
     tasks_group,
 )
-from kfp.pipeline_spec import pipeline_spec_pb2
+from kfp.dsl.types import type_utils
 
 
 class GraphComponent(base_component.BaseComponent):
@@ -70,31 +68,37 @@ class GraphComponent(base_component.BaseComponent):
         if not dsl_pipeline.tasks:
             raise ValueError('Task is missing from pipeline.')
 
+        # Return validation belongs to graph capture, not a removed IR backend.
+        returned = (
+            pipeline_outputs._asdict()
+            if hasattr(pipeline_outputs, '_asdict')
+            else pipeline_outputs
+            if isinstance(pipeline_outputs, dict)
+            else {'Output': pipeline_outputs}
+            if pipeline_outputs is not None
+            else {}
+        )
+        for name, output in (component_spec.outputs or {}).items():
+            if name not in returned:
+                raise ValueError(
+                    f'Pipeline output {name!r} is missing; return the declared output channel.'
+                )
+            type_utils.verify_type_compatibility(
+                given_value=returned[name],
+                expected_spec=output,
+                error_message_prefix=f'Incompatible return type provided for output of pipeline {self.name!r}: ',
+            )
+
         # Validate workspace configuration if workspace features are used
         self._validate_workspace_requirements(dsl_pipeline, pipeline_config)
 
-        # Making the pipeline group name unique to prevent name clashes with
-        # templates
-        pipeline_group = dsl_pipeline.groups[0]
-        pipeline_group.name = uuid.uuid4().hex
-
-        pipeline_spec, platform_spec = builder.create_pipeline_spec(
+        self.component_spec.implementation.graph = structures.CapturedGraph(
             pipeline=dsl_pipeline,
-            component_spec=self.component_spec,
-            pipeline_outputs=pipeline_outputs,
-            pipeline_config=pipeline_config,
+            outputs=pipeline_outputs,
+            config=pipeline_config,
+            pipeline_root=getattr(pipeline_func, 'pipeline_root', None),
+            display_name=display_name,
         )
-
-        pipeline_root = getattr(pipeline_func, 'pipeline_root', None)
-        if pipeline_root is not None:
-            pipeline_spec.default_pipeline_root = pipeline_root
-        if display_name is not None:
-            pipeline_spec.pipeline_info.display_name = display_name
-        if component_spec.description is not None:
-            pipeline_spec.pipeline_info.description = component_spec.description
-
-        self.component_spec.implementation.graph = pipeline_spec
-        self.component_spec.platform_spec = platform_spec
 
     def _detect_workspace_usage_in_tasks(
         self, tasks: List[pipeline_task.PipelineTask]
@@ -181,9 +185,6 @@ class GraphComponent(base_component.BaseComponent):
                 )
 
     @property
-    def pipeline_spec(self) -> pipeline_spec_pb2.PipelineSpec:
-        """Returns the pipeline spec of the component."""
+    def pipeline_spec(self) -> structures.CapturedGraph:
+        """Returns the captured DSL graph, not a serialized PipelineSpec IR."""
         return self.component_spec.implementation.graph
-
-    def execute(self, **kwargs):
-        raise RuntimeError('Graph component has no local execution mode.')

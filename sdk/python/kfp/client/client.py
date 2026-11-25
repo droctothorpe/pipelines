@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""The SDK client for Kubeflow Pipelines API."""
+"""The backwards-compatible KFP client, backed by native cluster resources."""
+
+from __future__ import annotations
 
 import copy
 import dataclasses
@@ -20,24 +22,23 @@ import json
 import logging
 import os
 import re
-import tarfile
 import tempfile
 import time
 import warnings
-import zipfile
-from types import ModuleType
-from typing import Any, Dict, List, Optional, TextIO
-from urllib.parse import urlsplit
-
-import yaml
-from google.protobuf import json_format
+from typing import Any, Dict, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import kfp.server_api
 from kfp import compiler
 from kfp.client import auth, set_volume_credentials
+from kfp.client._pipeline_package import (
+    extract_pipeline as _extract_pipeline_yaml,
+)
+from kfp.client._pipeline_package import (
+    override_caching as _override_caching_options,
+)
 from kfp.client.token_credentials_base import TokenCredentialsBase
 from kfp.dsl import base_component
-from kfp.pipeline_spec import pipeline_spec_pb2
 
 # Operators on scalar values. Only applies to one of |int_value|,
 # |long_value|, |string_value| or |timestamp_value|.
@@ -61,21 +62,6 @@ KF_PIPELINES_APP_OAUTH2_CLIENT_ID_ENV = 'KF_PIPELINES_APP_OAUTH2_CLIENT_ID'
 KF_PIPELINES_APP_OAUTH2_CLIENT_SECRET_ENV = (
     'KF_PIPELINES_APP_OAUTH2_CLIENT_SECRET'
 )
-
-
-@dataclasses.dataclass
-class _PipelineDoc:
-    pipeline_spec: pipeline_spec_pb2.PipelineSpec
-    platform_spec: pipeline_spec_pb2.PlatformSpec
-
-    def to_dict(self) -> dict:
-        if self.platform_spec == pipeline_spec_pb2.PlatformSpec():
-            return json_format.MessageToDict(self.pipeline_spec)
-        else:
-            return {
-                'pipeline_spec': json_format.MessageToDict(self.pipeline_spec),
-                'platform_spec': json_format.MessageToDict(self.platform_spec),
-            }
 
 
 @dataclasses.dataclass
@@ -134,6 +120,13 @@ class Client:
         ui_host: Base URL to use to open the Kubeflow Pipelines UI. This is used
             when running the client from a notebook to generate and print links.
         verify_ssl: Whether to verify the server's TLS certificate.
+        argo_server: Argo Server address for the archive when authenticating
+            directly against Kubernetes (``kube_context`` or in-cluster
+            credentials); every other request goes to the Kubernetes API.
+            Defaults to the Argo CLI's ``ARGO_SERVER`` (with ``ARGO_SECURE`` and
+            ``ARGO_BASE_HREF``), then to ``argo-server.<namespace>:2746`` inside
+            a cluster. ``ARGO_INSECURE_SKIP_VERIFY`` disables its TLS check.
+            Ignored when ``host`` names a native endpoint.
         healthz_max_attempts: Maximum number of attempts for the health check
             that runs during initialization when no namespace is set in the
             local context. Set it to 1 to fail fast when the backend is
@@ -141,8 +134,9 @@ class Client:
     """
 
     # in-cluster DNS name of the pipeline service
-    _IN_CLUSTER_DNS_NAME = 'ml-pipeline.{}.svc.cluster.local:8888'
-    _KUBE_PROXY_PATH = 'api/v1/namespaces/{}/services/ml-pipeline:http/proxy/'
+    _IN_CLUSTER_DNS_NAME = 'http://kfp-argo-ui.{}.svc.cluster.local:80'
+    _ARGO_SERVER_DNS_NAME = 'https://argo-server.{}.svc.cluster.local:2746'
+    _KUBE_PROXY_PATH = 'api/v1/namespaces/{}/services/kfp-argo-ui:80/proxy/'
 
     # Auto populated path in pods
     # https://kubernetes.io/docs/tasks/access-application-cluster/access-cluster/#accessing-the-api-from-a-pod
@@ -168,15 +162,10 @@ class Client:
         ui_host: Optional[str] = None,
         verify_ssl: Optional[bool] = None,
         healthz_max_attempts: int = 5,
+        argo_server: Optional[str] = None,
     ) -> None:
         """Create a new instance of kfp client."""
         _validate_max_attempts(healthz_max_attempts, 'healthz_max_attempts')
-        warnings.warn(
-            'This client requires a Kubeflow Pipelines backend that exposes '
-            'the v2 pipeline runtime. The SDK uses /apis/v2beta1 for server compatibility.',
-            category=FutureWarning,
-        )
-
         host = host or os.environ.get(KF_PIPELINES_ENDPOINT_ENV)
         self._uihost = os.environ.get(
             KF_PIPELINES_UI_ENDPOINT_ENV, ui_host or host
@@ -202,6 +191,7 @@ class Client:
             kube_context,
             credentials,
             verify_ssl,
+            argo_server,
         )
         # Save the loaded API client configuration, as a reference if update is
         # needed.
@@ -213,11 +203,18 @@ class Client:
             self._context_setting['namespace'] = namespace
 
         self._existing_config = config
+        if getattr(
+            config, '_native_kubernetes_host', None
+        ) and not self._context_setting.get('namespace'):
+            self._context_setting['namespace'] = namespace or 'kubeflow'
         if cookies is None:
             cookies = self._context_setting.get('client_authentication_cookie')
-        api_client = kfp.server_api.ApiClient(
+        from kfp.client._native import NativeBackend
+
+        backend = NativeBackend(
             config,
-            cookie=cookies,
+            namespace=self.get_user_namespace,
+            cookies=cookies,
             header_name=self._context_setting.get(
                 'client_authentication_header_name'
             ),
@@ -225,15 +222,13 @@ class Client:
                 'client_authentication_header_value'
             ),
         )
-        _add_generated_apis(self, kfp.server_api, api_client)
-        self._recurring_run_api = kfp.server_api.RecurringRunServiceApi(
-            api_client
-        )
-        self._run_api = kfp.server_api.RunServiceApi(api_client)
-        self._experiment_api = kfp.server_api.ExperimentServiceApi(api_client)
-        self._pipelines_api = kfp.server_api.PipelineServiceApi(api_client)
-        self._upload_api = kfp.server_api.PipelineUploadServiceApi(api_client)
-        self._healthz_api = kfp.server_api.HealthzServiceApi(api_client)
+        self._recurring_run_api = backend
+        self._run_api = backend
+        self._experiment_api = backend
+        self._pipelines_api = backend
+        self._upload_api = backend
+        self._healthz_api = backend
+        self.api_models = kfp.server_api
         if (
             not self._context_setting['namespace']
             and self.get_kfp_healthz(
@@ -263,6 +258,7 @@ class Client:
         kube_context: Optional[str],
         credentials: Optional[TokenCredentialsBase],
         verify_ssl: Optional[bool],
+        argo_server: Optional[str] = None,
     ) -> kfp.server_api.Configuration:
         config = kfp.server_api.Configuration()
         self._uses_gcp_credentials = False
@@ -333,7 +329,8 @@ class Client:
         if token:
             config.api_key['authorization'] = token
             config.api_key_prefix['authorization'] = 'Bearer'
-            return config
+            if host:
+                return config
 
         if host:
             # if host is explicitly set with auth token, it's probably a port
@@ -344,7 +341,7 @@ class Client:
 
         in_cluster = True
         try:
-            k8s.config.load_incluster_config()
+            k8s.config.load_incluster_config(client_configuration=config)
         except Exception as e:
             # Running outside of a cluster is the expected case here, so this is
             # logged at debug level to avoid a misleading warning. The local kube
@@ -356,24 +353,44 @@ class Client:
             )
             in_cluster = False
 
-        if in_cluster:
-            config.host = Client._IN_CLUSTER_DNS_NAME.format(namespace)
-            config = self._get_config_with_default_credentials(config)
-            return config
+        if not in_cluster:
+            try:
+                k8s.config.load_kube_config(
+                    client_configuration=config, context=kube_context
+                )
+            except Exception as e:
+                logging.warning(
+                    'Failed to load kube config: %s. Provide a native endpoint or a valid kubeconfig.',
+                    e,
+                )
+                return config
 
-        try:
-            k8s.config.load_kube_config(
-                client_configuration=config, context=kube_context
-            )
-        except Exception as e:
-            logging.warning(
-                'Failed to load kube config: %s. Proceeding without it; '
-                'subsequent requests to the Kubeflow Pipelines API may fail.',
-                e,
-            )
-            return config
-
-        if 'BearerToken' in config.api_key:
+        config._native_kubernetes_host = config.host.rstrip('/')
+        # Engine-only routes (the archive) go straight to Argo Server, which
+        # accepts the same Kubernetes token; nothing else needs the proxy.
+        config._native_argo_server = self._argo_server_endpoint(
+            argo_server, in_cluster, namespace or 'kubeflow'
+        )
+        config._native_argo_verify = verify_ssl is not False and os.environ.get(
+            'ARGO_INSECURE_SKIP_VERIFY', ''
+        ).lower() not in ('true', '1', 'yes')
+        if verify_ssl is not None:
+            config.verify_ssl = verify_ssl
+        if ssl_ca_cert:
+            config.ssl_ca_cert = ssl_ca_cert
+        if token or credentials:
+            # Explicit credentials choose the identity; never also send a kubeconfig admin certificate.
+            config.cert_file = config.key_file = None
+            config.username = config.password = None
+            config.api_key.clear()
+            config.api_key_prefix.clear()
+            config.api_key_prefix['authorization'] = 'Bearer'
+            config.refresh_api_key_hook = None
+            if token:
+                config.api_key['authorization'] = token
+            else:
+                config.refresh_api_key_hook = credentials.refresh_api_key_hook
+        elif 'BearerToken' in config.api_key:
             # Kubernetes 36.0.1 renamed the key used by its kubeconfig loader.
             # Keep the generated KFP client's authorization key synchronized,
             # including after the loader replaces its own refresh hook.
@@ -390,11 +407,44 @@ class Client:
             config.api_key['authorization'] = config.api_key['BearerToken']
             config.refresh_api_key_hook = refresh_kube_config
 
-        if config.host:
+        if in_cluster:
+            config.host = Client._IN_CLUSTER_DNS_NAME.format(
+                namespace or 'kubeflow'
+            )
+        else:
             config.host = (
-                config.host + '/' + Client._KUBE_PROXY_PATH.format(namespace)
+                config._native_kubernetes_host
+                + '/'
+                + Client._KUBE_PROXY_PATH.format(namespace or 'kubeflow')
             )
         return config
+
+    @staticmethod
+    def _argo_server_endpoint(
+        argo_server: Optional[str], in_cluster: bool, namespace: str
+    ) -> Optional[str]:
+        """Resolve Argo Server the way the Argo CLI does: an explicit address,
+        else ``ARGO_SERVER`` with ``ARGO_SECURE`` and ``ARGO_BASE_HREF``, else
+        the in-cluster Service. Outside a cluster with no address, the archive
+        stays unreachable and listings say so."""
+        base = ''
+        if not argo_server:
+            argo_server = os.environ.get('ARGO_SERVER', '')
+            if argo_server:
+                base = os.environ.get('ARGO_BASE_HREF', '').strip('/')
+            elif in_cluster:
+                argo_server = Client._ARGO_SERVER_DNS_NAME.format(namespace)
+            else:
+                return None
+        if '://' not in argo_server:
+            secure = os.environ.get('ARGO_SECURE', 'true').lower() not in (
+                'false',
+                '0',
+                'no',
+            )
+            argo_server = ('https://' if secure else 'http://') + argo_server
+        argo_server = argo_server.rstrip('/')
+        return argo_server + '/' + base if base else argo_server
 
     def _is_inverse_proxy_host(self, host: str) -> bool:
         # This check authorizes automatic disclosure of Google credentials.
@@ -441,6 +491,20 @@ class Client:
 
         # In-cluster pod. We could use relative URL.
         return '/pipeline'
+
+    def _resource_url(self, route: str, namespace: Optional[str] = None) -> str:
+        parsed = urlsplit(self._get_url_prefix())
+        query = dict(parse_qsl(parsed.query))
+        query['namespace'] = namespace or self._run_api._namespace()
+        return urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path.rstrip('/') + '/',
+                urlencode(query),
+                route,
+            )
+        )
 
     def _load_context_setting_or_default(self) -> None:
         if os.path.exists(Client._LOCAL_KFP_CONTEXT):
@@ -604,7 +668,10 @@ class Client:
                 )
             )
 
-        link = f'{self._get_url_prefix()}/#/experiments/details/{experiment.experiment_id}'
+        link = self._resource_url(
+            f'/experiments/details/{experiment.experiment_id}',
+            experiment.namespace,
+        )
         if auth.is_ipython():
             import IPython
 
@@ -906,9 +973,13 @@ class Client:
             plugins_input=plugins_input,
         )
 
-        response = self._run_api.run_service_create_run(run=run_body)
+        response = self._run_api.run_service_create_run(
+            run=run_body, enable_caching=enable_caching, cache_key=cache_key
+        )
 
-        link = f'{self._get_url_prefix()}/#/runs/details/{response.run_id}'
+        link = self._resource_url(
+            f'/runs/details/{response.run_id}', response.namespace
+        )
         if auth.is_ipython():
             import IPython
 
@@ -1102,7 +1173,9 @@ class Client:
         )
         return (
             self._recurring_run_api.recurring_run_service_create_recurring_run(
-                recurring_run=job_body
+                recurring_run=job_body,
+                enable_caching=enable_caching,
+                cache_key=cache_key,
             )
         )
 
@@ -1164,7 +1237,7 @@ class Client:
 
             # Caching option set at submission time overrides the compile time
             # settings.
-            if enable_caching is not None:
+            if enable_caching is not None or cache_key is not None:
                 _override_caching_options(
                     pipeline_doc.pipeline_spec, enable_caching, cache_key
                 )
@@ -1686,7 +1759,7 @@ class Client:
         """
         if pipeline_name is None:
             pipeline_doc = _extract_pipeline_yaml(pipeline_package_path)
-            pipeline_name = pipeline_doc.pipeline_spec.pipeline_info.name
+            pipeline_name = pipeline_doc.name
         validate_pipeline_display_name(pipeline_name)
         response = self._upload_api.upload_pipeline(
             pipeline_package_path,
@@ -1694,7 +1767,10 @@ class Client:
             description=description,
             namespace=namespace,
         )
-        link = f'{self._get_url_prefix()}/#/pipelines/details/{response.pipeline_id}'
+        link = self._resource_url(
+            f'/pipelines/details/{response.pipeline_id}',
+            response.namespace or self._pipelines_api._pipeline_namespace(),
+        )
         if auth.is_ipython():
             import IPython
 
@@ -1787,7 +1863,10 @@ class Client:
             pipeline_package_path, **kwargs
         )
 
-        link = f'{self._get_url_prefix()}/#/pipelines/details/{response.pipeline_id}/version/{response.pipeline_version_id}'
+        link = self._resource_url(
+            f'/pipelines/details/{response.pipeline_id}/version/{response.pipeline_version_id}',
+            response.pipeline_spec['metadata']['namespace'],
+        )
         if auth.is_ipython():
             import IPython
 
@@ -1940,148 +2019,8 @@ class Client:
         )
 
 
-def _add_generated_apis(
-    target_struct: Any,
-    api_module: ModuleType,
-    api_client: kfp.server_api.ApiClient,
-) -> None:
-    """Initializes a hierarchical API object based on the generated API module.
-
-    PipelineServiceApi.create_pipeline becomes
-    target_struct.pipelines.create_pipeline
-    """
-    Struct = type('Struct', (), {})
-
-    def camel_case_to_snake_case(name: str) -> str:
-        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
-
-    for api_name in dir(api_module):
-        if not api_name.endswith('ServiceApi'):
-            continue
-
-        short_api_name = (
-            camel_case_to_snake_case(api_name[0 : -len('ServiceApi')]) + 's'
-        )
-        api_struct = Struct()
-        setattr(target_struct, short_api_name, api_struct)
-        service_api = getattr(api_module.api, api_name)
-        initialized_service_api = service_api(api_client)
-        for member_name in dir(initialized_service_api):
-            if member_name.startswith('_') or member_name.endswith(
-                '_with_http_info'
-            ):
-                continue
-
-            bound_member = getattr(initialized_service_api, member_name)
-            setattr(api_struct, member_name, bound_member)
-    models_struct = Struct()
-    for member_name in dir(api_module.models):
-        if not member_name[0].islower():
-            setattr(
-                models_struct,
-                member_name,
-                getattr(api_module.models, member_name),
-            )
-    target_struct.api_models = models_struct
-
-
 def validate_pipeline_display_name(name: str) -> None:
     if not name or name.isspace():
         raise ValueError(
             f'Invalid pipeline name. Pipeline name cannot be empty or contain only whitespace.'
         )
-
-
-def _extract_pipeline_yaml(package_file: str) -> _PipelineDoc:
-
-    def _choose_pipeline_file(file_list: List[str]) -> str:
-        pipeline_files = [file for file in file_list if file.endswith('.yaml')]
-        if not pipeline_files:
-            raise ValueError(
-                'Invalid package. Missing pipeline yaml file in the package.'
-            )
-
-        if 'pipeline.yaml' in pipeline_files:
-            return 'pipeline.yaml'
-        elif len(pipeline_files) == 1:
-            return pipeline_files[0]
-        else:
-            raise ValueError(
-                'Invalid package. There is no pipeline.json file or there '
-                'are multiple yaml files.'
-            )
-
-    def _safe_load_yaml(stream: TextIO) -> _PipelineDoc:
-        docs = yaml.safe_load_all(stream)
-        pipeline_spec_dict = None
-        platform_spec_dict = {}
-        for doc in docs:
-            if pipeline_spec_dict is None:
-                pipeline_spec_dict = doc
-            else:
-                platform_spec_dict.update(doc)
-
-        return _PipelineDoc(
-            pipeline_spec=json_format.ParseDict(
-                pipeline_spec_dict, pipeline_spec_pb2.PipelineSpec()
-            ),
-            platform_spec=json_format.ParseDict(
-                platform_spec_dict, pipeline_spec_pb2.PlatformSpec()
-            ),
-        )
-
-    if package_file.endswith('.tar.gz') or package_file.endswith('.tgz'):
-        with tarfile.open(package_file, 'r:gz') as tar:
-            file_names = [member.name for member in tar if member.isfile()]
-            pipeline_file = _choose_pipeline_file(file_names)
-            with tar.extractfile(tar.getmember(pipeline_file)) as f:  # type: ignore
-                return _safe_load_yaml(f)
-    elif package_file.endswith('.zip'):
-        with zipfile.ZipFile(package_file, 'r') as zip:
-            pipeline_file = _choose_pipeline_file(zip.namelist())
-            with zip.open(pipeline_file) as f:
-                return _safe_load_yaml(f)
-    elif package_file.endswith('.yaml') or package_file.endswith('.yml'):
-        with open(package_file, 'r') as f:
-            return _safe_load_yaml(f)
-    else:
-        raise ValueError(
-            f'The package_file {package_file} should end with one of the '
-            'following formats: [.tar.gz, .tgz, .zip, .yaml, .yml].'
-        )
-
-
-def _override_caching_options(
-    pipeline_spec: pipeline_spec_pb2.PipelineSpec,
-    enable_caching: bool,
-    cache_key: Optional[str] = None,
-) -> None:
-    """Overrides caching options.
-
-    Args:
-        pipeline_spec: The PipelineSpec object to update in-place.
-        enable_caching: Overrides options for every task in every DAG reachable
-            from the root, one of True, False.
-        cache_key: Overrides cache_key on root DAG tasks, default None, no-op.
-    """
-    # Tasks inside dsl.If, ParallelFor, ExitHandler and nested pipelines live
-    # in the DAGs of their parent components, not in the root DAG.
-    dags, visited = [pipeline_spec.root.dag], set()
-    while dags:
-        for task_spec in dags.pop().tasks.values():
-            task_spec.caching_options.enable_cache = enable_caching
-            name = task_spec.component_ref.name
-            # Membership check first: indexing a protobuf map inserts the key.
-            if (
-                name not in visited
-                and name in pipeline_spec.components
-                and pipeline_spec.components[name].HasField('dag')
-            ):
-                visited.add(name)
-                dags.append(pipeline_spec.components[name].dag)
-    if cache_key:
-        # A custom key replaces input-based fingerprinting, and ParallelFor
-        # iterations share one task spec, so pushing it into nested DAGs would
-        # give every iteration the same fingerprint.
-        for task_spec in pipeline_spec.root.dag.tasks.values():
-            task_spec.caching_options.cache_key = cache_key

@@ -1,30 +1,11 @@
-/*
- * Copyright 2019 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import { render } from '@testing-library/react';
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import { Column, Row } from './CustomTable';
-import { flushPromisesInAct } from '../TestUtils';
 import { CustomTableRow } from './CustomTableRow';
 
-describe('CustomTable', () => {
-  const props = {
-    columns: [],
-    row: [],
-  };
-
+describe('CustomTableRow', () => {
   const columns: Column[] = [
     {
       customRenderer: undefined,
@@ -41,19 +22,31 @@ describe('CustomTable', () => {
     otherFields: ['cell1', 'cell2'],
   };
 
-  it('renders some rows using a custom renderer', async () => {
-    columns[0].customRenderer = () => (<span>this is custom output</span>) as any;
-    const { asFragment } = render(<CustomTableRow {...props} row={row} columns={columns} />);
-    await flushPromisesInAct();
-    expect(asFragment()).toMatchSnapshot();
-    columns[0].customRenderer = undefined;
+  it('renders some rows using a custom renderer', () => {
+    const customColumns: Column[] = [
+      { ...columns[0], customRenderer: () => <span>this is custom output</span> },
+      columns[1],
+    ];
+    const { container } = render(<CustomTableRow row={row} columns={customColumns} />);
+    const cells = Array.from(container.children) as HTMLElement[];
+    expect(cells).toHaveLength(2);
+    expect(cells[0]).toHaveStyle({ width: '50%' });
+    expect(cells[1]).toHaveStyle({ width: '50%' });
+    expect(screen.getByText('this is custom output')).toBeInTheDocument();
+    expect(screen.queryByText('cell1')).toBeNull();
+    expect(screen.getByText('cell2')).toBeInTheDocument();
   });
 
-  it('displays warning icon with tooltip if row has error', async () => {
-    row.error = 'dummy error';
-    const { asFragment } = render(<CustomTableRow {...props} row={row} columns={columns} />);
-    await flushPromisesInAct();
-    expect(asFragment()).toMatchSnapshot();
-    row.error = undefined;
+  it('displays warning icon with tooltip if row has error', () => {
+    const { container } = render(
+      <CustomTableRow row={{ ...row, error: 'dummy error' }} columns={columns} />,
+    );
+    const cells = Array.from(container.children) as HTMLElement[];
+    const icon = cells[0].querySelector('svg');
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute('aria-label', 'dummy error');
+    expect(cells[1].querySelector('svg')).toBeNull();
+    expect(screen.getByText('cell1')).toBeInTheDocument();
+    expect(screen.getByText('cell2')).toBeInTheDocument();
   });
 });

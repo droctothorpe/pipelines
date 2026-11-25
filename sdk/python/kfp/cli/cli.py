@@ -155,6 +155,7 @@ def cli(
     if ctx.invoked_subcommand not in client_commands:
         # Do not create a client for these subcommands
         return
+    ctx.ensure_object(dict)
     ctx.obj['client'] = client.Client(
         endpoint,
         iap_client_id,

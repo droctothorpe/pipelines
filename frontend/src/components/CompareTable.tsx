@@ -15,7 +15,7 @@
  */
 
 import * as React from 'react';
-import { logger } from '../lib/Utils';
+import { logger } from '../lib/UiUtils';
 import { stylesheet, classes } from 'typestyle';
 import { color } from '../Css';
 

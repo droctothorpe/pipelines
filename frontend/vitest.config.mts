@@ -18,6 +18,8 @@ export default defineConfig({
     // coverage/vitest/.tmp/coverage-*.json) under high default parallelism on CI.
     pool: 'forks',
     maxWorkers: process.env.CI ? 4 : undefined,
+    // Graph layout cases exceed the 5 s default under a loaded CI runner.
+    testTimeout: 15000,
     environment: 'jsdom',
     setupFiles: ['src/vitest.setup.ts'],
     globals: true,

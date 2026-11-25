@@ -28,10 +28,11 @@ import { commonCss, fontsize } from '../Css';
 import ExperimentsIcon from '../icons/experiments';
 import GitHubIcon from '../icons/GitHub-Mark-120px-plus.png';
 import PipelinesIcon from '../icons/pipelines';
-import { BuildInfo } from '../lib/Apis';
-import { Deployments, KFP_FLAGS } from '../lib/Flags';
+import type { BuildInfo } from '../lib/NativeViewTypes';
+const Deployments = { MARKETPLACE: 'MARKETPLACE' };
+const KFP_FLAGS = { DEPLOYMENT: 'STANDALONE', HIDE_SIDENAV: false };
 import { LocalStorage, LocalStorageKey } from '../lib/LocalStorage';
-import { GkeMetadataContext, GkeMetadata } from 'src/lib/GkeMetadata';
+type GkeMetadata = { clusterName?: string; projectId?: string };
 import { Alarm } from '@mui/icons-material';
 import { BuildInfoContext } from 'src/lib/BuildInfo';
 
@@ -686,8 +687,7 @@ const ExternalUri: React.FC<ExternalUriProps> = ({ title, to, collapsed, icon })
 );
 
 const EnhancedSideNav: React.FC<SideNavProps> = (props) => {
-  const gkeMetadata = React.useContext(GkeMetadataContext);
   const buildInfo = React.useContext(BuildInfoContext);
-  return <SideNav {...props} gkeMetadata={gkeMetadata} buildInfo={buildInfo} />;
+  return <SideNav {...props} gkeMetadata={{}} buildInfo={buildInfo} />;
 };
 export default EnhancedSideNav;

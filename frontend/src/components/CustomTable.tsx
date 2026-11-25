@@ -21,11 +21,11 @@ import ChevronRight from '@mui/icons-material/ChevronRight';
 import FilterIcon from '@mui/icons-material/FilterList';
 import Input from '../atoms/Input';
 import Separator from '../atoms/Separator';
-import { ListRequest } from '../lib/Apis';
+import { ListRequest, V2Filter, V2PredicateOperation } from '../lib/NativeViewTypes';
 import { classes, stylesheet } from 'typestyle';
 import { fonts, fontsize, dimension, commonCss, color, padding, zIndex } from '../Css';
 import { LocalStorage } from '../lib/LocalStorage';
-import { logger } from '../lib/Utils';
+import { logger } from '../lib/UiUtils';
 import { debounce } from 'lodash';
 import {
   InputAdornment,
@@ -39,7 +39,6 @@ import {
   Tooltip,
 } from '@mui/material';
 import { CustomTableRow } from './CustomTableRow';
-import { V2Filter, V2PredicateOperation } from 'src/apisv2/filter';
 
 export enum ExpandState {
   COLLAPSED,
@@ -183,6 +182,8 @@ export const css = stylesheet({
 });
 
 interface CustomTableProps {
+  /** Refresh page tokens when an externally polled inventory changes. */
+  dataVersion?: unknown;
   columns: Column[];
   disablePaging?: boolean;
   disableSelection?: boolean;
@@ -289,6 +290,10 @@ export default class CustomTable extends React.Component<CustomTableProps, Custo
   public componentDidMount(): void {
     this._isMounted = true;
     this._pageChanged(0);
+  }
+
+  public componentDidUpdate(previous: CustomTableProps): void {
+    if (previous.dataVersion !== this.props.dataVersion) void this._pageChanged(0);
   }
 
   public componentWillUnmount(): void {
@@ -607,10 +612,9 @@ export default class CustomTable extends React.Component<CustomTableProps, Custo
     }
 
     if (newPageToken) {
-      // If we're using the greatest yet known page, then the pageToken will be new.
-      if (newCurrentPage + 1 === this.state.tokenList.length) {
-        this.state.tokenList.push(newPageToken);
-      }
+      // A refreshed inventory may have grown beyond a previously known last page.
+      maxPageIndex = Math.max(maxPageIndex, newCurrentPage + 1);
+      this.state.tokenList[newCurrentPage + 1] = newPageToken;
     } else {
       maxPageIndex = newCurrentPage;
     }

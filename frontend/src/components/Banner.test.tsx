@@ -1,51 +1,47 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import Banner from './Banner';
 
 describe('Banner', () => {
   it('defaults to error mode', () => {
-    const { asFragment } = render(<Banner message={'Some message'} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<Banner message={'Some message'} />);
+    expect(screen.getByText('Some message')).toBeInTheDocument();
+    expect(screen.getByTestId('ErrorIcon')).toBeInTheDocument();
+    expect(screen.queryByTestId('WarningIcon')).toBeNull();
+    expect(screen.queryByTestId('InfoIcon')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('uses error mode when instructed', () => {
-    const { asFragment } = render(<Banner message={'Some message'} mode={'error'} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<Banner message={'Some message'} mode={'error'} />);
+    expect(screen.getByTestId('ErrorIcon')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('uses warning mode when instructed', () => {
-    const { asFragment } = render(<Banner message={'Some message'} mode={'warning'} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<Banner message={'Some message'} mode={'warning'} />);
+    expect(screen.getByTestId('WarningIcon')).toBeInTheDocument();
+    expect(screen.queryByTestId('ErrorIcon')).toBeNull();
   });
 
   it('uses info mode when instructed', () => {
-    const { asFragment } = render(<Banner message={'Some message'} mode={'info'} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<Banner message={'Some message'} mode={'info'} />);
+    expect(screen.getByTestId('InfoIcon')).toBeInTheDocument();
+    expect(screen.queryByTestId('ErrorIcon')).toBeNull();
   });
 
   it('shows "Details" button and has dialog when there is additional info', () => {
-    const { asFragment } = render(<Banner message={'Some message'} additionalInfo={'More info'} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<Banner message={'Some message'} additionalInfo={'More info'} />);
+    expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
+    // The dialog is mounted closed until Details is clicked.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText('More info')).toBeNull();
   });
 
   it('shows "Refresh" button when passed a refresh function', () => {
-    const { asFragment } = render(
+    render(
       <Banner
         message={'Some message'}
         refresh={() => {
@@ -53,7 +49,8 @@ describe('Banner', () => {
         }}
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Details' })).toBeNull();
   });
 
   it('does not show "Refresh" button if mode is "info"', () => {
@@ -77,7 +74,10 @@ describe('Banner', () => {
   it('opens details dialog when button is clicked', () => {
     render(<Banner message='hello' additionalInfo='world' />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveTextContent('An error occurred');
+    expect(dialog).toHaveTextContent('world');
   });
 
   it('closes details dialog when cancel button is clicked', async () => {

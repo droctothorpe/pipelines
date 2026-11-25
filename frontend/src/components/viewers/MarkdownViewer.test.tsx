@@ -1,27 +1,14 @@
-/*
- * Copyright 2019 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import { render } from '@testing-library/react';
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import MarkdownViewer, { MarkdownViewerConfig } from './MarkdownViewer';
 import { PlotType } from './Viewer';
 
 describe('MarkdownViewer', () => {
   it('does not break on empty data', () => {
-    const { asFragment } = render(<MarkdownViewer configs={[]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<MarkdownViewer configs={[]} />);
+    expect(container.firstChild).toBeNull();
   });
 
   it('renders some basic markdown', () => {
@@ -31,22 +18,39 @@ describe('MarkdownViewer', () => {
       type: PlotType.MARKDOWN,
     };
 
-    const { asFragment } = render(<MarkdownViewer configs={[config]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<MarkdownViewer configs={[config]} />);
+    expect(container.firstElementChild).toHaveClass('markdown-viewer');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Title');
+    const link = screen.getByRole('link', { name: 'some link here' });
+    expect(link).toHaveAttribute('href', 'http://example.com');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener');
   });
 
   it('sanitizes the markdown to remove XSS', () => {
     const markdown = `
-      lower[click me](javascript&#x3a;...)lower
-      upper[click me](javascript&#X3a;...)upper
+lower[click me](javascript&#x3a;...)lower
+upper[click me](javascript&#X3a;...)upper
+plain[click me](javascript:alert(1))plain
+
+<img src=x onerror="alert(1)">
+<script>alert(1)</script>
     `;
     const config: MarkdownViewerConfig = {
       markdownContent: markdown,
       type: PlotType.MARKDOWN,
     };
 
-    const { asFragment } = render(<MarkdownViewer configs={[config]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<MarkdownViewer configs={[config]} />);
+    // Link text still renders, but no javascript: href survives.
+    expect(screen.getAllByText('click me')).toHaveLength(3);
+    for (const anchor of Array.from(container.querySelectorAll('a'))) {
+      expect(anchor.getAttribute('href') ?? '').not.toMatch(/javascript/i);
+    }
+    // Raw HTML is not parsed: it is shown as text, never as elements.
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('script')).toBeNull();
+    expect(container).toHaveTextContent('<script>alert(1)</script>');
   });
 
   it('returns a user friendly display name', () => {

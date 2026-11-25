@@ -23,9 +23,8 @@ import SuccessIcon from '@mui/icons-material/CheckCircle';
 import TerminatedIcon from 'src/icons/statusTerminated';
 import UnknownIcon from '@mui/icons-material/Help';
 import { color } from 'src/Css';
-import { logger, formatDateString } from 'src/lib/Utils';
-import { checkIfTerminatedV2 } from 'src/lib/StatusUtils';
-import { V2RuntimeState } from 'src/apisv2/run';
+import { logger, formatDateString, checkIfTerminatedV2 } from 'src/lib/UiUtils';
+import { V2RuntimeState } from 'src/lib/NativeViewTypes';
 import { Tooltip } from '@mui/material';
 
 export function statusToIcon(

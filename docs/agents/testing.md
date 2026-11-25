@@ -1,69 +1,96 @@
-# Testing and Formatting
+# Testing and formatting
 
-## Targeted test commands
+Three layers: offline pytest, the frontend suite, and one live end-to-end suite.
 
-```bash
-# SDK
-uv sync --frozen --extra dev
-uv run pytest -v sdk/python/kfp
+## Offline
 
-# Complete SDK unit CI selection, including cross-file parallelism
-SETUP_ENV=false PYTEST_PARALLEL_WORKERS=4 \
-  ./test/presubmit-tests-sdk-unit.sh
-
-# Bundled Kubernetes helpers
-uv run pytest -v sdk/python/test/kubernetes
-
-# Backend unit tests
-go test -v $(go list ./backend/... | \
-  grep -v backend/test/v2/api | \
-  grep -v backend/test/v2/integration | \
-  grep -v backend/test/v2/initialization | \
-  grep -v backend/test/compiler | \
-  grep -v backend/test/end2end)
-
-# Compiler, API, and end-to-end suites
-ginkgo -v ./backend/test/compiler
-ginkgo -v --label-filter="Smoke" ./backend/test/v2/api
-ginkgo -v --label-filter="Smoke" ./backend/test/end2end -- -namespace=kubeflow
+```sh
+uv sync --frozen --extra test --extra lint --extra codegen
+uv run python -m pytest -q sdk/python/kfp test
+uv run ruff check sdk/python/kfp samples/argo-native hack/generate-python.py test
+uv run ruff format --check sdk/python/kfp samples/argo-native hack/generate-python.py test
 ```
 
-Compiler and API/E2E suites require Ginkgo; API and E2E tests require a cluster. Use a label filter on CPU-only clusters because `gpu-scheduling-check` requires `nvidia.com/gpu`.
+Repeat SDK validation on Python 3.11 and 3.13. Build a wheel and sdist; verify the
+wheel includes the native runtime, public Client/native adapters and both schema
+bindings, and excludes retired service API transports and local runners. Generated
+bindings are committed so installing a wheel requires neither protoc nor a backend.
+`test/` holds the offline files directly; `test/e2e/` is collected too but every
+test in it skips unless `KFP_TEST_HOST` is set. `test/data/` holds the frozen stock
+baselines (sample definitions and client signatures).
 
-Runtime command regressions require a wheel built with `uv build --package kfp --wheel`. Set `KFP_PACKAGE_PATH` to its absolute path, then run `uv run pytest sdk/python/test/runtime -m regression`. Each case installs the wheel with the stored `--no-deps` bootstrap in a clean uv venv using the test runner's Python version; missing artifacts fail instead of selecting a published SDK.
+## Frontend
 
-Pipeline inputs live in `test_data/pipeline_files/valid/`; compiler goldens live in `test_data/compiled-workflows/`.
+With the pinned Node/npm versions:
 
-## Formatting and linting
-
-```bash
-golangci-lint run
-bash test/presubmit-ruff.sh
-bash test/presubmit-docformatter-sdk.sh
+```sh
+cd frontend
+npm ci
+npm run test:ci
 ```
 
-Ruff checks all handwritten Python sources, including scripts and fixtures, using
-`pyproject.toml`; generated protobuf and OpenAPI modules are excluded even when
-passed explicitly. The soon-to-be-deleted `components/google-cloud` tree is also
-excluded from Ruff and all pre-commit hooks; leave it unchanged by this migration. It owns import sorting, unused-import cleanup, invalid escape
-checks, and formatting. Package imports in `__init__.py` are retained as public
-re-exports. Notebooks and Markdown are outside the Python formatting check.
-Docformatter still wraps docstring prose: run it before `ruff format`, and run
-the hook chain twice to check that both tools agree.
+The native production-bundle test checks both entrypoints, API boundaries and
+memory-only credentials. The real standalone viewer smoke covers offline and
+sandboxed rendering, graph/inspector state and watch recovery. Keep tests at those
+boundaries rather than restoring old RPC-model fixtures.
 
-Run the complete SDK unit selection with both Python 3.11 and 3.13 after
-changing packaging or local-runner test setup; a runtime-only or serial subset
-does not exercise cross-worker installation races. `LocalRunnerEnvironmentTestCase`
-isolates both the SDK build source and the subprocess installation destination.
-Even `use_venv=False` tests use a disposable per-test interpreter, while retaining
-the runner's actual install locking and per-task-venv behavior. Never let test
-components reinstall packages into the pytest workers' shared environment.
+The live browser suite is `frontend/e2e/` (node:test plus Playwright). Each file
+creates what it needs through the SDK (`test/e2e/fixtures.py`, via the `fixture()`
+helper in `live.mjs`), drives the deployed UI, and asserts on the real responses.
+`npm run test:e2e` runs the files in parallel; `e2e/deployment.test.mjs` runs
+alone afterwards because it restarts services. It reads `ARGO_UI_URL`,
+`ARGO_NAMESPACE`, `ARGO_EDITOR_TOKEN` and `ARGO_READER_TOKEN` (or the `KFP_TEST_*`
+names), honours single-user proxies, and writes screenshots to `KFP_UI_OUTPUT`.
+`test/native-deployment.sh` then redeploys the same cluster in multi-user mode and
+runs `test/e2e/test_multi_user.py` and `frontend/e2e/multi-user.test.mjs`: those
+need a tenant namespace, `test/e2e/multi-user-roles.yaml`, and `KFP_TEST_USER`
+(the identity header the suite sets in place of a gateway); they skip elsewhere.
+Coverage matches upstream's frontend integration suite minus the API server: the
+hello-world lifecycle journey (`pipeline-lifecycle.test.mjs`) and the SDK-to-UI
+round trips, plus native-specific checks for logs, previews, markdown safety and
+run-form parameters.
 
-The SDK integration presubmit builds one wheel from the actual checkout and uses
-it for both local-execution and runtime regressions. DockerRunner tests bind-mount
-that wheel read-only at its absolute package path; subprocess tests install the
-same artifact. Keep real per-component installs, dependency resolution, both Python
-versions, and all cases. Do not restore Git URL installs per component: queue-SHA
-fetches and repeated builds can exceed the integration job's timeout. Run
-`PYTHONPATH=.github/resources/scripts python -m unittest sdk_runtime_test queue_test_sources_test`
-and the local-execution wheel-mount regressions after changing this handoff.
+## End to end
+
+`test/e2e/` is the single live suite for the SDK against a deployed native
+installation; `frontend/e2e/` is its browser counterpart and both run on every PR. Each module drives the public `kfp` client, then reads the real
+workflow, pods or artifacts. Point it at a cluster and pick a tier:
+
+```sh
+kubectl --context orbstack -n kfp-argo port-forward svc/kfp-argo-ui 3003:80 &
+export KFP_TEST_HOST=http://127.0.0.1:3003 KFP_TEST_NAMESPACE=kfp-argo
+export KFP_TEST_TOKEN="$(kubectl --context orbstack -n kfp-argo create token argo-ui-editor --duration=2h)"
+export KFP_TEST_CONTEXT=orbstack KFP_TEST_ARGO_SERVER=https://127.0.0.1:2746  # direct-Kubernetes client tests; port-forward svc/argo-server
+uv run python -m pytest test/e2e -m 'not prerequisite' -n 4 --dist loadfile -p no:randomly  # what CI runs
+uv run python -m pytest test/e2e -m smoke -p no:randomly                  # quick local check, ~10 min
+uv run python -m pytest test/e2e -p no:randomly -k samples                # the stock sample corpus only
+```
+
+`test/stock_samples_test.py` pins every compiling stock sample to a golden Argo
+manifest in `test/data/golden`. A compiler change that alters output fails there;
+regenerate with `KFP_UPDATE_GOLDENS=1` and review the diff as part of the change.
+
+Every pull request runs everything but `prerequisite` cases through
+`test/native-deployment.sh` on a disposable Kind cluster, once per Kubernetes
+version in stock's matrix (`KFP_TEST_K8S_VERSION` picks the `kindest/node` tag), in parallel with
+pytest-xdist (`-n`, grouped by module with `--dist loadfile` so module fixtures
+keep their order; `KFP_TEST_WORKERS` sets the count). Markers: `smoke` is the quick
+representative subset for a local check; `full` is the rest; `prerequisite` cases
+skip unless `KFP_TEST_PREREQUISITES=1` because they need GPUs, cloud credentials or
+a PVC-capable account (`KFP_TEST_SERVICE_ACCOUNT`); `no_cluster` marks the few tests
+that need no deployment. Tests share one namespace, so each creates uniquely named
+resources and asserts on its own workflow; keep new cases that way. `KFP_TEST_IMAGE` names a prebuilt image carrying this SDK
+so components skip the PyPI install; CI sets it to the content-addressed demo image.
+`KFP_TEST_DISABLE_CACHING=1` forces a cold sample pass. `--e2e-output DIR` (default
+`/tmp/kfp-e2e-<timestamp>`) receives compiled manifests and `report.json`, which the
+inventory cites as evidence. Run with `-p no:randomly`: tests are independent, but a
+fixed order keeps reports comparable.
+
+Adding a case: put the pipeline in the test module (or under `test/e2e/pipelines/`
+when an offline test also imports it), assert on the run and on Argo state through
+`e2e.support`, mark the tier, and call `record(...)` with the run id. The samples
+under `samples/` are user-facing documentation and are never edited for tests;
+`test/e2e/samples.py` holds their inputs and expectations.
+
+Expected failure cases must fail for the expected reason; an arbitrary terminal
+state is not a passing result. Do not reset unrelated clusters or artifact stores.

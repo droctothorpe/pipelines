@@ -1,20 +1,7 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, waitFor } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import ConfusionMatrix, { ConfusionMatrixConfig } from './ConfusionMatrix';
 import { PlotType } from './Viewer';
 
@@ -31,30 +18,67 @@ describe('ConfusionMatrix', () => {
     type: PlotType.CONFUSION_MATRIX,
   };
 
+  // Numeric data cells in document order (the displayed, y-reversed orientation).
+  const displayedValues = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll('td'))
+      .map((cell) => cell.textContent?.trim())
+      .filter((text) => text && /^\d+$/.test(text))
+      .map(Number);
+
   it('does not break on empty data', () => {
     const { container } = render(<ConfusionMatrix configs={[]} />);
     expect(container.firstChild).toBeNull();
   });
 
   it('renders a basic confusion matrix', () => {
-    const { asFragment } = render(<ConfusionMatrix configs={[config]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container, getByText, getAllByRole } = render(<ConfusionMatrix configs={[config]} />);
+    expect(container.querySelectorAll('table')).toHaveLength(1);
+    // Only the labeled classes are plotted; the last row is shown first.
+    expect(displayedValues(container)).toEqual([1, 4, 0, 3]);
+    const rowLabels = Array.from(container.querySelectorAll('tr > td:first-child > div')).map(
+      (label) => label.textContent,
+    );
+    expect(rowLabels).toEqual(['label2', 'label1']);
+    expect(
+      getAllByRole('columnheader')
+        .filter((header) => header.getAttribute('scope') === 'col')
+        .map((header) => header.textContent),
+    ).toEqual(['label1', 'label2']);
+    expect(getByText('test x axis')).toBeInTheDocument();
+    expect(getByText('test y axis')).toBeInTheDocument();
+    // The legend runs from zero to the largest value in the data.
+    const legendLabels = Array.from(container.querySelectorAll('div > span')).map(
+      (label) => label.textContent,
+    );
+    expect(legendLabels).toEqual(['8', '0', '1', '3', '4', '6']);
   });
 
   it('does not break on asymetric data', () => {
     const testConfig = { ...config, data: data.slice(1) };
-    const { asFragment } = render(<ConfusionMatrix configs={[testConfig]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<ConfusionMatrix configs={[testConfig]} />);
+    expect(displayedValues(container)).toEqual([4, 7, 3, 6]);
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(5);
   });
 
   it('renders only one of the given list of configs', () => {
-    const { asFragment } = render(<ConfusionMatrix configs={[config, config, config]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<ConfusionMatrix configs={[config, config, config]} />);
+    expect(container.querySelectorAll('table')).toHaveLength(1);
+    expect(displayedValues(container)).toEqual([1, 4, 0, 3]);
   });
 
   it('renders a small confusion matrix snapshot, with no labels or footer', () => {
-    const { asFragment } = render(<ConfusionMatrix configs={[config]} maxDimension={100} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container, queryByText } = render(
+      <ConfusionMatrix configs={[config]} maxDimension={100} />,
+    );
+    expect(displayedValues(container)).toEqual([1, 4, 0, 3]);
+    expect(queryByText('test x axis')).toBeNull();
+    expect(queryByText('test y axis')).toBeNull();
+    expect(queryByText('label1')).toBeNull();
+    expect(queryByText('label2')).toBeNull();
+    expect(container.querySelectorAll('th')).toHaveLength(0);
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+    // No legend is rendered beside the table.
+    expect(container.querySelectorAll('div > span')).toHaveLength(0);
   });
 
   it('keeps long column labels and the axis caption in the table flow', () => {
@@ -92,13 +116,8 @@ describe('ConfusionMatrix', () => {
         ]}
       />,
     );
-    const displayedValues = () =>
-      Array.from(container.querySelectorAll('td'))
-        .map((cell) => cell.textContent?.trim())
-        .filter((text) => text && /^\d+$/.test(text))
-        .map(Number);
 
-    expect(displayedValues()).toEqual([8, 47, 42, 3]);
+    expect(displayedValues(container)).toEqual([8, 47, 42, 3]);
     rerender(
       <ConfusionMatrix
         configs={[
@@ -112,7 +131,7 @@ describe('ConfusionMatrix', () => {
         ]}
       />,
     );
-    expect(displayedValues()).toEqual([12, 43, 38, 7]);
+    expect(displayedValues(container)).toEqual([12, 43, 38, 7]);
   });
 
   it('activates row/column on cell hover', () => {

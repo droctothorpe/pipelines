@@ -97,6 +97,7 @@ const DetailsTable = <T extends {}>(props: DetailsTableProps<T>) => {
                     readOnly={true}
                     value={JSON.stringify(parsedJson, null, 2) || ''}
                     editorProps={{ $blockScrolling: Infinity }}
+                    setOptions={{ useWorker: false }}
                   />
                 </div>
               );

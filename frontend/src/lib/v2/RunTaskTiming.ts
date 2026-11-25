@@ -3,10 +3,11 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
-import { V2PipelineTask, V2Run } from 'src/apisv2/run';
-import { hasFinishedV2 } from 'src/lib/StatusUtils';
-import { isTaskFinished } from './RuntimeArtifactUtils';
-import { getTaskDisplayName } from './RunTaskUtils';
+import type {
+  TaskTimingView as V2PipelineTask,
+  RunTimingView as V2Run,
+} from 'src/lib/NativeViewTypes';
+import { hasFinishedV2, isTaskFinished, getTaskDisplayName } from 'src/lib/UiUtils';
 
 const GROUP_TYPES = new Set([
   'ROOT',

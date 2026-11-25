@@ -5,9 +5,11 @@
 
 import { useEffect, useState } from 'react';
 import { Alert, Button, CircularProgress, Tooltip } from '@mui/material';
-import { V2PipelineTask, V2Run } from 'src/apisv2/run';
-import { hasFinishedV2 } from 'src/lib/StatusUtils';
-import { formatDateString } from 'src/lib/Utils';
+import type {
+  TaskTimingView as V2PipelineTask,
+  RunTimingView as V2Run,
+} from 'src/lib/NativeViewTypes';
+import { hasFinishedV2, formatDateString } from 'src/lib/UiUtils';
 import {
   formatTaskElapsed,
   getRunTaskTiming,

@@ -1,0 +1,140 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  labels:
+    pipelines.kubeflow.org/pipeline: sequential-pipeline
+    pipelines.kubeflow.org/version: bc65500579f1
+  annotations:
+    pipelines.kubeflow.org/display-name: sequential-pipeline
+    pipelines.kubeflow.org/description: A pipeline with two sequential steps.
+    pipelines.kubeflow.org/contract: kfp-argo/v1
+    pipelines.kubeflow.org/storage-state: AVAILABLE
+    pipelines.kubeflow.org/parameter-types: '{"url":"String"}'
+    pipelines.kubeflow.org/artifact-repository: ''
+    pipelines.kubeflow.org/artifact-bucket: ''
+    pipelines.kubeflow.org/artifact-key-prefix: ''
+    pipelines.kubeflow.org/artifact-root-binding: v1
+  name: sequential-pipeline-bc65500579f1
+spec:
+  entrypoint: t0-sequential-pipeline
+  serviceAccountName: argo-workflow
+  arguments:
+    parameters:
+    - name: url
+      value: gs://ml-pipeline/sample-data/shakespeare/shakespeare1.txt
+  templates:
+  - name: t0-sequential-pipeline
+    dag:
+      tasks:
+      - name: gcs-download-op
+        template: t1-gcs-download-op
+        arguments:
+          parameters:
+          - name: url
+            value: '{{inputs.parameters.url}}'
+      - name: echo-op
+        template: t2-echo-op
+        dependencies:
+        - gcs-download-op
+        arguments:
+          parameters:
+          - name: text
+            value: '{{tasks.gcs-download-op.outputs.parameters.output}}'
+    inputs:
+      parameters:
+      - name: url
+        default: gs://ml-pipeline/sample-data/shakespeare/shakespeare1.txt
+    metadata:
+      annotations:
+        pipelines.kubeflow.org/input-parameter-types: '{"url":"String"}'
+        pipelines.kubeflow.org/output-parameter-types: '{}'
+  - name: t1-gcs-download-op
+    container:
+      image: google/cloud-sdk:279.0.0
+      command:
+      - sh
+      - -c
+      args:
+      - gsutil cat $0 | tee $1
+      - '{{inputs.parameters.url}}'
+      - /tmp/kfp-output
+      env: []
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        seccompProfile:
+          type: RuntimeDefault
+    inputs:
+      parameters:
+      - name: url
+    outputs:
+      parameters:
+      - name: output
+        valueFrom:
+          path: /tmp/kfp-output
+      - name: kfp-metadata
+        value: '{{=toJson({"artifacts":[],"inputs":[],"metrics":{},"producer":{"namespace":workflow.namespace,"run":workflow.uid,"task":pod.name},"schema":"kfp-argo/v1"})}}'
+    metadata:
+      annotations:
+        pipelines.kubeflow.org/component-type: RUNTIME
+        pipelines.kubeflow.org/input-parameter-types: '{"url":"String"}'
+        pipelines.kubeflow.org/output-parameter-types: '{"output":"String"}'
+        pipelines.kubeflow.org/cache-policy: '{"component":"gcs-download-op","memoize":{"cache":{"configMap":{"name":"kfp-cache"}},"key":"{{=sprig.sha256sum(''b888cb931910b55bc10ef115ccb0d14beee566fa132803b35a2ccf8e9fd57356''
+          + toJson(inputs.parameters))}}","maxAge":""}}'
+    memoize:
+      maxAge: ''
+      key: '{{=sprig.sha256sum(''b888cb931910b55bc10ef115ccb0d14beee566fa132803b35a2ccf8e9fd57356''
+        + toJson(inputs.parameters))}}'
+      cache:
+        configMap:
+          name: kfp-cache
+  - name: t2-echo-op
+    container:
+      image: library/bash:4.4.23
+      command:
+      - sh
+      - -c
+      args:
+      - echo "$0"
+      - '{{inputs.parameters.text}}'
+      env: []
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        seccompProfile:
+          type: RuntimeDefault
+    inputs:
+      parameters:
+      - name: text
+    outputs:
+      parameters:
+      - name: kfp-metadata
+        value: '{{=toJson({"artifacts":[],"inputs":[],"metrics":{},"producer":{"namespace":workflow.namespace,"run":workflow.uid,"task":pod.name},"schema":"kfp-argo/v1"})}}'
+    metadata:
+      annotations:
+        pipelines.kubeflow.org/component-type: RUNTIME
+        pipelines.kubeflow.org/input-parameter-types: '{"text":"String"}'
+        pipelines.kubeflow.org/output-parameter-types: '{}'
+        pipelines.kubeflow.org/cache-policy: '{"component":"echo-op","memoize":{"cache":{"configMap":{"name":"kfp-cache"}},"key":"{{=sprig.sha256sum(''b4832d8cdadcc85f4a14fbfc42ebabf33f5ff522d4e917f8f654421f4269b249''
+          + toJson(inputs.parameters))}}","maxAge":""}}'
+    memoize:
+      maxAge: ''
+      key: '{{=sprig.sha256sum(''b4832d8cdadcc85f4a14fbfc42ebabf33f5ff522d4e917f8f654421f4269b249''
+        + toJson(inputs.parameters))}}'
+      cache:
+        configMap:
+          name: kfp-cache
+  workflowMetadata:
+    labels:
+      pipelines.kubeflow.org/pipeline: sequential-pipeline
+      pipelines.kubeflow.org/version: bc65500579f1
+    annotations:
+      pipelines.kubeflow.org/storage-state: AVAILABLE
+      pipelines.kubeflow.org/artifact-repository: ''
+      pipelines.kubeflow.org/artifact-bucket: ''
+      pipelines.kubeflow.org/artifact-key-prefix: ''
+      pipelines.kubeflow.org/artifact-root-binding: v1

@@ -14,104 +14,159 @@
  * limitations under the License.
  */
 
-import * as Utils from 'src/lib/Utils';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { color } from 'src/Css';
+import { logger } from 'src/lib/UiUtils';
+import { V2RuntimeState } from 'src/lib/NativeViewTypes';
 import { statusToIcon } from './StatusV2';
-import { render } from '@testing-library/react';
-import { V2RuntimeState } from 'src/apisv2/run';
-import { vi } from 'vitest';
 
 describe('Status', () => {
-  // We mock this because it uses toLocaleDateString, which causes mismatches between local and CI
-  // test enviroments
+  // The vitest setup pins TZ=UTC and en-US, so the formatted dates are stable.
   const startDate = new Date('Wed Jan 2 2019 9:10:11 GMT-0800');
   const endDate = new Date('Thu Jan 3 2019 10:11:12 GMT-0800');
-
-  beforeEach(() => {
-    vi.spyOn(Utils, 'formatDateString').mockImplementation((date: Date) => {
-      return date === startDate ? '1/2/2019, 9:10:11 AM' : '1/3/2019, 10:11:12 AM';
-    });
-  });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
+  // MUI icons forward data-testid and take their color from style; the custom
+  // running/terminated SVG icons paint their color through fill attributes.
+  function icon(): SVGSVGElement {
+    const svg = document.querySelector('svg');
+    if (!svg) throw new Error('No status icon rendered');
+    return svg;
+  }
+
+  function iconColor(): string | null {
+    const svg = icon();
+    if (svg.dataset.testid === 'node-status-sign') return svg.style.color;
+    const filled = svg.querySelector('[fill]:not([fill="none"])');
+    return filled ? filled.getAttribute('fill') : null;
+  }
+
+  function expectColor(expected: string): void {
+    const actual = iconColor();
+    expect(actual).not.toBeNull();
+    // jsdom normalizes inline style colors to rgb(); compare both as rgb().
+    expect(toRgb(actual!)).toBe(toRgb(expected));
+  }
+
+  function toRgb(value: string): string {
+    const probe = document.createElement('div');
+    probe.style.color = value;
+    return probe.style.color;
+  }
+
+  async function openTooltip(): Promise<HTMLElement> {
+    await userEvent.hover(icon().parentElement as HTMLElement);
+    return screen.findByRole('tooltip');
+  }
+
   describe('statusToIcon', () => {
-    it('handles an unknown state', () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementationOnce(() => null);
-      const { asFragment } = render(statusToIcon('bad state' as any));
-      expect(asFragment()).toMatchSnapshot();
-      expect(consoleSpy).toHaveBeenLastCalledWith('Unknown state:', 'bad state');
+    it('handles an unknown state', async () => {
+      const verboseSpy = vi.spyOn(logger, 'verbose').mockImplementation(() => null);
+      render(statusToIcon('bad state' as any));
+      expectColor(color.inactive);
+      expect(await openTooltip()).toHaveTextContent('Unknown status');
+      expect(verboseSpy).toHaveBeenLastCalledWith('Unknown state:', 'bad state');
     });
 
-    it('handles an undefined state', () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementationOnce(() => null);
-      const { asFragment } = render(statusToIcon(/* no phase */));
-      expect(asFragment()).toMatchSnapshot();
-      expect(consoleSpy).not.toHaveBeenCalled();
+    it('handles an undefined state', async () => {
+      const verboseSpy = vi.spyOn(logger, 'verbose').mockImplementation(() => null);
+      render(statusToIcon(/* no phase */));
+      expectColor(color.inactive);
+      expect(await openTooltip()).toHaveTextContent('Unknown status');
+      expect(verboseSpy).not.toHaveBeenCalled();
     });
 
-    it('handles FAILED state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.FAILED));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles FAILED state', async () => {
+      render(statusToIcon(V2RuntimeState.FAILED));
+      expectColor(color.errorText);
+      expect(await openTooltip()).toHaveTextContent('Resource failed to execute');
     });
 
-    it('handles PENDING state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.PENDING));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles PENDING state', async () => {
+      render(statusToIcon(V2RuntimeState.PENDING));
+      expectColor(color.weak);
+      expect(await openTooltip()).toHaveTextContent('Pending execution');
     });
 
-    it('handles RUNNING state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.RUNNING));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles RUNNING state', async () => {
+      render(statusToIcon(V2RuntimeState.RUNNING));
+      expectColor(color.blue);
+      expect(await openTooltip()).toHaveTextContent('Running');
     });
 
-    it('handles CANCELING state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.CANCELING));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles CANCELING state', async () => {
+      render(statusToIcon(V2RuntimeState.CANCELING));
+      expectColor(color.blue);
+      expect(await openTooltip()).toHaveTextContent('Run is canceling');
     });
 
-    it('handles SKIPPED state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.SKIPPED));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles SKIPPED state', async () => {
+      render(statusToIcon(V2RuntimeState.SKIPPED));
+      expectColor(color.inactive);
+      expect(await openTooltip()).toHaveTextContent('Execution has been skipped for this resource');
     });
 
-    it('handles SUCCEEDED state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.SUCCEEDED));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles SUCCEEDED state', async () => {
+      render(statusToIcon(V2RuntimeState.SUCCEEDED));
+      expectColor(color.success);
+      expect(await openTooltip()).toHaveTextContent('Executed successfully');
     });
 
-    it('handles CANCELED state', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.CANCELED));
-      expect(asFragment()).toMatchSnapshot();
+    it('handles CANCELED state', async () => {
+      render(statusToIcon(V2RuntimeState.CANCELED));
+      expectColor(color.terminated);
+      expect(await openTooltip()).toHaveTextContent('Run was manually canceled');
     });
 
-    it('displays start and end dates if both are provided', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.SUCCEEDED, startDate, endDate));
-      expect(asFragment()).toMatchSnapshot();
+    it('displays start and end dates if both are provided', async () => {
+      render(statusToIcon(V2RuntimeState.SUCCEEDED, startDate, endDate));
+      const tooltip = await openTooltip();
+      expect(tooltip).toHaveTextContent(`Start: ${startDate.toLocaleString()}`);
+      expect(tooltip).toHaveTextContent(`End: ${endDate.toLocaleString()}`);
     });
 
-    it('does not display a end date if none was provided', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.SUCCEEDED, startDate));
-      expect(asFragment()).toMatchSnapshot();
+    it('does not display a end date if none was provided', async () => {
+      render(statusToIcon(V2RuntimeState.SUCCEEDED, startDate));
+      const tooltip = await openTooltip();
+      expect(tooltip).toHaveTextContent(`Start: ${startDate.toLocaleString()}`);
+      expect(tooltip).not.toHaveTextContent('End:');
     });
 
-    it('does not display a start date if none was provided', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.SUCCEEDED, undefined, endDate));
-      expect(asFragment()).toMatchSnapshot();
+    it('does not display a start date if none was provided', async () => {
+      render(statusToIcon(V2RuntimeState.SUCCEEDED, undefined, endDate));
+      const tooltip = await openTooltip();
+      expect(tooltip).not.toHaveTextContent('Start:');
+      expect(tooltip).toHaveTextContent(`End: ${endDate.toLocaleString()}`);
     });
 
-    it('does not display any dates if neither was provided', () => {
-      const { asFragment } = render(statusToIcon(V2RuntimeState.SUCCEEDED /* No dates */));
-      expect(asFragment()).toMatchSnapshot();
+    it('does not display any dates if neither was provided', async () => {
+      render(statusToIcon(V2RuntimeState.SUCCEEDED /* No dates */));
+      const tooltip = await openTooltip();
+      expect(tooltip).toHaveTextContent('Executed successfully');
+      expect(tooltip).not.toHaveTextContent('Start:');
+      expect(tooltip).not.toHaveTextContent('End:');
+    });
+
+    it('treats a FAILED node whose message is "terminated" as CANCELED', async () => {
+      render(statusToIcon(V2RuntimeState.FAILED, undefined, undefined, 'terminated'));
+      expectColor(color.terminated);
+      expect(await openTooltip()).toHaveTextContent('Run was manually canceled');
     });
 
     Object.keys(V2RuntimeState).forEach((status) =>
-      it('renders an icon with tooltip for phase: ' + status, () => {
-        const { asFragment } = render(
-          statusToIcon(V2RuntimeState[status as keyof typeof V2RuntimeState]),
-        );
-        expect(asFragment()).toMatchSnapshot();
+      it('renders an icon with tooltip for phase: ' + status, async () => {
+        const verboseSpy = vi.spyOn(logger, 'verbose').mockImplementation(() => null);
+        render(statusToIcon(V2RuntimeState[status as keyof typeof V2RuntimeState]));
+        expect(icon()).toBeInTheDocument();
+        expect(iconColor()).not.toBeNull();
+        expect((await openTooltip()).textContent).not.toBe('');
+        // Every enumerated state is a known state.
+        expect(verboseSpy).not.toHaveBeenCalled();
       }),
     );
   });

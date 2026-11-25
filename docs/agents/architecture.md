@@ -1,42 +1,33 @@
-# Architecture and Runtime
+# Architecture
 
-## Architecture
+For SDK or UI changes, follow the compatibility target in
+[SDK compatibility](../sdk-compatibility.md). Preserve public authoring/client
+interfaces and default-on caching behind native adapters; only IR-specific
+interfaces and local execution are excluded. The earlier bounded prototype is
+not the acceptance standard for this work.
 
-- Diagram: [`images/kfp-cluster-wide-architecture.png`](../../images/kfp-cluster-wide-architecture.png).
-- The SDK compiles Python DSL into the pipeline-spec IR. The API server compiles that IR to Argo Workflows and runs it on Kubernetes.
-- The driver resolves inputs and derives pod resource patches. Other Kubernetes configuration belongs in `kubernetes_platform`.
-- The launcher transfers artifacts and invokes the Python executor. Local Subprocess and Docker runners skip the launcher.
-- The executor entrypoint is `sdk/python/kfp/dsl/executor_main.py`; it does not participate in compilation.
-- Runtime containers install `kfp` with `--no-deps`; `_KFP_RUNTIME=true` disables most SDK imports. Task code must not depend on SDK-only modules unless the base image supplies their dependencies.
+`GraphComponent` captures DSL tasks, groups and channels. The native compiler
+lowers those objects to WorkflowTemplates, Workflows and CronWorkflows. Argo owns
+execution, status, transfer, cache and archive; the Python bridge runs inside each
+component container. The static UI/proxy has no application database or backend.
 
-## Packages and key paths
+The two protobuf bindings in `kfp.pipeline_spec` and `kfp.kubernetes` remain shared
+authoring/configuration schemas. `dsl/component_definition.py` serializes portable
+container definitions for the SDK loader/image builder; it does not register tasks,
+compile pipeline IR or contact a server. This is distinct from the removed REST
+API definitions and old pipeline IR builder.
 
-| Area | Path |
-| --- | --- |
-| SDK compiler | `sdk/python/kfp/compiler/pipeline_spec_builder.py` |
-| DSL | `sdk/python/kfp/dsl/` |
-| Platform integration | `sdk/python/kfp/kubernetes/` |
-| Pipeline-spec APIs | `api/` |
-| Backend | `backend/` |
-| Frontend | `frontend/` |
-| Deployment manifests | `manifests/` |
-| Pipeline fixtures and workflow goldens | `test_data/` |
+Artifacts are key-only; Argo's namespace repository chain places them, the
+submitter binds that bucket into the run, and the runtime checks the binding.
 
-- `kfp` is one distribution containing `kfp.pipeline_spec`, `kfp.kubernetes`,
-  and the generated REST client `kfp.server_api`. It no longer extends a shared
-  namespace with separately installed distributions.
-- Kubernetes bindings rewrite generated pipeline-spec imports through
-  `kubernetes_platform/python/generate_proto.py`; proto and Go sources stay in
-  their domain directories.
+The browser reads Kubernetes ConfigMaps for experiments and Argo resources for
+versions, runs and schedules. Argo Server provides hydrated/offloaded status and
+archive/artifact access. UID is run identity. Cache metadata retains the original
+producer. Tokens stay in memory and namespace roles enforce permissions. In
+multi-user mode the proxy authorizes the gateway-named user per request with a
+SubjectAccessReview, the stock API server's model, and acts with its own account.
 
-## Local execution
-
-```python
-from kfp import local
-
-local.init(runner=local.SubprocessRunner())  # Lightweight Python components only.
-task = my_component(param='value')
-print(task.output)
-```
-
-Use `local.DockerRunner()` for container components or containerized task images. Pipeline calls return a run whose single output is `run.output`, or whose named outputs are in `run.outputs`. Local outputs default to `./local_outputs`.
+`test/native_cleanup_test.py` guards the retired-service boundary. The repo has no
+Go execution backend, KFP controllers, legacy REST transports, or in-process
+runners. A backwards-compatible `kfp.Client` facade over native APIs belongs in
+the SDK; its presence is not a return of the old backend.

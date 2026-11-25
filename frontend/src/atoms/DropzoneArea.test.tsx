@@ -16,11 +16,20 @@
 
 import * as React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import DropzoneArea, { DropzoneAreaHandle } from './DropzoneArea';
-import { dataTransferWithFiles } from 'src/testUtils/dataTransfer';
 
 function createFile(name: string, type: string): File {
   return new File(['contents'], name, { type });
+}
+
+/** Minimal DataTransfer shape react-dropzone reads from a drop event. */
+function dataTransferWithFiles(...files: File[]) {
+  return {
+    files,
+    items: files.map((file) => ({ kind: 'file', type: file.type, getAsFile: () => file })),
+    types: ['Files'],
+  };
 }
 
 describe('DropzoneArea', () => {

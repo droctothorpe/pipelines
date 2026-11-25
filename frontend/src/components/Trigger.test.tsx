@@ -1,22 +1,7 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import * as React from 'react';
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen } from '@testing-library/react';
-import { vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import Trigger from './Trigger';
 
 const PARAMS_DEFAULT = {
@@ -46,68 +31,107 @@ function getIntervalCategorySelect(): HTMLElement {
 }
 
 describe('Trigger', () => {
-  const RealDate = Date;
-
-  function mockDate(isoDate: Date): void {
-    (global as any).Date = class extends RealDate {
-      constructor(...args: any[]) {
-        super();
-        if (args.length === 0) {
-          return new RealDate(isoDate);
-        }
-        return new (RealDate as any)(...args);
-      }
-    };
-  }
+  const NOW = new Date(2018, 11, 21, 7, 53);
 
   beforeAll(() => {
-    process.env.TZ = 'UTC';
-    const now = new Date(2018, 11, 21, 7, 53);
-    mockDate(now);
+    // Only fake Date so MUI's transitions and RTL's findBy* polling keep real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
   });
 
   afterAll(() => {
-    (global as any).Date = RealDate;
+    vi.useRealTimers();
   });
 
+  function getIntervalValueInput(): HTMLInputElement {
+    return screen.getByRole('spinbutton') as HTMLInputElement;
+  }
+
+  function getDayButtons(): HTMLElement[] {
+    return ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(
+      (_, i) => screen.getAllByRole('button').filter((b) => b.classList.contains('MuiFab-root'))[i],
+    );
+  }
+
   it('renders periodic schedule controls for initial render', () => {
-    const { asFragment, unmount } = render(<Trigger />);
-    expect(asFragment()).toMatchSnapshot();
-    unmount();
+    render(<Trigger />);
+    expect(getTriggerTypeSelect()).toHaveTextContent('Periodic');
+    expect(screen.getByDisplayValue('10')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Has start date' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Has end date' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Catchup' })).toBeChecked();
+    expect(screen.getByLabelText('Start date')).toHaveValue('2018-12-21');
+    expect(screen.getByLabelText('Start time')).toHaveValue('07:53');
+    expect(screen.getByLabelText('End date')).toHaveValue('2018-12-28');
+    expect(screen.getByLabelText('End time')).toHaveValue('07:53');
+    expect(getIntervalValueInput()).toHaveValue(1);
+    expect(getIntervalCategorySelect()).toHaveTextContent('Hours');
+    expect(screen.queryByLabelText('cron expression')).toBeNull();
+    expect(screen.queryByText('On:')).toBeNull();
   });
 
   it('renders periodic schedule controls if the trigger type is CRON', async () => {
-    const { asFragment, unmount } = render(<Trigger />);
+    render(<Trigger />);
     await selectOption(getTriggerTypeSelect(), 'Cron');
-    expect(asFragment()).toMatchSnapshot();
-    unmount();
+    expect(getTriggerTypeSelect()).toHaveTextContent('Cron');
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+    expect(getIntervalCategorySelect()).toHaveTextContent('Hour');
+    expect(
+      screen.getByRole('checkbox', { name: /allow editing cron expression/i }),
+    ).not.toBeChecked();
+    const cronInput = screen.getByLabelText('cron expression');
+    expect(cronInput).toBeDisabled();
+    expect(cronInput).toHaveValue('0 0 * * * ?');
+    expect(
+      screen.getByText('Note: Start and end dates/times are handled outside of cron.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('On:')).toBeNull();
   });
 
   it('renders week days if the trigger type is CRON and interval is weekly', async () => {
-    const { asFragment, unmount } = render(<Trigger />);
+    render(<Trigger />);
     await selectOption(getTriggerTypeSelect(), 'Cron');
     await selectOption(getIntervalCategorySelect(), 'Week');
-    expect(asFragment()).toMatchSnapshot();
-    unmount();
+    expect(screen.getByText('On:')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'All' })).toBeChecked();
+    const days = getDayButtons();
+    expect(days.map((d) => d.textContent)).toEqual(['S', 'M', 'T', 'W', 'T', 'F', 'S']);
+    days.forEach((d) => expect(d).toHaveClass('MuiFab-primary'));
+    expect(screen.getByLabelText('cron expression')).toHaveValue('0 0 0 ? * *');
   });
 
   it('renders all week days enabled', async () => {
-    const { asFragment, unmount } = render(<Trigger />);
+    render(<Trigger />);
     await selectOption(getTriggerTypeSelect(), 'Cron');
     await selectOption(getIntervalCategorySelect(), 'Week');
+    // Every day starts enabled, so toggling "All" clears them all; toggling again re-enables all.
     fireEvent.click(screen.getByRole('checkbox', { name: 'All' }));
-    expect(asFragment()).toMatchSnapshot();
-    unmount();
+    expect(screen.getByRole('checkbox', { name: 'All' })).not.toBeChecked();
+    getDayButtons().forEach((d) => expect(d).toHaveClass('MuiFab-secondary'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'All' }));
+    expect(screen.getByRole('checkbox', { name: 'All' })).toBeChecked();
+    getDayButtons().forEach((d) => expect(d).toHaveClass('MuiFab-primary'));
+    expect(screen.getByLabelText('cron expression')).toHaveValue('0 0 0 ? * *');
   });
 
   it('enables a single day on click', async () => {
-    const { asFragment, unmount } = render(<Trigger />);
+    render(<Trigger />);
     await selectOption(getTriggerTypeSelect(), 'Cron');
     await selectOption(getIntervalCategorySelect(), 'Week');
     fireEvent.click(screen.getByRole('button', { name: 'M' }));
     fireEvent.click(screen.getByRole('button', { name: 'W' }));
-    expect(asFragment()).toMatchSnapshot();
-    unmount();
+    const days = getDayButtons();
+    expect(days.map((d) => d.classList.contains('MuiFab-primary'))).toEqual([
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+    ]);
+    expect(screen.getByRole('checkbox', { name: 'All' })).not.toBeChecked();
+    expect(screen.getByLabelText('cron expression')).toHaveValue('0 0 0 ? * 0,2,4,5,6');
   });
 
   describe('max concurrent run', () => {

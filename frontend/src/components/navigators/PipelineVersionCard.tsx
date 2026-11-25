@@ -15,10 +15,13 @@
  */
 
 import { useState } from 'react';
-import { V2Pipeline, V2PipelineVersion } from 'src/apisv2/pipeline';
+import type {
+  PipelineSummary as V2Pipeline,
+  VersionSummary as V2PipelineVersion,
+} from 'src/lib/NativeViewTypes';
 import { Description } from 'src/components/Description';
 import { commonCss } from 'src/Css';
-import { formatDateString, sanitizeExternalHref } from 'src/lib/Utils';
+import { formatDateString, sanitizeExternalHref } from 'src/lib/UiUtils';
 
 import { Button, FormControl, InputLabel, MenuItem, Paper, Select } from '@mui/material';
 

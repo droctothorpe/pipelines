@@ -1,0 +1,10 @@
+FROM nginxinc/nginx-unprivileged:1.29-alpine
+# Single-user mode reads the pod's service-account token through njs.
+USER root
+RUN sed -i '1i load_module modules/ngx_http_js_module.so;' /etc/nginx/nginx.conf
+USER 101
+ENV KFP_UI_AUTH_MODE=token KFP_UI_NAMESPACE= KFP_UI_USERID_HEADER=kubeflow-userid KFP_UI_USERID_PREFIX=
+COPY frontend/build/ /usr/share/nginx/html/
+COPY frontend/build/argo.html /usr/share/nginx/html/index.html
+COPY samples/argo-native/ui-proxy.js /etc/nginx/ui-proxy.js
+COPY samples/argo-native/nginx.conf.template /etc/nginx/templates/default.conf.template

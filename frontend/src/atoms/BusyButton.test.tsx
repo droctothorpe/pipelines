@@ -1,50 +1,45 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import BusyButton from './BusyButton';
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
+import { render, screen } from '@testing-library/react';
 import TestIcon from '@mui/icons-material/Help';
-import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import BusyButton from './BusyButton';
 
 describe('BusyButton', () => {
   it('renders with just a title', () => {
-    const { asFragment } = render(<BusyButton title='test busy button' />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<BusyButton title='test busy button' />);
+    const button = screen.getByRole('button', { name: 'test busy button' });
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass('MuiButton-textSecondary');
+    expect(button.querySelector('svg')).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 
   it('renders with a title and icon', () => {
-    const { asFragment } = render(<BusyButton title='test busy button' icon={TestIcon} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<BusyButton title='test busy button' icon={TestIcon} />);
+    const button = screen.getByRole('button', { name: 'test busy button' });
+    expect(button).toContainElement(screen.getByTestId('HelpIcon'));
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 
   it('renders with a title and icon, and busy', () => {
-    const { asFragment } = render(
-      <BusyButton title='test busy button' icon={TestIcon} busy={true} />,
-    );
-    expect(asFragment()).toMatchSnapshot();
+    render(<BusyButton title='test busy button' icon={TestIcon} busy={true} />);
+    const button = screen.getByRole('button', { name: 'test busy button' });
+    expect(button).toBeDisabled();
+    expect(button).toContainElement(screen.getByTestId('HelpIcon'));
+    expect(button).toContainElement(screen.getByRole('progressbar'));
   });
 
   it('renders disabled', () => {
-    const { asFragment } = render(
-      <BusyButton title='test busy button' icon={TestIcon} disabled={true} />,
-    );
-    expect(asFragment()).toMatchSnapshot();
+    render(<BusyButton title='test busy button' icon={TestIcon} disabled={true} />);
+    expect(screen.getByRole('button', { name: 'test busy button' })).toBeDisabled();
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 
   it('renders a primary outlined buton', () => {
-    const { asFragment } = render(<BusyButton title='test busy button' outlined={true} />);
-    expect(asFragment()).toMatchSnapshot();
+    render(<BusyButton title='test busy button' outlined={true} />);
+    const button = screen.getByRole('button', { name: 'test busy button' });
+    expect(button).toHaveClass('MuiButton-textPrimary');
+    expect(button).not.toHaveClass('MuiButton-textSecondary');
   });
 });

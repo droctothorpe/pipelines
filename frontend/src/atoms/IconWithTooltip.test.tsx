@@ -1,33 +1,20 @@
-/*
- * Copyright 2019 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import IconWithTooltip from './IconWithTooltip';
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
+import { render, screen } from '@testing-library/react';
 import TestIcon from '@mui/icons-material/Help';
-import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import IconWithTooltip from './IconWithTooltip';
 
 describe('IconWithTooltip', () => {
   it('renders without height or weight', () => {
-    const { asFragment } = render(
-      <IconWithTooltip Icon={TestIcon} iconColor='green' tooltip='test icon tooltip' />,
-    );
-    expect(asFragment()).toMatchSnapshot();
+    render(<IconWithTooltip Icon={TestIcon} iconColor='green' tooltip='test icon tooltip' />);
+    const icon = screen.getByTestId('HelpIcon');
+    expect(icon).toHaveStyle({ color: 'rgb(0, 128, 0)', height: '16px', width: '16px' });
+    expect(icon).toHaveAttribute('aria-label', 'test icon tooltip');
   });
 
   it('renders with height and weight', () => {
-    const { asFragment } = render(
+    render(
       <IconWithTooltip
         Icon={TestIcon}
         height={20}
@@ -36,6 +23,10 @@ describe('IconWithTooltip', () => {
         tooltip='test icon tooltip'
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    expect(screen.getByTestId('HelpIcon')).toHaveStyle({
+      color: 'rgb(0, 128, 0)',
+      height: '20px',
+      width: '20px',
+    });
   });
 });

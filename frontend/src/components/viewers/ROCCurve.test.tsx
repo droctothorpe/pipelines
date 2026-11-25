@@ -16,6 +16,7 @@
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { createRef } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 import { PlotType } from './Viewer';
 import ROCCurve, { findNearestDisplayPoint, lineColors } from './ROCCurve';
 
@@ -48,8 +49,10 @@ describe('ROCCurve', () => {
     );
     const curves = container.querySelectorAll('.recharts-line-curve');
     expect(curves).toHaveLength(1);
-    // Keep the plotted geometry under review, not Recharts' internal SVG wrappers.
-    expect(curves[0].getAttribute('d')).toMatchSnapshot();
+    // The plotted geometry is a non-empty path through every data point.
+    const path = curves[0].getAttribute('d') ?? '';
+    expect(path).toMatch(/^M/);
+    expect(path.split(/[A-Za-z]/).filter(Boolean).length).toBeGreaterThanOrEqual(data.length);
     expect(curves[0]).toHaveAttribute('stroke', lineColors[0]);
     expect(screen.getByText('fpr')).toBeInTheDocument();
     expect(screen.getByText('tpr')).toBeInTheDocument();

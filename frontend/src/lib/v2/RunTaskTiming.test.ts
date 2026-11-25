@@ -3,7 +3,12 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
-import { V2PipelineTask, V2Run } from 'src/apisv2/run';
+import { expect, it } from 'vitest';
+import type {
+  TaskTimingView as V2PipelineTask,
+  RunTimingView as V2Run,
+} from 'src/lib/NativeViewTypes';
+import { V2RuntimeState } from 'src/lib/NativeViewTypes';
 import {
   formatTaskElapsed,
   getRunTaskTiming,
@@ -13,7 +18,11 @@ import {
 
 const base = Date.parse('2026-01-01T00:00:00Z');
 const at = (seconds: number) => new Date(base + seconds * 1000);
-const run: V2Run = { state: 'SUCCEEDED', created_at: at(0), finished_at: at(300) };
+const run: V2Run = {
+  state: V2RuntimeState.SUCCEEDED,
+  created_at: at(0),
+  finished_at: at(300),
+};
 const task = (overrides: Partial<V2PipelineTask> = {}): V2PipelineTask => ({
   task_id: 'task',
   name: 'train',
@@ -40,7 +49,7 @@ it('keeps distinct component iterations and importers, excluding all wrapper tas
 
 it('uses wall time only for active tasks and ignores a stale previous-attempt end', () => {
   const result = getRunTaskTiming(
-    { ...run, state: 'RUNNING' },
+    { ...run, state: V2RuntimeState.RUNNING },
     [
       task({ state: 'RUNNING', end_time: at(50) }),
       task({ task_id: 'cached', state: 'CACHED', end_time: at(11) }),
@@ -55,7 +64,7 @@ it.each(['SUCCEEDED', 'FAILED', 'CANCELED', 'SKIPPED'] as const)(
   'never extends unreconciled RUNNING tasks after a %s run',
   (state) => {
     const { rows } = getRunTaskTiming(
-      { ...run, state },
+      { ...run, state: V2RuntimeState[state] },
       [task({ state: 'RUNNING', end_time: at(50) })],
       base + 500_000,
     );
@@ -182,14 +191,14 @@ it.each<{ name: string; pods: NonNullable<V2PipelineTask['pods']>; retried: bool
     state_history: [{ state: 'RUNNING' }, { state: 'FAILED' }],
     pods,
   });
-  expect(getRunTaskTiming({ ...run, state: 'FAILED' }, [failed], base).rows[0].retried).toBe(
-    retried,
-  );
+  expect(
+    getRunTaskTiming({ ...run, state: V2RuntimeState.FAILED }, [failed], base).rows[0].retried,
+  ).toBe(retried);
 });
 
 it('uses the earliest component timestamp as a chart fallback, without inventing run elapsed', () => {
   const result = getRunTaskTiming(
-    { state: 'SUCCEEDED' },
+    { state: V2RuntimeState.SUCCEEDED },
     [task({ create_time: at(100) }), task({ task_id: 'first', create_time: at(5) })],
     base,
   );

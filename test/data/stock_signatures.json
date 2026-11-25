@@ -1,0 +1,1550 @@
+{
+  "baseline": "7780f12acfbde9f16169c7fcbfdfb6c3ef5432ea",
+  "contracts": {
+    "kfp.client.client:Client.__init__": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "host"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "client_id"
+      },
+      {
+        "default": "'kubeflow'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "other_client_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "other_client_secret"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "existing_token"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cookies"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "proxy"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ssl_ca_cert"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "kube_context"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "credentials"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ui_host"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verify_ssl"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "healthz_max_attempts"
+      }
+    ],
+    "kfp.client.client:Client.archive_experiment": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      }
+    ],
+    "kfp.client.client:Client.archive_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_id"
+      }
+    ],
+    "kfp.client.client:Client.create_experiment": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.create_recurring_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "job_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start_time"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "end_time"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interval_second"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cron_expression"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "max_concurrency"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "no_catchup"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "params"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_package_path"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "version_id"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enabled"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_root"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enable_caching"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache_key"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "service_account"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "plugins_input"
+      }
+    ],
+    "kfp.client.client:Client.create_run_from_pipeline_func": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_func"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "arguments"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_root"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enable_caching"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache_key"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "service_account"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "plugins_input"
+      }
+    ],
+    "kfp.client.client:Client.create_run_from_pipeline_package": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_file"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "arguments"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_root"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enable_caching"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache_key"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "service_account"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "plugins_input"
+      }
+    ],
+    "kfp.client.client:Client.delete_experiment": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      }
+    ],
+    "kfp.client.client:Client.delete_job": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "job_id"
+      }
+    ],
+    "kfp.client.client:Client.delete_pipeline": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      }
+    ],
+    "kfp.client.client:Client.delete_pipeline_version": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_version_id"
+      }
+    ],
+    "kfp.client.client:Client.delete_recurring_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "recurring_run_id"
+      }
+    ],
+    "kfp.client.client:Client.delete_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_id"
+      }
+    ],
+    "kfp.client.client:Client.disable_job": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "job_id"
+      }
+    ],
+    "kfp.client.client:Client.disable_recurring_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "recurring_run_id"
+      }
+    ],
+    "kfp.client.client:Client.enable_job": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "job_id"
+      }
+    ],
+    "kfp.client.client:Client.enable_recurring_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "recurring_run_id"
+      }
+    ],
+    "kfp.client.client:Client.get_experiment": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.get_kfp_healthz": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sleep_duration"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "max_attempts"
+      }
+    ],
+    "kfp.client.client:Client.get_pipeline": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      }
+    ],
+    "kfp.client.client:Client.get_pipeline_id": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.get_pipeline_version": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_version_id"
+      }
+    ],
+    "kfp.client.client:Client.get_recurring_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "recurring_run_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "job_id"
+      }
+    ],
+    "kfp.client.client:Client.get_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_id"
+      }
+    ],
+    "kfp.client.client:Client.get_user_namespace": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      }
+    ],
+    "kfp.client.client:Client.list_experiments": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_token"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_size"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sort_by"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filter"
+      }
+    ],
+    "kfp.client.client:Client.list_pipeline_versions": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_token"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_size"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sort_by"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filter"
+      }
+    ],
+    "kfp.client.client:Client.list_pipelines": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_token"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_size"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sort_by"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filter"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.list_recurring_runs": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_token"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_size"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sort_by"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filter"
+      }
+    ],
+    "kfp.client.client:Client.list_runs": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_token"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "page_size"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sort_by"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filter"
+      }
+    ],
+    "kfp.client.client:Client.run_pipeline": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "job_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_package_path"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "params"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "version_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_root"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enable_caching"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache_key"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "service_account"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "plugins_input"
+      }
+    ],
+    "kfp.client.client:Client.set_user_namespace": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.terminate_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_id"
+      }
+    ],
+    "kfp.client.client:Client.unarchive_experiment": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "experiment_id"
+      }
+    ],
+    "kfp.client.client:Client.unarchive_run": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_id"
+      }
+    ],
+    "kfp.client.client:Client.upload_pipeline": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_package_path"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.upload_pipeline_from_pipeline_func": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_func"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "namespace"
+      }
+    ],
+    "kfp.client.client:Client.upload_pipeline_version": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_package_path"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_version_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      }
+    ],
+    "kfp.client.client:Client.upload_pipeline_version_from_pipeline_func": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_func"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_version_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_id"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "description"
+      }
+    ],
+    "kfp.client.client:Client.wait_for_run_completion": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_id"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timeout"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sleep_duration"
+      }
+    ],
+    "kfp.client.client:RunPipelineResult.__init__": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "client"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "run_info"
+      }
+    ],
+    "kfp.client.client:RunPipelineResult.wait_for_run_completion": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timeout"
+      }
+    ],
+    "kfp.compiler.compiler:Compiler.compile": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_func"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "package_path"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_display_name"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_parameters"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type_check"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "kubernetes_manifest_options"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "kubernetes_manifest_format"
+      }
+    ],
+    "kfp.dsl.component_decorator:component": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "func"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "base_image"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "target_image"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "packages_to_install"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "pip_index_urls"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "output_component_file"
+      },
+      {
+        "default": "True",
+        "kind": "KEYWORD_ONLY",
+        "name": "install_kfp_package"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "kfp_package_path"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "pip_trusted_hosts"
+      },
+      {
+        "default": "False",
+        "kind": "KEYWORD_ONLY",
+        "name": "use_venv"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "additional_funcs"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "embedded_artifact_path"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "task_config_passthroughs"
+      },
+      {
+        "default": "True",
+        "kind": "KEYWORD_ONLY",
+        "name": "artifact_previews"
+      },
+      {
+        "default": "True",
+        "kind": "KEYWORD_ONLY",
+        "name": "artifact_preview_rows"
+      }
+    ],
+    "kfp.dsl.container_component_decorator:container_component": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "func"
+      }
+    ],
+    "kfp.dsl.notebook_component_decorator:notebook_component": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "func"
+      },
+      {
+        "default": null,
+        "kind": "KEYWORD_ONLY",
+        "name": "notebook_path"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "base_image"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "packages_to_install"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "output_component_file"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "pip_index_urls"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "pip_trusted_hosts"
+      },
+      {
+        "default": "False",
+        "kind": "KEYWORD_ONLY",
+        "name": "use_venv"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "kfp_package_path"
+      },
+      {
+        "default": "True",
+        "kind": "KEYWORD_ONLY",
+        "name": "install_kfp_package"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "task_config_passthroughs"
+      }
+    ],
+    "kfp.dsl.pipeline_context:pipeline": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "func"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "name"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "description"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "pipeline_root"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "display_name"
+      },
+      {
+        "default": "None",
+        "kind": "KEYWORD_ONLY",
+        "name": "pipeline_config"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.__init__": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "component_spec"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "args"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "execute_locally"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "execution_caching_default"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "execution_cache_key"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.add_node_selector_constraint": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "accelerator"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.after": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "VAR_POSITIONAL",
+        "name": "tasks"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.ignore_upstream_failure": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.register_pipeline_channels": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pipeline_channels"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_accelerator_limit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "limit"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_accelerator_type": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "accelerator"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_caching_options": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enable_caching"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache_key"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_container_image": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_cpu_limit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cpu"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_cpu_request": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cpu"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_debug_pause": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "before"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "after"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "on_error"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_display_name": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_env_variable": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_gpu_limit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gpu"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_memory_limit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "memory"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_memory_request": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "memory"
+      }
+    ],
+    "kfp.dsl.pipeline_task:PipelineTask.set_retry": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "self"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "num_retries"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "backoff_duration"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "backoff_factor"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "backoff_max_duration"
+      },
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "policy"
+      }
+    ]
+  }
+}

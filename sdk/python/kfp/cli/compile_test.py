@@ -75,3 +75,49 @@ class TestIsPipelineOrComponent(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestDisableTypeCheck(unittest.TestCase):
+    """C48: stock's flag reaches ``Compiler.compile(type_check=...)``; as in
+    stock, task input mismatches still raise when the module loads."""
+
+    SOURCE = """
+from kfp import dsl
+
+
+@dsl.component
+def step():
+    pass
+
+
+@dsl.pipeline(name='plain')
+def pipeline():
+    step()
+"""
+
+    def test_flag_is_passed_to_the_compiler(self):
+        import pathlib
+        import tempfile
+        from unittest import mock
+
+        from click.testing import CliRunner
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory, 'pipeline.py')
+            source.write_text(self.SOURCE)
+            output = str(pathlib.Path(directory, 'pipeline.yaml'))
+            for flags, expected in [
+                ([], True),
+                (['--disable-type-check'], False),
+            ]:
+                with mock.patch(
+                    'kfp.compiler.Compiler.compile'
+                ) as compile_mock:
+                    result = CliRunner().invoke(
+                        compile_.compile_,
+                        ['--py', str(source), '--output', output, *flags],
+                    )
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertIs(
+                    compile_mock.call_args.kwargs['type_check'], expected
+                )

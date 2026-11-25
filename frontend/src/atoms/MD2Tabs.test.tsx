@@ -15,8 +15,9 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { vi } from 'vitest';
-import { logger } from '../lib/Utils';
+import { forceRenderStyles, getStyles } from 'typestyle';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '../lib/UiUtils';
 import MD2Tabs from './MD2Tabs';
 
 describe('MD2Tabs', () => {
@@ -24,9 +25,31 @@ describe('MD2Tabs', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
+
+  /** The typestyle class only the active tab carries, with its rendered rule. */
+  function activeRule(active: HTMLElement, inactive: HTMLElement): string {
+    const extra = Array.from(active.classList).filter((name) => !inactive.classList.contains(name));
+    expect(extra).toHaveLength(1);
+    const match = getStyles().match(new RegExp(`\\.${extra[0]}\\{([^}]*)\\}`));
+    expect(match).not.toBeNull();
+    return match![1];
+  }
+
   it('renders with the right styles by default', () => {
-    const { asFragment } = render(<MD2Tabs tabs={['tab1', 'tab2']} selectedTab={0} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<MD2Tabs tabs={['tab1', 'tab2']} selectedTab={0} />);
+    forceRenderStyles();
+    const root = container.firstElementChild as HTMLElement;
+    const indicator = root.firstElementChild as HTMLElement;
+    expect(getComputedStyle(root).position).toBe('relative');
+    expect(getComputedStyle(root).whiteSpace).toBe('nowrap');
+    expect(getComputedStyle(indicator).position).toBe('absolute');
+    expect(getComputedStyle(indicator).borderBottom).toMatch(/^3px solid /);
+    expect(getComputedStyle(indicator).transition).toBe('width 0.3s, left 0.3s');
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual(['tab1', 'tab2']);
+    const rule = activeRule(buttons[0], buttons[1]);
+    expect(rule).toContain('font-weight:bold');
+    expect(rule).toMatch(/color:#1a73e8 !important/);
   });
 
   it('does not throw when clicking an unselected tab without onSwitch handler', () => {
@@ -50,9 +73,12 @@ describe('MD2Tabs', () => {
 
   it('gracefully handles an out of bound selectedTab value', () => {
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
-    const { asFragment } = render(<MD2Tabs tabs={['tab1', 'tab2']} selectedTab={100} />);
+    render(<MD2Tabs tabs={['tab1', 'tab2']} selectedTab={100} />);
+    forceRenderStyles();
     expect(errorSpy).toHaveBeenCalledWith('Out of bound index passed for selected tab');
-    expect(asFragment()).toMatchSnapshot();
+    // Falls back to the first tab as the active one.
+    const buttons = screen.getAllByRole('button');
+    expect(activeRule(buttons[0], buttons[1])).toContain('font-weight:bold');
   });
 
   it('centers the indicator under each selected label when switching tabs', () => {
@@ -79,9 +105,8 @@ describe('MD2Tabs', () => {
       const { left, width } = labelBounds[selectedTab];
       const indicatorLeft = parseFloat(indicator.style.left);
       const indicatorWidth = parseFloat(indicator.style.width);
-      // CSS serialization rounds subpixel values; retain sub-millipixel accuracy.
-      expect(indicatorWidth).toBeCloseTo(width + 5, 3);
-      expect(indicatorLeft + indicatorWidth / 2).toBeCloseTo(left - 220 + width / 2, 3);
+      expect(indicatorWidth).toBe(width + 5);
+      expect(indicatorLeft + indicatorWidth / 2).toBe(left - 220 + width / 2);
     });
   });
 

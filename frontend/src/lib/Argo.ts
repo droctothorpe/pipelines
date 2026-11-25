@@ -1,0 +1,401 @@
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
+
+import { PipelineTaskTaskState } from 'src/components/graph/Constants';
+import type { PipelineFlowElement } from './v2/FlowTypes';
+import { buildGraphLayout, NodeTypeNames } from './v2/StaticFlow';
+
+export interface ArgoNode {
+  id: string;
+  displayName: string;
+  type: string;
+  name?: string;
+  templateName?: string;
+  boundaryID?: string;
+  outboundNodes?: string[];
+  startedAt?: string;
+  finishedAt?: string;
+  podName?: string;
+  inputs?: {
+    artifacts?: Array<{ name: string; s3?: { bucket?: string; key?: string } }>;
+    parameters?: Array<{ name: string; value?: string }>;
+  };
+  phase?: string;
+  message?: string;
+  children?: string[];
+  memoizationStatus?: { hit: boolean };
+  outputs?: {
+    artifacts?: Array<{ name: string; s3?: { bucket?: string; key?: string } }>;
+    parameters?: Array<{ name: string; value?: string }>;
+  };
+}
+
+export interface ArgoWorkflow {
+  archived?: boolean;
+  metadata: {
+    name: string;
+    namespace: string;
+    uid: string;
+    resourceVersion?: string;
+    creationTimestamp?: string;
+    labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+  };
+  spec: {
+    arguments?: { parameters?: Array<{ name: string; value?: string }> };
+    workflowTemplateRef?: { name: string };
+    serviceAccountName?: string;
+    shutdown?: string;
+    [key: string]: unknown;
+  };
+  status?: {
+    phase?: string;
+    message?: string;
+    startedAt?: string;
+    finishedAt?: string;
+    storedWorkflowTemplateSpec?: Record<string, unknown>;
+    nodes?: Record<string, ArgoNode>;
+    compressedNodes?: string;
+    offloadNodeStatusVersion?: string;
+  };
+}
+
+interface Producer {
+  run: string;
+  task: string;
+  namespace: string;
+}
+
+export interface ArgoMetadata {
+  schema: 'kfp-argo/v1';
+  producer: Producer;
+  inputs: Array<{ port: string; producer: Producer; uri: string }>;
+  artifacts: Array<{
+    port: string;
+    type: string;
+    uri: string;
+    producer: Producer;
+    metadata: Record<string, unknown>;
+  }>;
+  metrics: Record<string, number>;
+}
+
+let bearerToken = '';
+
+/** Keep namespace-scoped credentials in memory, never in URLs or web storage. */
+export function setArgoToken(token: string) {
+  bearerToken = token.trim().replace(/^Bearer\s+/i, '');
+}
+
+export type UiAuthMode = 'token' | 'single-user' | 'multi-user';
+const AUTH_MODES: UiAuthMode[] = ['token', 'single-user', 'multi-user'];
+export interface UiConfig {
+  authMode: UiAuthMode;
+  /** The proxy's own namespace, used when the URL names none; empty if unknown. */
+  namespace: string;
+}
+
+/**
+ * The app is served from the proxy root and, under the Kubeflow central
+ * dashboard, from `/pipeline/`. API paths resolve against the page so the same
+ * bundle works in both places.
+ */
+export function apiPath(path: string): string {
+  const base = new URL('.', window.location.href).pathname;
+  return path.startsWith(base) ? path : base + path.replace(/^\//, '');
+}
+
+const NAMESPACE_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+
+/**
+ * The deployed proxy publishes its authentication mode and namespace. In
+ * single-user mode it authenticates with its own service account, so the
+ * browser needs no token; in multi-user mode the gateway names the user and the
+ * dashboard names the namespace. Anything missing, failing or unrecognized falls
+ * back to asking for a token and to the URL's namespace.
+ */
+export async function getUiConfig(signal?: AbortSignal): Promise<UiConfig> {
+  const fallback: UiConfig = { authMode: 'token', namespace: '' };
+  try {
+    const response = await fetch(apiPath('/config.json'), {
+      signal,
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) return fallback;
+    const body = (await response.json()) as { authMode?: unknown; namespace?: unknown } | null;
+    return {
+      authMode: AUTH_MODES.find((mode) => mode === body?.authMode) ?? 'token',
+      namespace:
+        typeof body?.namespace === 'string' && NAMESPACE_LABEL.test(body.namespace)
+          ? body.namespace
+          : '',
+    };
+  } catch {
+    // Older proxies and offline bundles serve no config.
+    return fallback;
+  }
+}
+
+export const hasArgoMetadata = (node: ArgoNode) =>
+  node.outputs?.artifacts?.some((artifact) => artifact.name === 'kfp-metadata') ||
+  node.outputs?.parameters?.some((parameter) => parameter.name === 'kfp-metadata');
+
+const isPersisted = (run: ArgoWorkflow) =>
+  run.metadata.labels?.['workflows.argoproj.io/workflow-archiving-status'] === 'Persisted';
+const segment = encodeURIComponent;
+const workflowPath = (namespace: string, name: string) =>
+  `/argo/api/v1/workflows/${segment(namespace)}/${segment(name)}`;
+
+export class ArgoRequestError extends Error {
+  constructor(public readonly status: number) {
+    super(`Argo request failed (${status}). Check your namespace and access permissions.`);
+  }
+}
+
+export async function argoRequest(
+  path: string,
+  signal?: AbortSignal,
+  init: RequestInit = {},
+): Promise<Response> {
+  const response = await fetch(apiPath(path), {
+    ...init,
+    signal,
+    credentials: 'same-origin',
+    headers: {
+      ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init.headers,
+    },
+  });
+  if (!response.ok) throw new ArgoRequestError(response.status);
+  return response;
+}
+
+/** Follow native list continuations without silently truncating the UI inventory. */
+export async function listNativeItems<T>(
+  path: string,
+  query: URLSearchParams,
+  tokenKey: string,
+  signal?: AbortSignal,
+  accept?: string,
+): Promise<T[]> {
+  const items: T[] = [],
+    seen = new Set<string>();
+  while (true) {
+    const result = await (
+      await argoRequest(
+        `${path}?${query}`,
+        signal,
+        accept ? { headers: { Accept: accept } } : undefined,
+      )
+    ).json();
+    items.push(...(result.items || []));
+    const next = result.metadata?.continue || '';
+    if (!next) return items;
+    if (seen.has(next)) {
+      // Argo Server's merged live/archived list can end on a repeated offset with
+      // an empty page after deduplication; nothing further is fetchable. A
+      // repeated token that still returns items would duplicate them, so fail.
+      if (!(result.items || []).length) return items;
+      throw new Error('The server repeated a pagination token. Refresh to try again.');
+    }
+    seen.add(next);
+    query.set(tokenKey, next);
+  }
+}
+
+export async function listArgoWorkflows(
+  namespace: string,
+  signal?: AbortSignal,
+): Promise<ArgoWorkflow[]> {
+  const query = new URLSearchParams({
+    'listOptions.labelSelector': 'pipelines.kubeflow.org/pipeline',
+    'listOptions.limit': '100',
+  });
+  const result = await (
+    await argoRequest(`/argo/api/v1/workflows/${segment(namespace)}?${query}`, signal)
+  ).json();
+  const archived = await (
+    await argoRequest(
+      `/argo/api/v1/archived-workflows?namespace=${segment(namespace)}&${query}`,
+      signal,
+    )
+  ).json();
+  const runs = new Map<string, ArgoWorkflow>();
+  for (const run of archived.items || []) runs.set(run.metadata.uid, { ...run, archived: true });
+  // Argo 4 includes SQL rows in its workflow list, even after live CR deletion.
+  for (const run of result.items || [])
+    runs.set(run.metadata.uid, isPersisted(run) ? { ...run, archived: true } : run);
+  return [...runs.values()].sort((a, b) =>
+    (b.metadata.creationTimestamp || '').localeCompare(a.metadata.creationTimestamp || ''),
+  );
+}
+
+export async function getArgoWorkflow(
+  run: ArgoWorkflow,
+  signal?: AbortSignal,
+): Promise<ArgoWorkflow> {
+  const workflow: ArgoWorkflow = await (
+    await argoRequest(
+      run.archived
+        ? `/argo/api/v1/archived-workflows/${segment(run.metadata.uid)}?namespace=${segment(run.metadata.namespace)}`
+        : workflowPath(run.metadata.namespace, run.metadata.name),
+      signal,
+    )
+  ).json();
+  if (workflow.metadata.uid !== run.metadata.uid)
+    throw new Error('This workflow name was reused. Refresh the run list and select the new run.');
+  if (
+    !workflow.status?.nodes &&
+    (workflow.status?.compressedNodes || workflow.status?.offloadNodeStatusVersion)
+  ) {
+    throw new Error('Argo did not return hydrated nodes. Check Argo Server node-status storage.');
+  }
+  return { ...workflow, archived: run.archived || isPersisted(workflow) || undefined };
+}
+
+export function argoArtifactUrl(run: ArgoWorkflow, node: ArgoNode, artifact: string): string {
+  if (run.archived)
+    return apiPath(
+      `/argo/artifact-files/${segment(run.metadata.namespace)}/archived-workflows/${segment(run.metadata.uid)}/${segment(node.id)}/outputs/${segment(artifact)}`,
+    );
+  return apiPath(
+    `/argo/artifacts/${segment(run.metadata.namespace)}/${segment(run.metadata.name)}/${segment(node.id)}/${segment(artifact)}`,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isProducer(value: unknown): boolean {
+  return (
+    isRecord(value) && ['run', 'task', 'namespace'].every((key) => typeof value[key] === 'string')
+  );
+}
+
+function isArtifactReference(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.port === 'string' &&
+    typeof value.uri === 'string' &&
+    isProducer(value.producer)
+  );
+}
+
+export async function getArgoMetadata(
+  run: ArgoWorkflow,
+  node: ArgoNode,
+  signal?: AbortSignal,
+): Promise<ArgoMetadata> {
+  const inline = node.outputs?.parameters?.find(
+    (parameter) => parameter.name === 'kfp-metadata',
+  )?.value;
+  const text =
+    inline ??
+    (await (await argoRequest(argoArtifactUrl(run, node, 'kfp-metadata'), signal)).text());
+  if (text.length > 1024 * 1024)
+    throw new Error(
+      'Task metadata exceeds the 1 MiB preview limit. Download the artifact instead.',
+    );
+  const data = JSON.parse(text);
+  if (
+    !isRecord(data) ||
+    data.schema !== 'kfp-argo/v1' ||
+    !Array.isArray(data.artifacts) ||
+    !data.artifacts.every(
+      (artifact: unknown) =>
+        isRecord(artifact) &&
+        isArtifactReference(artifact) &&
+        typeof artifact.type === 'string' &&
+        isRecord(artifact.metadata),
+    ) ||
+    !Array.isArray(data.inputs) ||
+    !data.inputs.every(isArtifactReference) ||
+    !isProducer(data.producer) ||
+    !isRecord(data.metrics) ||
+    Object.values(data.metrics).some(
+      (value) => typeof value !== 'number' || !Number.isFinite(value),
+    )
+  ) {
+    throw new Error('Unsupported task metadata. Use the kfp-argo/v1 runtime contract.');
+  }
+  return data as unknown as ArgoMetadata;
+}
+
+export async function getArgoLogs(run: ArgoWorkflow, signal?: AbortSignal): Promise<string[]> {
+  if (run.archived) {
+    const workflow = await getArgoWorkflow(run, signal);
+    const logs = await Promise.all(
+      Object.values(workflow.status?.nodes || {})
+        .filter((node) =>
+          node.outputs?.artifacts?.some((artifact) => artifact.name === 'main-logs'),
+        )
+        .map(async (node) => {
+          const text = await (
+            await argoRequest(argoArtifactUrl(run, node, 'main-logs'), signal)
+          ).text();
+          return text
+            .split('\n')
+            .slice(-200)
+            .map((line) => `${node.displayName}: ${line}`);
+        }),
+    );
+    return logs.flat();
+  }
+  const query = new URLSearchParams({
+    'logOptions.container': 'main',
+    'logOptions.follow': 'false',
+    'logOptions.tailLines': '200',
+  });
+  const text = await (
+    await argoRequest(
+      `${workflowPath(run.metadata.namespace, run.metadata.name)}/log?${query}`,
+      signal,
+    )
+  ).text();
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const entry = JSON.parse(line);
+      if (entry.error) throw new Error(entry.error.message || 'Argo log stream failed.');
+      return `${entry.result.podName}: ${entry.result.content}`;
+    });
+}
+
+/** Render Argo's node status directly; the KFP enum is only a widget icon input. */
+export function argoGraph(run: ArgoWorkflow): PipelineFlowElement[] {
+  const nodes = Object.values(run.status?.nodes || {});
+  const phases: Record<string, PipelineTaskTaskState> = {
+    Pending: PipelineTaskTaskState.RUNTIME_STATE_UNSPECIFIED,
+    Running: PipelineTaskTaskState.RUNNING,
+    Succeeded: PipelineTaskTaskState.SUCCEEDED,
+    Failed: PipelineTaskTaskState.FAILED,
+    Error: PipelineTaskTaskState.FAILED,
+    Skipped: PipelineTaskTaskState.SKIPPED,
+    Omitted: PipelineTaskTaskState.SKIPPED,
+  };
+  const elements: PipelineFlowElement[] = nodes.map((node) => ({
+    id: node.id,
+    type: NodeTypeNames.EXECUTION,
+    position: { x: 0, y: 0 },
+    data: {
+      label: node.displayName,
+      taskId: node.id,
+      state: node.memoizationStatus?.hit
+        ? PipelineTaskTaskState.CACHED
+        : phases[node.phase || 'Pending'],
+      lifecycleMessage: node.message,
+    },
+  }));
+  const ids = new Set(nodes.map((node) => node.id));
+  for (const node of nodes) {
+    for (const child of node.children || []) {
+      if (ids.has(child))
+        elements.push({ id: `${node.id}-${child}`, source: node.id, target: child });
+    }
+  }
+  return buildGraphLayout(elements);
+}

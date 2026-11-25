@@ -14,8 +14,6 @@
 """Pipeline task class and operations."""
 
 import copy
-import enum
-import functools
 import inspect
 import itertools
 import re
@@ -24,7 +22,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
 
 from kfp.dsl import pipeline_channel, placeholders, structures, utils
 from kfp.dsl.types import type_utils
-from kfp.local import pipeline_orchestrator
 from kfp.pipeline_spec import pipeline_spec_pb2
 
 _register_task_handler = lambda task: utils.maybe_rename_for_k8s(
@@ -35,68 +32,6 @@ if TYPE_CHECKING:
     from kfp.dsl import tasks_group
 
 AfterDependencyType = Union['PipelineTask', 'tasks_group.ExitHandler']
-
-
-class TaskState(enum.Enum):
-    FUTURE = 'FUTURE'
-    FINAL = 'FINAL'
-
-
-def block_if_final(custom_message: Optional[str] = None):
-
-    def actual_decorator(method):
-        method_name = method.__name__
-
-        @functools.wraps(method)
-        def wrapper(self: 'PipelineTask', *args, **kwargs):
-            if self.state == TaskState.FINAL:
-                raise Exception(
-                    custom_message
-                    or f"Task configuration methods are not supported for local execution. Got call to '.{method_name}()'."
-                )
-            elif self.state == TaskState.FUTURE:
-                return method(self, *args, **kwargs)
-            else:
-                raise ValueError(
-                    f'Got unknown {TaskState.__name__}: {self.state}.'
-                )
-
-        return wrapper
-
-    return actual_decorator
-
-
-def warn_if_final():
-    """Decorator for K8s-only task config methods that have no local
-    equivalent.
-
-    In local execution (FINAL state), emits a warning and returns self
-    instead of raising.
-    """
-
-    def actual_decorator(method):
-        method_name = method.__name__
-
-        @functools.wraps(method)
-        def wrapper(self: 'PipelineTask', *args, **kwargs):
-            if self.state == TaskState.FINAL:
-                import warnings
-
-                warnings.warn(
-                    f"'.{method_name}()' is not used by the current local runner and will be ignored.",
-                    stacklevel=2,
-                )
-                return self
-            elif self.state == TaskState.FUTURE:
-                return method(self, *args, **kwargs)
-            else:
-                raise ValueError(
-                    f'Got unknown {TaskState.__name__}: {self.state}.'
-                )
-
-        return wrapper
-
-    return actual_decorator
 
 
 class PipelineTask:
@@ -139,10 +74,13 @@ class PipelineTask:
         execution_cache_key: Optional[str] = None,
     ) -> None:
         """Initializes a PipelineTask instance."""
+        if execute_locally:
+            raise ValueError(
+                'Local execution is not supported; submit the pipeline to a cluster.'
+            )
         # import within __init__ to avoid circular import
         from kfp.dsl.tasks_group import TasksGroup
 
-        self.state = TaskState.FUTURE
         self.parent_task_group: Union[None, TasksGroup] = None
         args = args or {}
 
@@ -235,37 +173,7 @@ class PipelineTask:
             ]
         )
 
-        if execute_locally:
-            self._execute_locally(args=args)
-
-    def _execute_locally(self, args: Dict[str, Any]) -> None:
-        """Execute the pipeline task locally.
-
-        Set the task state to FINAL and update the outputs.
-        """
-        from kfp.local import task_dispatcher
-
-        if self.pipeline_spec is not None:
-            self._outputs = pipeline_orchestrator.run_local_pipeline(
-                pipeline_spec=self.pipeline_spec,
-                arguments=args,
-            )
-        elif self.component_spec is not None:
-            self._outputs = task_dispatcher.run_single_task(
-                pipeline_spec=self.component_spec.to_pipeline_spec(),
-                arguments=args,
-            )
-        else:
-            # user should never hit this
-            raise ValueError(
-                'One of pipeline_spec or component_spec must not be None for local execution.'
-            )
-        self.state = TaskState.FINAL
-
     @property
-    @block_if_final(
-        'Platform-specific features are not supported for local execution.'
-    )
     def platform_spec(self) -> pipeline_spec_pb2.PlatformSpec:
         """PlatformSpec for all tasks in the pipeline as task.
 
@@ -330,9 +238,6 @@ class PipelineTask:
         return self._outputs
 
     @property
-    @block_if_final(
-        'Task has no dependent tasks since it is executed independently.'
-    )
     def dependent_tasks(self) -> List[str]:
         """A list of the dependent task names."""
         return self._task_spec.dependent_tasks
@@ -387,7 +292,6 @@ class PipelineTask:
         """Backwards-compatible wrapper for ``register_pipeline_channels``."""
         self.register_pipeline_channels(pipeline_channels)
 
-    @block_if_final()
     def set_caching_options(
         self, enable_caching: bool, cache_key: Optional[str] = None
     ) -> 'PipelineTask':
@@ -444,7 +348,6 @@ class PipelineTask:
                 )
         return cpu
 
-    @warn_if_final()
     def set_cpu_request(
         self, cpu: Union[str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -472,7 +375,6 @@ class PipelineTask:
 
         return self
 
-    @warn_if_final()
     def set_cpu_limit(
         self, cpu: Union[str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -500,7 +402,6 @@ class PipelineTask:
 
         return self
 
-    @warn_if_final()
     def set_accelerator_limit(
         self, limit: Union[int, str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -536,7 +437,6 @@ class PipelineTask:
 
         return self
 
-    @warn_if_final()
     def set_gpu_limit(self, gpu: str) -> 'PipelineTask':
         """Sets GPU limit (maximum) for the task. Only applies if accelerator
         type is also set via .add_accelerator_type().
@@ -579,7 +479,6 @@ class PipelineTask:
             )
         return normalized
 
-    @warn_if_final()
     def set_memory_request(
         self, memory: Union[str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -607,7 +506,6 @@ class PipelineTask:
 
         return self
 
-    @warn_if_final()
     def set_memory_limit(
         self, memory: Union[str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -637,7 +535,6 @@ class PipelineTask:
 
     _VALID_RETRY_POLICIES = frozenset(structures._RETRY_POLICY_MAP)
 
-    @block_if_final()
     def set_retry(
         self,
         num_retries: int,
@@ -662,9 +559,10 @@ class PipelineTask:
                 ``'OnTransientError'`` retries either when the failure message
                 matches the controller's transient-error pattern; ``'Always'``
                 retries both.
-                Defaults to ``None``, which omits the policy so the
-                deployment's Argo configuration applies; KFP's bundled
-                manifests set ``'OnError'``.
+                Defaults to ``None``: native compilation retries both task
+                failures and engine errors. Direct component exits are Argo
+                failures rather than errors reported by a KFP driver.
+                An explicit policy restricts retries to the selected class.
 
         Returns:
             Self return to allow chained setting calls.
@@ -683,7 +581,6 @@ class PipelineTask:
         )
         return self
 
-    @warn_if_final()
     def add_node_selector_constraint(self, accelerator: str) -> 'PipelineTask':
         """Deprecated. Use :meth:`set_accelerator_type` instead.
 
@@ -701,7 +598,6 @@ class PipelineTask:
         )
         return self.set_accelerator_type(accelerator)
 
-    @warn_if_final()
     def set_accelerator_type(
         self, accelerator: Union[str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -728,7 +624,6 @@ class PipelineTask:
 
         return self
 
-    @warn_if_final()
     def set_display_name(self, name: str) -> 'PipelineTask':
         """Sets display name for the task.
 
@@ -741,7 +636,6 @@ class PipelineTask:
         self._task_spec.display_name = name
         return self
 
-    @block_if_final()
     def set_env_variable(self, name: str, value: str) -> 'PipelineTask':
         """Sets environment variable for the task.
 
@@ -760,7 +654,6 @@ class PipelineTask:
             self.container_spec.env = {name: value}
         return self
 
-    @block_if_final()
     def set_debug_pause(
         self,
         before: bool = False,
@@ -830,7 +723,6 @@ class PipelineTask:
 
         return self
 
-    @block_if_final()
     def set_container_image(
         self, name: Union[str, pipeline_channel.PipelineChannel]
     ) -> 'PipelineTask':
@@ -863,7 +755,6 @@ class PipelineTask:
             self.register_pipeline_channels(pipeline_channels)
         return self
 
-    @block_if_final()
     def after(self, *tasks: AfterDependencyType) -> 'PipelineTask':
         """Specifies an explicit dependency on other tasks by requiring this
         task be executed after other tasks finish completion.
@@ -906,7 +797,6 @@ class PipelineTask:
             self._task_spec.dependent_tasks.append(dependency_name)
         return self
 
-    @block_if_final()
     def ignore_upstream_failure(self) -> 'PipelineTask':
         """If called, the pipeline task will run when any specified upstream
         tasks complete, even if unsuccessful.

@@ -6,14 +6,18 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { getContrastRatio } from '@mui/material/styles';
-import { V2PipelineTask, V2Run } from 'src/apisv2/run';
+import { afterEach, expect, it, vi } from 'vitest';
+import type {
+  TaskTimingView as V2PipelineTask,
+  RunTimingView as V2Run,
+} from 'src/lib/NativeViewTypes';
+import { V2RuntimeState } from 'src/lib/NativeViewTypes';
 import RunTimeline, { RunTimelineProps } from './RunTimeline';
 
 const base = Date.parse('2026-01-01T00:00:00Z');
 const at = (seconds: number) => new Date(base + seconds * 1000);
 const run: V2Run = {
-  run_id: 'run',
-  state: 'SUCCEEDED',
+  state: V2RuntimeState.SUCCEEDED,
   created_at: at(0),
   finished_at: at(300),
 };
@@ -309,7 +313,11 @@ it('updates active elapsed times, freezes terminal tasks, and cleans up the cloc
   vi.useFakeTimers();
   vi.setSystemTime(at(60));
   const activeTask = task('Active', 0, undefined, { state: 'RUNNING' });
-  const runningRun: V2Run = { ...run, state: 'RUNNING', finished_at: undefined };
+  const runningRun: V2Run = {
+    ...run,
+    state: V2RuntimeState.RUNNING,
+    finished_at: undefined,
+  };
   const { update, unmount } = setup({ run: runningRun, tasks: [activeTask] });
   const chart = screen.getByRole('table', { name: 'Component timeline timings' });
   expect(within(chart).getByRole('button', { name: 'Select Active, 1m 00s' })).toBeInTheDocument();
@@ -324,7 +332,7 @@ it('updates active elapsed times, freezes terminal tasks, and cleans up the cloc
 });
 
 it.each(['RUNNING', 'SUCCEEDED'] as const)('keeps the header minimal for a %s run', (state) => {
-  setup({ run: { ...run, state } });
+  setup({ run: { ...run, state: V2RuntimeState[state] } });
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   expect(document.querySelector('.rt-legend')).toBeNull();
   expect(screen.queryByText(/Elapsed time includes startup and waiting/)).not.toBeInTheDocument();

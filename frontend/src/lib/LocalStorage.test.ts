@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LocalStorage, LocalStorageKey } from './LocalStorage';
 
 describe('LocalStorage', () => {

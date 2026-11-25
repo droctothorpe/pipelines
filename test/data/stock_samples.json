@@ -1,0 +1,153 @@
+{
+  "baseline": "7780f12acfbde9f16169c7fcbfdfb6c3ef5432ea",
+  "scope": "Unchanged DSL definitions from Python files and notebook code cells; install/submission/timing cells excluded from compile-only pass.",
+  "samples": [
+    {
+      "source": "samples/core/artifact_previews/artifact_previews.py",
+      "pipeline": "artifact_preview_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/artifact_previews/artifact_previews.py",
+      "pipeline": "artifact_preview_disabled_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/artifact_previews/artifact_previews.py",
+      "pipeline": "artifact_preview_list_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/artifact_previews/artifact_previews.py",
+      "pipeline": "artifact_preview_formats_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/caching/caching.ipynb",
+      "pipeline": "caching_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/caching/caching.ipynb",
+      "pipeline": "caching_pipeline3",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/caching/caching_sample.py",
+      "pipeline": "caching_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/caching/caching_sample.py",
+      "pipeline": "caching_pipeline3",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/condition/condition_v2.py",
+      "pipeline": "condition",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/condition/nested_condition.py",
+      "pipeline": "my_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/execution_order/execution_order.py",
+      "pipeline": "execution_order_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/exit_handler/exit_handler.py",
+      "pipeline": "pipeline_exit_handler",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/kfp_env_validation/kfp_env_validation.ipynb",
+      "pipeline": "verify_gcp_kfp_env",
+      "compile": "failed",
+      "error": "NameError: name 'dsl' is not defined"
+    },
+    {
+      "source": "samples/core/kubernetes_pvc/kubernetes_pvc.py",
+      "pipeline": "my_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/loop_output/loop_output.py",
+      "pipeline": "my_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/loop_parallelism/loop_parallelism.py",
+      "pipeline": "pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/loop_parameter/loop_parameter.py",
+      "pipeline": "my_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/loop_static/loop_static.py",
+      "pipeline": "my_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/multiple_outputs/multiple_outputs.ipynb",
+      "pipeline": "pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/output_a_directory/output_a_directory.py",
+      "pipeline": "dir_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/parallel_join/parallel_join.py",
+      "pipeline": "download_and_join",
+      "compile": "failed",
+      "error": "TypeError: container_component() missing 1 required positional argument: 'func'"
+    },
+    {
+      "source": "samples/core/resource_spec/resource_spec.py",
+      "pipeline": "my_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/resource_spec/runtime_resource_request.py",
+      "pipeline": "resource_request_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/resource_spec/runtime_resource_request_gpu.py",
+      "pipeline": "resource_constraint_request_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/retry/retry.py",
+      "pipeline": "retry_sample_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/secret/secret.py",
+      "pipeline": "secret_op_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/core/sequential/sequential.py",
+      "pipeline": "sequential_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/tutorials/DSL - Control structures/DSL - Control structures.py",
+      "pipeline": "control_flows_pipeline",
+      "compile": "passed"
+    },
+    {
+      "source": "samples/tutorials/Data passing in python components/Data passing in python components - Files.py",
+      "pipeline": "data_passing_pipeline",
+      "compile": "passed"
+    }
+  ]
+}

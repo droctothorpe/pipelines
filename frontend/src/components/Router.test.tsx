@@ -1,389 +1,375 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import { act, render, screen, waitFor } from '@testing-library/react';
-import {
-  createMemoryRouter,
-  HashRouter,
-  MemoryRouter,
-  RouterProvider,
-  useLocation,
-} from 'react-router';
-import { NavigationProps } from 'src/lib/Navigation';
-import { NavigationErrorBoundary } from 'src/atoms/NavigationErrorBoundary';
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import { useEffect, useState } from 'react';
-import Router, { getSafeReturnPath, RouteConfig, RoutePage, RoutePageFactory } from './Router';
-import { Page } from '../pages/Page';
-import { ToolbarProps } from './Toolbar';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useLocation, useParams } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setArgoToken } from 'src/lib/Argo';
+import Router, { ExternalLinks, RoutePage, RoutePrefix } from './Router';
 
-vi.mock('src/pages/RunDetailsRouter', () => ({
-  default: () => <div>Run details</div>,
-}));
+// The pages are heavy data-bound components; the router is tested with
+// lightweight stand-ins that expose what the router hands them.
+const mounts = vi.hoisted(() => ({ runDetails: 0 }));
 
-vi.mock('src/pages/AllRunsAndArchive', () => ({
-  default: () => <div>Runs page</div>,
-  AllRunsAndArchiveTab: { RUNS: 0, ARCHIVE: 1 },
-}));
-
-describe('Router', () => {
-  it('initial render', () => {
-    const renderResult = render(
-      <MemoryRouter initialEntries={['/does-not-exist']}>
-        <Router />
-      </MemoryRouter>,
+vi.mock('src/pages/NativePages', async () => {
+  const { useNativeUi } = await import('src/lib/NativeUiContext');
+  // Stands in for any page that reports failures or asks for confirmation.
+  const Compare = () => {
+    const { fail, confirm } = useNativeUi();
+    return (
+      <div>
+        <div>Compare</div>
+        <button onClick={() => fail(new Error('Current load error'))}>Fail loading</button>
+        <button
+          onClick={() =>
+            confirm({
+              title: 'Delete run?',
+              content: 'This cannot be undone.',
+              action: async () => {
+                throw new Error('denied');
+              },
+            })
+          }
+        >
+          Delete
+        </button>
+      </div>
     );
-    expect(screen.getByText('404')).toBeVisible();
-    expect(screen.getByText('Page Not Found: /does-not-exist')).toBeVisible();
-    expect(renderResult.asFragment()).toMatchSnapshot();
-  });
-
-  it('updates the not-found pathname and recovers when navigating to a known route', async () => {
-    const router = createMemoryRouter([{ path: '*', element: <Router /> }], {
-      initialEntries: ['/does-not-exist?view=graph'],
-    });
-    render(<RouterProvider router={router} />);
-    expect(screen.getByText('Page Not Found: /does-not-exist')).toBeVisible();
-
-    await act(() => router.navigate('/another-missing-page'));
-    expect(screen.getByText('Page Not Found: /another-missing-page')).toBeVisible();
-    expect(screen.queryByText('Page Not Found: /does-not-exist')).not.toBeInTheDocument();
-
-    await act(() => router.navigate('/runs'));
-    expect(screen.getByText('Runs page')).toBeVisible();
-    expect(screen.queryByText('404')).not.toBeInTheDocument();
-  });
-
-  it('does not share state between pages', async () => {
-    class ApplePage extends Page<{}, {}> {
-      public getInitialToolbarState(): ToolbarProps {
-        return {
-          pageTitle: 'Apple',
-          actions: {},
-          breadcrumbs: [],
-        };
-      }
-      public async refresh() {}
-      public render() {
-        return <div>apple</div>;
-      }
-    }
-    const configs: RouteConfig[] = [
-      {
-        path: '/apple',
-        Component: ApplePage,
-      },
-      {
-        path: '/pear',
-        Component: () => {
-          return <div>pear</div>;
-        },
-      },
-    ];
-    const router = createMemoryRouter([{ path: '*', element: <Router configs={configs} /> }], {
-      initialEntries: ['/apple'],
-    });
-    render(<RouterProvider router={router} />);
-    expect(screen.getByTestId('page-title')).toHaveTextContent('Apple');
-    act(() => {
-      router.navigate('/pear');
-    });
-    await waitFor(() => expect(screen.getByTestId('page-title')).toHaveTextContent(''));
-  });
-
-  it('preserves Run Details state when only the query changes', async () => {
-    let mountCount = 0;
-    const StatefulPage = () => {
-      const [selection, setSelection] = useState('initial');
-      useEffect(() => {
-        mountCount++;
-      }, []);
-      return <button onClick={() => setSelection('selected')}>{selection}</button>;
-    };
-    const router = createMemoryRouter(
-      [
-        {
-          path: '*',
-          element: (
-            <NavigationErrorBoundary>
-              <Router configs={[{ path: RoutePage.RUN_DETAILS, Component: StatefulPage }]} />
-            </NavigationErrorBoundary>
-          ),
-        },
-      ],
-      {
-        initialEntries: ['/runs/details/run-1?task=task-1'],
-      },
+  };
+  const Stateful = ({ label }: { label: string }) => {
+    const [selection, setSelection] = useState('initial');
+    return (
+      <div>
+        <div>{label}</div>
+        <button onClick={() => setSelection('selected')}>{`${label}:${selection}`}</button>
+      </div>
     );
-    const initialLocationKey = router.state.location.key;
-    render(<RouterProvider router={router} />);
-
-    act(() => screen.getByRole('button', { name: 'initial' }).click());
-    const mountCountBeforeReplace = mountCount;
-    await act(() => router.navigate('/runs/details/run-1', { replace: true }));
-
-    await waitFor(() => expect(router.state.location.search).toBe(''));
-    expect(router.state.location.key).not.toBe(initialLocationKey);
-    expect(screen.getByRole('button', { name: 'selected' })).toBeVisible();
-    expect(mountCount).toBe(mountCountBeforeReplace);
-    await act(() => router.navigate('/runs/details/run-1?task=task-2'));
-    expect(screen.getByRole('button', { name: 'selected' })).toBeVisible();
-    await act(() => router.navigate(-1));
-    expect(screen.getByRole('button', { name: 'selected' })).toBeVisible();
-    expect(mountCount).toBe(mountCountBeforeReplace);
-    await act(() => router.navigate('/runs/details/run-2'));
-    expect(screen.getByRole('button', { name: 'initial' })).toBeVisible();
-    expect(mountCount).toBeGreaterThan(mountCountBeforeReplace);
-  });
-
-  it('only accepts same-app return paths', () => {
-    expect(getSafeReturnPath(RoutePage.RECURRING_RUNS)).toBe(RoutePage.RECURRING_RUNS);
-    expect(getSafeReturnPath('https://example.com')).toBeUndefined();
-    expect(getSafeReturnPath('//example.com')).toBeUndefined();
-    expect(getSafeReturnPath(null)).toBeUndefined();
-  });
-
-  it('builds native task links without putting task IDs in the path', () => {
-    expect(RoutePageFactory.runDetailsTask('run-1', 'task/iteration 1')).toBe(
-      '/runs/details/run-1?task=task%2Fiteration+1',
-    );
-  });
-
-  it('redirects legacy run execution links to canonical run details', async () => {
-    const router = createMemoryRouter([{ path: '*', element: <Router /> }], {
-      initialEntries: ['/runs/details/run-1/execution/123?view=graph#node'],
-    });
-    render(<RouterProvider router={router} />);
-
-    await waitFor(() => expect(router.state.location.pathname).toBe('/runs/details/run-1'));
-    expect(router.state.location.search).toBe('?view=graph&executionRedirect=detail');
-    expect(router.state.location.hash).toBe('#node');
-    expect(screen.getByText('Run details')).toBeVisible();
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'This legacy execution link cannot select the corresponding task automatically.',
-    );
-    act(() => screen.getByRole('button', { name: 'Close' }).click());
-    expect(router.state.location.search).toBe('?view=graph');
-    expect(router.state.location.hash).toBe('#node');
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  it.each(['/executions', '/executions/123'])(
-    'explains the redirect from %s without guessing a native task ID',
-    async (path) => {
-      const router = createMemoryRouter([{ path: '*', element: <Router /> }], {
-        initialEntries: [path],
-      });
-      const view = render(<RouterProvider router={router} />);
-      await waitFor(() => expect(router.state.location.pathname).toBe('/runs'));
-      expect(screen.getByText('Runs page')).toBeVisible();
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'Execution pages have moved to Runs and task details.',
-      );
-      expect(new URLSearchParams(router.state.location.search).has('task')).toBe(false);
-      // The URL marker also explains a bookmarked/reloaded redirect destination.
-      const destination = `${router.state.location.pathname}${router.state.location.search}`;
-      view.unmount();
-      render(
-        <MemoryRouter initialEntries={[destination]}>
-          <Router />
-        </MemoryRouter>,
-      );
-      expect(screen.getByRole('alert')).toBeVisible();
-      act(() => screen.getByRole('button', { name: 'Close' }).click());
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    },
-  );
-
-  it('does not clear page errors or task selection when dismissing navigation guidance', () => {
-    class ErrorPage extends Page<{}, {}> {
-      public getInitialToolbarState(): ToolbarProps {
-        return { pageTitle: 'Run', actions: {}, breadcrumbs: [] };
-      }
-      public async refresh() {}
-      public render() {
-        return (
-          <button
-            onClick={() =>
-              this.props.updateBanner({ message: 'Current load error', mode: 'error' })
-            }
-          >
-            Fail loading
-          </button>
-        );
-      }
-    }
-    const router = createMemoryRouter(
-      [
-        {
-          path: '*',
-          element: <Router configs={[{ path: RoutePage.RUN_DETAILS, Component: ErrorPage }]} />,
-        },
-      ],
-      {
-        initialEntries: ['/runs/details/run-1?task=task-1&executionRedirect=detail'],
-      },
-    );
-    render(<RouterProvider router={router} />);
-    act(() => screen.getByRole('button', { name: 'Fail loading' }).click());
-    act(() => screen.getByRole('button', { name: 'Close' }).click());
-    expect(screen.getByText('Current load error')).toBeVisible();
-    expect(router.state.location.search).toBe('?task=task-1');
-    expect(screen.queryByText(/Execution pages have moved/)).not.toBeInTheDocument();
-  });
-
-  it('does not show redirect guidance on ordinary navigation', async () => {
-    const router = createMemoryRouter([{ path: '*', element: <Router /> }], {
-      initialEntries: ['/runs?executionRedirect=list'],
-    });
-    render(<RouterProvider router={router} />);
-    expect(screen.getByRole('alert')).toBeVisible();
-    await act(() => router.navigate('/runs/details/run-1'));
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    await act(() => router.navigate('/runs'));
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-  it.each([
-    ['/pipelines/details', {}],
-    ['/pipelines/details/pipeline%20one', { pid: 'pipeline one' }],
-    ['/pipelines/details/pipeline%2520one', { pid: 'pipeline%20one' }],
-    ['/pipelines/details/pipeline%2Fone/version', { pid: 'pipeline/one' }],
-    [
-      '/pipelines/details/pipeline-1/version/version%20one',
-      { pid: 'pipeline-1', vid: 'version one' },
-    ],
-  ])('matches optional and encoded pipeline parameters in %s', (path, params) => {
-    const ParamsPage = ({ params }: NavigationProps) => <output>{JSON.stringify(params)}</output>;
-    render(
-      <MemoryRouter initialEntries={[path as string]}>
-        <Router
-          configs={[
-            { path: RoutePage.PIPELINE_DETAILS, Component: ParamsPage },
-            { path: RoutePage.PIPELINE_DETAILS_NO_VERSION, Component: ParamsPage },
-          ]}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByRole('status')).toHaveTextContent(JSON.stringify(params));
-  });
-
-  it('preserves encoded hash URLs and task query links', () => {
-    const originalUrl = window.location.href;
-    window.history.replaceState(
-      null,
-      '',
-      '/#/runs/details/run%252Fone?task=task%2Fiteration+1#node',
-    );
-    const ParamsPage = ({ params, location }: NavigationProps) => (
-      <output>{JSON.stringify({ params, search: location.search, hash: location.hash })}</output>
-    );
-    try {
-      render(
-        <HashRouter>
-          <NavigationErrorBoundary>
-            <Router configs={[{ path: RoutePage.RUN_DETAILS, Component: ParamsPage }]} />
-          </NavigationErrorBoundary>
-        </HashRouter>,
-      );
-      expect(screen.getByRole('status')).toHaveTextContent(
-        JSON.stringify({
-          params: { rid: 'run%2Fone' },
-          search: '?task=task%2Fiteration+1',
-          hash: '#node',
-        }),
-      );
-    } finally {
-      window.history.replaceState(null, '', originalUrl);
-    }
-  });
-
-  it('reinitializes query-derived forms on navigation', async () => {
-    const FormPage = ({ location }: NavigationProps) => {
+  };
+  return {
+    NativeListPage: ({
+      kind,
+      archived,
+      shared,
+    }: {
+      kind: string;
+      archived?: boolean;
+      shared?: boolean;
+    }) => (
+      <Stateful label={`list:${kind}${archived ? ':archived' : ''}${shared ? ':shared' : ''}`} />
+    ),
+    NativePipelineDetails: () => <output>{JSON.stringify(useParams())}</output>,
+    NativeExperimentDetails: () => <output>{JSON.stringify(useParams())}</output>,
+    NativeNewExperiment: () => <div>New experiment</div>,
+    NativeNewRun: () => {
+      const location = useLocation();
       const [name, setName] = useState(new URLSearchParams(location.search).get('name') || '');
       return (
         <input aria-label='Name' value={name} onChange={(event) => setName(event.target.value)} />
       );
-    };
-    const router = createMemoryRouter(
-      [
-        {
-          path: '*',
-          element: (
-            <NavigationErrorBoundary>
-              <Router configs={[{ path: RoutePage.NEW_RUN, Component: FormPage }]} />
-            </NavigationErrorBoundary>
-          ),
-        },
-      ],
-      { initialEntries: ['/runs/new?name=first'] },
+    },
+    NativeCompare: Compare,
+    NativeArtifactDetails: () => <output>{JSON.stringify(useParams())}</output>,
+    NativeScheduleDetails: () => <output>{JSON.stringify(useParams())}</output>,
+  };
+});
+
+vi.mock('src/pages/NativeRunDetails', () => {
+  const RunDetails = () => {
+    const params = useParams();
+    const location = useLocation();
+    const [selection, setSelection] = useState('initial');
+    useEffect(() => {
+      mounts.runDetails++;
+    }, []);
+    return (
+      <div>
+        <output>{JSON.stringify({ params, search: location.search, hash: location.hash })}</output>
+        <button onClick={() => setSelection('selected')}>{selection}</button>
+      </div>
     );
-    render(<RouterProvider router={router} />);
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('first');
-    await act(() => router.navigate('/runs/new?name=second'));
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('second');
+  };
+  return { default: RunDetails };
+});
+
+vi.mock('src/pages/NativeUpload', () => ({ default: () => <div>Upload pipeline</div> }));
+
+vi.mock('src/lib/Argo', async (original) => ({
+  ...(await original<typeof import('src/lib/Argo')>()),
+  setArgoToken: vi.fn(),
+}));
+
+/** Points the hash router at a path; the router reads window.location.hash. */
+function setHash(path: string) {
+  window.history.replaceState(null, '', `/#${path}`);
+}
+
+async function navigate(path: string) {
+  await act(async () => {
+    window.location.hash = `#${path}`;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+function hashPath(): string {
+  return window.location.hash.replace(/^#/, '');
+}
+
+describe('Router', () => {
+  const originalUrl = window.location.href;
+
+  beforeEach(() => {
+    mounts.runDetails = 0;
+    setHash('/pipelines');
   });
 
-  it('recovers a captured render error after navigation', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const ErrorPage = () => {
-      if (!useLocation().search) throw new Error('route failed');
-      return <div>Recovered page</div>;
-    };
-    const router = createMemoryRouter(
-      [
-        {
-          path: '*',
-          element: (
-            <NavigationErrorBoundary>
-              <Router configs={[{ path: RoutePage.RUN_DETAILS, Component: ErrorPage }]} />
-            </NavigationErrorBoundary>
-          ),
-        },
-      ],
-      { initialEntries: ['/runs/details/run-1'] },
-    );
-    try {
-      render(<RouterProvider router={router} />);
-      expect(screen.getByText('Something went wrong.')).toBeVisible();
-      await act(() => router.navigate('/runs/details/run-1?view=graph'));
-      expect(screen.getByText('Recovered page')).toBeVisible();
-      expect(screen.queryByText('Something went wrong.')).not.toBeInTheDocument();
-    } finally {
-      consoleSpy.mockRestore();
-    }
+  afterEach(() => {
+    vi.clearAllMocks();
+    window.history.replaceState(null, '', originalUrl);
   });
 
-  it('replaces encoded legacy execution links and preserves state when dismissing guidance', async () => {
-    const router = createMemoryRouter([{ path: '*', element: <Router /> }], {
-      initialEntries: ['/runs', '/runs/details/run%252Fone/execution/123?task=task%2Fone#node'],
-    });
-    render(<RouterProvider router={router} />);
-    await waitFor(() => expect(router.state.location.pathname).toBe('/runs/details/run%252Fone'));
-    expect(router.state.historyAction).toBe('REPLACE');
-    expect(router.state.location.search).toBe('?task=task%2Fone&executionRedirect=detail');
-    expect(router.state.location.hash).toBe('#node');
-    await act(() => router.navigate(-1));
-    expect(router.state.location.pathname).toBe('/runs');
-    await act(() =>
-      router.navigate('/runs/details/run-1?task=task-1&executionRedirect=detail#node', {
-        state: { from: 'runs' },
+  it('exports the stock route constants the navigation depends on', () => {
+    expect(RoutePage.PIPELINES).toBe('/pipelines');
+    expect(RoutePage.RECURRING_RUNS).toBe('/recurringruns');
+    expect(RoutePrefix.RECURRING_RUN).toBe('/recurringrun');
+    expect(RoutePrefix.ARTIFACT).toBe('/artifact');
+    expect(ExternalLinks.GITHUB).toMatch(/^https:\/\/github\.com\//);
+  });
+
+  it('initial render', () => {
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(screen.getByText('list:pipelines')).toBeVisible();
+    expect(screen.getByTestId('sideNav')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('redirects unknown paths to the pipelines list and recovers when navigating to a known route', async () => {
+    setHash('/does-not-exist?view=graph');
+    render(<Router namespace='team' authMode='single-user' />);
+    await waitFor(() => expect(hashPath()).toBe('/pipelines'));
+    expect(screen.getByText('list:pipelines')).toBeVisible();
+
+    await navigate('/another-missing-page');
+    await waitFor(() => expect(hashPath()).toBe('/pipelines'));
+
+    await navigate('/runs');
+    expect(await screen.findByText('list:runs')).toBeVisible();
+    expect(screen.queryByText('list:pipelines')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['/pipelines', 'list:pipelines'],
+    ['/shared/pipelines', 'list:pipelines:shared'],
+    ['/pipeline_versions/new', 'Upload pipeline'],
+    ['/experiments', 'list:experiments'],
+    ['/archive/experiments', 'list:experiments:archived'],
+    ['/experiments/new', 'New experiment'],
+    ['/runs', 'list:runs'],
+    ['/archive/runs', 'list:runs:archived'],
+    ['/compare', 'Compare'],
+    ['/recurringruns', 'list:schedules'],
+    ['/artifacts', 'list:artifacts'],
+  ])('routes %s to its native page', async (path, text) => {
+    setHash(path);
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(await screen.findByText(text)).toBeVisible();
+    expect(hashPath()).toBe(path);
+  });
+
+  it.each([
+    ['/experiments/details/exp%20one', { experimentId: 'exp one' }],
+    ['/recurringrun/details/sched-1', { scheduleId: 'sched-1' }],
+    ['/artifacts/run-1/node%2F1/output', { runId: 'run-1', nodeId: 'node/1', port: 'output' }],
+  ])('decodes the detail parameters in %s', async (path, params) => {
+    setHash(path);
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(await screen.findByRole('status')).toHaveTextContent(JSON.stringify(params));
+  });
+
+  // Pages are not keyed by route, so React reuses the NativeListPage instance when
+  // /runs changes to /pipelines and its component state (selection, expansion)
+  // survives the navigation. Stock keyed each page by location to prevent this.
+  it('does not share state between pages', async () => {
+    setHash('/runs');
+    render(<Router namespace='team' authMode='single-user' />);
+    fireEvent.click(screen.getByRole('button', { name: 'list:runs:initial' }));
+    expect(screen.getByRole('button', { name: 'list:runs:selected' })).toBeVisible();
+
+    await navigate('/pipelines');
+    await waitFor(() => expect(screen.getByText('list:pipelines')).toBeVisible());
+    expect(screen.getByRole('button', { name: 'list:pipelines:initial' })).toBeVisible();
+  });
+
+  it('preserves Run Details state when only the query changes', async () => {
+    setHash('/runs/details/run-1?task=task-1');
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      JSON.stringify({ params: { runId: 'run-1' }, search: '?task=task-1', hash: '' }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'initial' }));
+    const mountCountBeforeReplace = mounts.runDetails;
+    await navigate('/runs/details/run-1');
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        JSON.stringify({ params: { runId: 'run-1' }, search: '', hash: '' }),
+      ),
+    );
+    expect(screen.getByRole('button', { name: 'selected' })).toBeVisible();
+    expect(mounts.runDetails).toBe(mountCountBeforeReplace);
+
+    await navigate('/runs/details/run-1?task=task-2');
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('task-2'));
+    expect(screen.getByRole('button', { name: 'selected' })).toBeVisible();
+    expect(mounts.runDetails).toBe(mountCountBeforeReplace);
+
+    await navigate('/runs/details/run-2');
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        JSON.stringify({ params: { runId: 'run-2' }, search: '', hash: '' }),
+      ),
+    );
+  });
+
+  it.each([
+    ['/pipelines/details/pipeline%20one', { pipelineId: 'pipeline one' }],
+    ['/pipelines/details/pipeline%2520one', { pipelineId: 'pipeline%20one' }],
+    ['/pipelines/details/pipeline%2Fone/version', { pipelineId: 'pipeline/one' }],
+    [
+      '/pipelines/details/pipeline-1/version/version%20one',
+      { pipelineId: 'pipeline-1', versionId: 'version one' },
+    ],
+  ])('matches optional and encoded pipeline parameters in %s', async (path, params) => {
+    setHash(path);
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(await screen.findByRole('status')).toHaveTextContent(JSON.stringify(params));
+  });
+
+  it('redirects a pipeline details path without an ID to the pipelines list', async () => {
+    setHash('/pipelines/details');
+    render(<Router namespace='team' authMode='single-user' />);
+    await waitFor(() => expect(hashPath()).toBe('/pipelines'));
+    expect(screen.getByText('list:pipelines')).toBeVisible();
+  });
+
+  it('preserves encoded hash URLs and task query links', () => {
+    setHash('/runs/details/run%20one?task=task%2Fiteration+1#node');
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      JSON.stringify({
+        params: { runId: 'run one' },
+        search: '?task=task%2Fiteration+1',
+        hash: '#node',
       }),
     );
-    act(() => screen.getByRole('button', { name: 'Close' }).click());
-    expect(router.state.location.search).toBe('?task=task-1');
-    expect(router.state.location.hash).toBe('#node');
-    expect(router.state.location.state).toEqual({ from: 'runs' });
+  });
+
+  // Same cause as the shared-state case above: NativeNewRun seeds its state from
+  // the query once, and a navigation to /runs/new with a different query reuses
+  // the mounted instance, so the form keeps the previous query's values.
+  it('reinitializes query-derived forms on navigation', async () => {
+    setHash('/runs/new?name=first');
+    render(<Router namespace='team' authMode='single-user' />);
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('first');
+    await navigate('/runs/new?name=second');
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('second'),
+    );
+  });
+
+  it('highlights the current section in the side navigation', async () => {
+    setHash('/runs/details/run-1');
+    render(<Router namespace='team' authMode='single-user' />);
+    const runs = screen.getByRole('link', { name: 'Runs List' });
+    expect(runs.querySelector('button')?.className).toMatch(/active/);
+    expect(
+      screen.getByRole('link', { name: 'Pipeline List' }).querySelector('button')?.className,
+    ).not.toMatch(/active/);
+    fireEvent.click(screen.getByRole('link', { name: 'Pipeline List' }));
+    expect(await screen.findByText('list:pipelines')).toBeVisible();
+    expect(hashPath()).toBe('/pipelines');
+  });
+
+  describe('connection', () => {
+    it('requires a bearer token before rendering pages in token mode', async () => {
+      render(<Router namespace='team' />);
+      expect(screen.queryByText('list:pipelines')).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toHaveTextContent('Connect to Kubeflow Pipelines');
+      expect(screen.getByRole('dialog')).toHaveTextContent('Namespace: team.');
+      const connect = screen.getByRole('button', { name: 'Connect' });
+      expect(connect).toBeDisabled();
+
+      const token = screen.getByLabelText('Kubernetes bearer token');
+      fireEvent.change(token, { target: { value: '   ' } });
+      expect(connect).toBeDisabled();
+      fireEvent.change(token, { target: { value: 'secret-token' } });
+      expect(connect).toBeEnabled();
+      fireEvent.click(connect);
+
+      expect(setArgoToken).toHaveBeenCalledWith('secret-token');
+      expect(screen.getByText('list:pipelines')).toBeVisible();
+      await waitFor(() =>
+        expect(screen.queryByText('Connect to Kubeflow Pipelines')).not.toBeInTheDocument(),
+      );
+    });
+
+    it('prompts for a valid namespace label in multi-user mode without one', () => {
+      const onNamespace = vi.fn();
+      render(<Router namespace='' authMode='multi-user' onNamespace={onNamespace} />);
+      expect(screen.queryByText('list:pipelines')).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toHaveTextContent(
+        'Enter the namespace whose pipelines you want to work with.',
+      );
+      const connect = screen.getByRole('button', { name: 'Connect' });
+      const namespace = screen.getByLabelText('Namespace');
+
+      fireEvent.change(namespace, { target: { value: 'Not A Label' } });
+      expect(connect).toBeDisabled();
+      fireEvent.change(namespace, { target: { value: '-leading-dash' } });
+      expect(connect).toBeDisabled();
+      fireEvent.change(namespace, { target: { value: ' team-a ' } });
+      expect(connect).toBeEnabled();
+      fireEvent.click(connect);
+      expect(onNamespace).toHaveBeenCalledWith('team-a');
+      expect(setArgoToken).not.toHaveBeenCalled();
+    });
+
+    it('renders pages directly once multi-user mode has a namespace', () => {
+      render(<Router namespace='team' authMode='multi-user' />);
+      expect(screen.getByText('list:pipelines')).toBeVisible();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('page feedback', () => {
+    it('shows page errors in a dialog without changing the location', async () => {
+      setHash('/compare?runs=a,b');
+      render(<Router namespace='team' authMode='single-user' />);
+      fireEvent.click(screen.getByRole('button', { name: 'Fail loading' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveTextContent('Error');
+      expect(dialog).toHaveTextContent('Current load error');
+      expect(hashPath()).toBe('/compare?runs=a,b');
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByText('Compare')).toBeVisible();
+      expect(hashPath()).toBe('/compare?runs=a,b');
+    });
+
+    it('asks for confirmation and reports a failed action in the error dialog', async () => {
+      setHash('/compare');
+      render(<Router namespace='team' authMode='single-user' />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      const confirmation = await screen.findByRole('dialog');
+      expect(confirmation).toHaveTextContent('Delete run?');
+      expect(confirmation).toHaveTextContent('This cannot be undone.');
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('denied'));
+      expect(screen.getByRole('dialog')).not.toHaveTextContent('Delete run?');
+    });
   });
 });

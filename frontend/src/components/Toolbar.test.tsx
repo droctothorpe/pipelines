@@ -1,26 +1,13 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import * as React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { vi } from 'vitest';
-import Toolbar, { ToolbarActionMap } from './Toolbar';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HelpIcon from '@mui/icons-material/Help';
 import InfoIcon from '@mui/icons-material/Info';
+import { commonCss } from '../Css';
+import Toolbar, { ToolbarActionMap } from './Toolbar';
 
 const action1 = vi.fn();
 const action2 = vi.fn();
@@ -93,7 +80,7 @@ describe('Toolbar', () => {
   });
 
   it('renders without breadcrumbs and a string page title', () => {
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={[]}
         actions={actions}
@@ -101,11 +88,15 @@ describe('Toolbar', () => {
         pageTitle='test page title'
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    expect(screen.getByTestId('page-title')).toHaveTextContent('test page title');
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'test title' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'test title2' })).toBeDisabled();
   });
 
   it('renders without breadcrumbs and a component page title', () => {
-    const { asFragment } = renderWithRouter(
+    const { container } = renderWithRouter(
       <Toolbar
         breadcrumbs={[]}
         actions={actions}
@@ -113,7 +104,9 @@ describe('Toolbar', () => {
         pageTitle={<div id='myComponent'>test page title</div>}
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const title = container.querySelector('#myComponent');
+    expect(title).toHaveTextContent('test page title');
+    expect(screen.getByTestId('page-title')).toContainElement(title as HTMLElement);
   });
 
   it('renders without breadcrumbs and one action', () => {
@@ -127,7 +120,7 @@ describe('Toolbar', () => {
         tooltip: 'test tooltip',
       },
     };
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={[]}
         actions={singleAction}
@@ -135,11 +128,15 @@ describe('Toolbar', () => {
         pageTitle='test page title'
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveTextContent('test title');
+    expect(buttons[0]).toHaveAttribute('id', 'test id');
+    expect(buttons[0]).toContainElement(screen.getByTestId('HelpIcon'));
   });
 
   it('renders without actions and one breadcrumb', () => {
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={[breadcrumbs[0]]}
         actions={{}}
@@ -147,11 +144,17 @@ describe('Toolbar', () => {
         pageTitle='test page title'
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveTextContent('test display name');
+    expect(links[0]).toHaveAttribute('href', '/some/test/path');
+    expect(screen.queryByTestId('ChevronRightIcon')).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
   });
 
   it('renders without actions, one breadcrumb, and a page name', () => {
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={[breadcrumbs[0]]}
         actions={{}}
@@ -159,11 +162,13 @@ describe('Toolbar', () => {
         pageTitle='test page title'
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    expect(screen.getByRole('link', { name: 'test display name' })).toBeInTheDocument();
+    expect(screen.getByTestId('page-title')).toHaveTextContent('test page title');
+    expect(screen.getByTestId('page-title')).not.toHaveAttribute('title');
   });
 
   it('renders without breadcrumbs and two actions', () => {
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={[]}
         actions={actions}
@@ -171,7 +176,13 @@ describe('Toolbar', () => {
         pageTitle='test page title'
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual(['test title', 'test title2']);
+    expect(buttons.map((button) => button.id)).toEqual(['test id', 'test id2']);
+    expect(buttons[0]).toBeEnabled();
+    expect(buttons[1]).toBeDisabled();
+    expect(screen.getByTestId('HelpIcon')).toBeInTheDocument();
+    expect(screen.getByTestId('InfoIcon')).toBeInTheDocument();
   });
 
   it('fires the right action function when button is clicked', () => {
@@ -185,6 +196,7 @@ describe('Toolbar', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'test title' }));
     expect(action1).toHaveBeenCalled();
+    expect(action2).not.toHaveBeenCalled();
   });
 
   it('renders outlined action buttons', () => {
@@ -198,7 +210,7 @@ describe('Toolbar', () => {
       },
     };
 
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={breadcrumbs}
         actions={outlinedActions}
@@ -206,7 +218,10 @@ describe('Toolbar', () => {
         navigate={navigate}
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const button = screen.getByRole('button', { name: 'test outlined title' });
+    expect(button).toHaveAttribute('id', 'test outlined id');
+    expect(button).toHaveClass('MuiButton-textPrimary');
+    expect(button).not.toHaveClass(commonCss.buttonAction);
   });
 
   it('renders primary action buttons', () => {
@@ -220,7 +235,7 @@ describe('Toolbar', () => {
       },
     };
 
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={breadcrumbs}
         actions={primaryActions}
@@ -228,7 +243,10 @@ describe('Toolbar', () => {
         navigate={navigate}
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const button = screen.getByRole('button', { name: 'test primary title' });
+    expect(button).toHaveAttribute('id', 'test primary id');
+    expect(button).toHaveClass(commonCss.buttonAction);
+    expect(button).toHaveClass('MuiButton-textSecondary');
   });
 
   it('renders primary action buttons without outline, even if outline is true', () => {
@@ -243,7 +261,7 @@ describe('Toolbar', () => {
       },
     };
 
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar
         breadcrumbs={breadcrumbs}
         actions={outlinedPrimaryActions}
@@ -251,13 +269,29 @@ describe('Toolbar', () => {
         navigate={navigate}
       />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const button = screen.getByRole('button', { name: 'test title' });
+    expect(button).toHaveClass(commonCss.buttonAction);
+    expect(button).toHaveClass('MuiButton-textSecondary');
+    expect(button).not.toHaveClass('MuiButton-textPrimary');
   });
 
   it('renders with two breadcrumbs and two actions', () => {
-    const { asFragment } = renderWithRouter(
+    renderWithRouter(
       <Toolbar breadcrumbs={breadcrumbs} actions={actions} pageTitle='' navigate={navigate} />,
     );
-    expect(asFragment()).toMatchSnapshot();
+    const links = screen.getAllByRole('link');
+    expect(links.map((link) => link.textContent)).toEqual([
+      'test display name',
+      'test display name2',
+    ]);
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      '/some/test/path',
+      '/some/test/path2',
+    ]);
+    expect(screen.getAllByTestId('ChevronRightIcon')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'test title' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'test title2' })).toBeDisabled();
+    expect(screen.getByTestId('page-title')).toHaveTextContent('');
   });
 });

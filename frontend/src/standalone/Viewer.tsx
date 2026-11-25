@@ -15,9 +15,9 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import PipelineGraph from 'src/components/graph/PipelineGraph';
-import { PipelineSpec } from 'src/generated/pipeline_spec';
+import Editor from 'src/components/Editor';
 import type { LayerFlowElement } from 'src/lib/v2/FlowTypes';
-import { convertFlowElements } from 'src/lib/v2/StaticFlow';
+import { argoStaticView, type ArgoManifest } from 'src/lib/ArgoGraph';
 
 export interface ViewerState {
   spec: Record<string, unknown> | null;
@@ -61,12 +61,37 @@ export function Viewer({ initial, live }: { initial: ViewerState; live: boolean 
   const graph = useMemo(() => {
     if (!state.spec) return null;
     try {
-      const spec = PipelineSpec.fromJSON(state.spec);
-      return {
-        name: spec.pipelineInfo?.name,
-        template: JSON.stringify(state.spec),
-        elements: convertFlowElements(spec),
-      };
+      if (['Workflow', 'WorkflowTemplate', 'CronWorkflow'].includes(String(state.spec.kind))) {
+        const native = argoStaticView(state.spec as unknown as ArgoManifest);
+        return {
+          name: native.name,
+          elements: native.elements,
+          resolveLayers: native.resolve,
+          renderDetails: (selected: LayerFlowElement) => {
+            const detail = native.describe(selected.layers, selected.element.id);
+            return (
+              <>
+                <h2>Native Argo template</h2>
+                <dl>
+                  <dt>Image</dt>
+                  <dd>{String(detail.template?.container?.image || 'DAG / control flow')}</dd>
+                </dl>
+                <Editor
+                  mode='json'
+                  readOnly
+                  width='100%'
+                  height='420px'
+                  value={JSON.stringify(detail, null, 2)}
+                  setOptions={{ useWorker: false }}
+                />
+              </>
+            );
+          },
+        };
+      }
+      throw new Error(
+        'Expected a native Argo Workflow, WorkflowTemplate or CronWorkflow. Recompile the Python source.',
+      );
     } catch (error) {
       return { error: `Unable to display pipeline: ${String(error)}` };
     }
@@ -95,7 +120,8 @@ export function Viewer({ initial, live }: { initial: ViewerState; live: boolean 
       )}
       {graph?.elements && (
         <PipelineGraph
-          templateString={graph.template}
+          resolveLayers={graph.resolveLayers}
+          renderDetails={graph.renderDetails}
           elements={graph.elements}
           selection={selection}
           onSelectionChange={setSelection}

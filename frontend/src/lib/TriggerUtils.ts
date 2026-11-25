@@ -37,6 +37,7 @@ export enum TriggerType {
 }
 
 export enum PeriodicInterval {
+  SECOND = 'Second',
   MINUTE = 'Minute',
   HOUR = 'Hour',
   DAY = 'Day',
@@ -44,6 +45,7 @@ export enum PeriodicInterval {
   MONTH = 'Month',
 }
 const INTERVAL_SECONDS = {
+  [PeriodicInterval.SECOND]: 1,
   [PeriodicInterval.MINUTE]: 60,
   [PeriodicInterval.HOUR]: 60 * 60,
   [PeriodicInterval.DAY]: 60 * 60 * 24,
@@ -56,6 +58,7 @@ const PERIODIC_INTERVAL_DESCENDING = [
   PeriodicInterval.DAY,
   PeriodicInterval.HOUR,
   PeriodicInterval.MINUTE,
+  PeriodicInterval.SECOND,
 ];
 
 export const triggers = new Map<TriggerType, { displayName: string }>([
@@ -109,6 +112,8 @@ export function buildCron(
   const month = '*';
   let dayOfWeek = '?';
   switch (intervalCategory) {
+    case PeriodicInterval.SECOND:
+      return '* * * * * ?';
     case PeriodicInterval.MINUTE:
       break;
     case PeriodicInterval.HOUR:

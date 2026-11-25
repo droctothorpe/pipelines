@@ -1,23 +1,9 @@
-/*
- * Copyright 2018 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import { render, screen } from '@testing-library/react';
-import { vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CompareTable from './CompareTable';
-import { logger } from 'src/lib/Utils';
+import { logger } from 'src/lib/UiUtils';
 
 let loggerSpy: ReturnType<typeof vi.spyOn>;
 
@@ -39,8 +25,9 @@ describe('CompareTable', () => {
   });
 
   it('renders no data', () => {
-    const { asFragment } = render(<CompareTable rows={[]} xLabels={[]} yLabels={[]} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<CompareTable rows={[]} xLabels={[]} yLabels={[]} />);
+    expect(container.firstChild).toBeNull();
+    expect(loggerSpy).not.toHaveBeenCalled();
   });
 
   it('logs error if ylabels and rows have different lengths', () => {
@@ -51,8 +38,19 @@ describe('CompareTable', () => {
   });
 
   it('renders one row with three columns', () => {
-    const { asFragment } = render(<CompareTable rows={rows} xLabels={xLabels} yLabels={yLabels} />);
-    expect(asFragment()).toMatchSnapshot();
+    const { container } = render(<CompareTable rows={rows} xLabels={xLabels} yLabels={yLabels} />);
+    const tableRows = Array.from(container.querySelectorAll('tr'));
+    expect(tableRows).toHaveLength(4);
+    const cellText = (row: Element) =>
+      Array.from(row.querySelectorAll('td')).map((cell) => cell.textContent);
+    expect(cellText(tableRows[0])).toEqual(['', ...xLabels]);
+    expect(cellText(tableRows[1])).toEqual(['row1', '1', '2', '3']);
+    expect(cellText(tableRows[2])).toEqual(['row2', '4', '5', '6']);
+    expect(cellText(tableRows[3])).toEqual(['row3', 'cell7', 'cell8', 'cell9']);
+    // Every cell exposes its full text as a title for truncated labels.
+    expect(screen.getByText('cell9')).toHaveAttribute('title', 'cell9');
+    expect(screen.getByText('col1')).toHaveAttribute('title', 'col1');
+    expect(loggerSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -95,7 +93,7 @@ describe('CompareTable xParentLabels', () => {
       />,
     );
 
-    screen.getByText(xParentLabels[0].label);
-    screen.getByText(xParentLabels[1].label);
+    expect(screen.getByText(xParentLabels[0].label)).toHaveAttribute('colspan', '2');
+    expect(screen.getByText(xParentLabels[1].label)).toHaveAttribute('colspan', '1');
   });
 });

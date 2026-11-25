@@ -22,6 +22,12 @@ import Banner from '../Banner';
 import { ExternalLink } from 'src/atoms/ExternalLink';
 
 cssRaw(`
+/* Restore document defaults scoped to Markdown, without changing application resets. */
+.markdown-viewer p { margin-block: 1em; }
+.markdown-viewer ul { list-style-type: disc; margin-block: 1em; padding-inline-start: 40px; }
+.markdown-viewer ol { list-style-type: decimal; margin-block: 1em; padding-inline-start: 40px; }
+.markdown-viewer table { border-collapse: separate; border-spacing: 2px; }
+.markdown-viewer th, .markdown-viewer td { padding: 1px 6px; }
 .markdown-viewer h1,
 .markdown-viewer h2,
 .markdown-viewer h3,
@@ -55,7 +61,7 @@ position: relative;
 }
 `);
 
-const MAX_MARKDOWN_STR_LENGTH = 50 * 1000 * 8; // 50KB
+const MAX_MARKDOWN_STR_LENGTH = 50 * 1000 * 8; // Preserve the stock 400,000-character limit.
 
 export interface MarkdownViewerConfig extends ViewerConfig {
   markdownContent: string;

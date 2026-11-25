@@ -33,7 +33,7 @@ import {
   parseTrigger,
   ParsedTrigger,
 } from '../lib/TriggerUtils';
-import { logger } from 'src/lib/Utils';
+import { logger } from 'src/lib/UiUtils';
 
 import { Fab, Checkbox, FormControlLabel, MenuItem } from '@mui/material';
 
@@ -285,10 +285,9 @@ export default class Trigger extends React.Component<TriggerProps, TriggerState>
                     Whether the recurring run should catch up if behind schedule. Defaults to true.
                   </p>
                   <p>
-                    For example, if the recurring run is paused for a while and re-enabled
-                    afterwards. If catchup=true, the scheduler will catch up on (backfill) each
-                    missed interval. Otherwise, it only schedules the latest interval if more than
-                    one interval is ready to be scheduled.
+                    Argo recovers at most one missed occurrence within its recovery window after
+                    downtime. It does not replay the full backlog. Turning catchup off disables that
+                    recovery.
                   </p>
                   <p>
                     Usually, if your pipeline handles backfill internally, you should turn catchup

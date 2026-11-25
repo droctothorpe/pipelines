@@ -1,23 +1,12 @@
-/*
- * Copyright 2021 The Kubeflow Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+// Copyright 2026 The Kubeflow Authors
+// SPDX-License-Identifier: Apache-2.0
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { V2Pipeline, V2PipelineVersion } from 'src/apisv2/pipeline';
-import { testBestPractices } from 'src/TestUtils';
+import { describe, expect, it } from 'vitest';
+import type {
+  PipelineSummary as V2Pipeline,
+  VersionSummary as V2PipelineVersion,
+} from 'src/lib/NativeViewTypes';
 import { PipelineVersionCard } from './PipelineVersionCard';
 
 const OLD_VERSION_NAME = 'old version';
@@ -27,19 +16,17 @@ const TEST_PIPELINE_ID = 'pipeline-id';
 const OLD_TEST_PIPELINE_VERSION_ID = 'old-version-id';
 const OLD_TEST_PIPELINE_VERSION: V2PipelineVersion = {
   code_source_url: 'https://github.com/kubeflow/pipelines',
-  created_at: new Date('2021-11-24T20:58:23.000Z'),
+  created_at: '2021-11-24T20:58:23.000Z',
   description: 'This is old version description.',
   display_name: OLD_VERSION_NAME,
-  pipeline_id: TEST_PIPELINE_ID,
   pipeline_version_id: OLD_TEST_PIPELINE_VERSION_ID,
 };
 
 const NEW_TEST_PIPELINE_VERSION_ID = 'new-version-id';
 const NEW_TEST_PIPELINE_VERSION: V2PipelineVersion = {
-  created_at: new Date('2021-12-24T20:58:23.000Z'),
+  created_at: '2021-12-24T20:58:23.000Z',
   description: 'This is new version description.',
   display_name: NEW_VERSION_NAME,
-  pipeline_id: TEST_PIPELINE_ID,
   pipeline_version_id: NEW_TEST_PIPELINE_VERSION_ID,
 };
 
@@ -49,12 +36,11 @@ const TEST_PIPELINE_VERSIONS_LIST: V2PipelineVersion[] = [
 ];
 
 const TEST_PIPELINE: V2Pipeline = {
-  created_at: new Date('2021-11-24T20:58:23.000Z'),
+  created_at: '2021-11-24T20:58:23.000Z',
   description: 'This is pipeline level description.',
-  display_name: 'v2_lightweight_python_functions_pipeline',
   pipeline_id: TEST_PIPELINE_ID,
 };
-testBestPractices();
+
 describe('PipelineVersionCard', () => {
   it('makes Show Summary button visible by default', async () => {
     render(
@@ -62,9 +48,7 @@ describe('PipelineVersionCard', () => {
         pipeline={TEST_PIPELINE}
         selectedVersion={OLD_TEST_PIPELINE_VERSION}
         versions={TEST_PIPELINE_VERSIONS_LIST}
-        handleVersionSelected={(versionId) => {
-          return Promise.resolve();
-        }}
+        handleVersionSelected={() => Promise.resolve()}
       ></PipelineVersionCard>,
     );
 
@@ -78,9 +62,7 @@ describe('PipelineVersionCard', () => {
         pipeline={TEST_PIPELINE}
         selectedVersion={OLD_TEST_PIPELINE_VERSION}
         versions={TEST_PIPELINE_VERSIONS_LIST}
-        handleVersionSelected={(versionId) => {
-          return Promise.resolve();
-        }}
+        handleVersionSelected={() => Promise.resolve()}
       ></PipelineVersionCard>,
     );
 
@@ -96,9 +78,7 @@ describe('PipelineVersionCard', () => {
         pipeline={TEST_PIPELINE}
         selectedVersion={OLD_TEST_PIPELINE_VERSION}
         versions={TEST_PIPELINE_VERSIONS_LIST}
-        handleVersionSelected={(versionId) => {
-          return Promise.resolve();
-        }}
+        handleVersionSelected={() => Promise.resolve()}
       ></PipelineVersionCard>,
     );
 
@@ -111,8 +91,10 @@ describe('PipelineVersionCard', () => {
     const versionSource = screen.getByText('Version source');
     expect(versionSource).toHaveAttribute('href', 'https://github.com/kubeflow/pipelines');
     screen.getByText('Uploaded on');
+    screen.getByText(new Date('2021-11-24T20:58:23.000Z').toLocaleString());
     screen.getByText('Pipeline Description');
     screen.getByText('This is pipeline level description.');
+    screen.getByText('Version Description');
     screen.getByText('This is old version description.');
   });
 
@@ -122,13 +104,10 @@ describe('PipelineVersionCard', () => {
         pipeline={TEST_PIPELINE}
         selectedVersion={{
           ...OLD_TEST_PIPELINE_VERSION,
-          // eslint-disable-next-line no-script-url
           code_source_url: 'javascript:alert(1)',
         }}
         versions={TEST_PIPELINE_VERSIONS_LIST}
-        handleVersionSelected={(versionId) => {
-          return Promise.resolve();
-        }}
+        handleVersionSelected={() => Promise.resolve()}
       ></PipelineVersionCard>,
     );
 
@@ -145,9 +124,7 @@ describe('PipelineVersionCard', () => {
         pipeline={TEST_PIPELINE}
         selectedVersion={OLD_TEST_PIPELINE_VERSION}
         versions={TEST_PIPELINE_VERSIONS_LIST}
-        handleVersionSelected={(versionId) => {
-          return Promise.resolve();
-        }}
+        handleVersionSelected={() => Promise.resolve()}
       ></PipelineVersionCard>,
     );
 
