@@ -79,6 +79,36 @@ def _nested_artifact_collection(channel, group):
     return parent is not None and parent is not group
 
 
+def _nested_in_a_loop_below(channel, group):
+    """Whether another ParallelFor sits between ``channel``'s producer and
+    ``group``; its collection must then stay wrapped through ``group``."""
+    parent = channel.task.parent_task_group if channel.task else None
+    while parent is not None and parent is not group:
+        if isinstance(parent, tasks_group.ParallelFor):
+            return True
+        parent = parent.parent_task_group
+    return False
+
+
+def _skippable_within(channel, group):
+    """Whether ``channel``'s producer sits under a condition inside loop
+    ``group`` with no deeper loop in between: iterations whose condition is
+    false contribute nothing to the collection, as in stock."""
+    conditional = False
+    parent = channel.task.parent_task_group if channel.task else None
+    while parent is not None:
+        if isinstance(parent, tasks_group.ParallelFor):
+            return conditional and parent is group
+        conditional |= isinstance(parent, tasks_group._ConditionBase)
+        parent = parent.parent_task_group
+    return False
+
+
+# Stands in for the output of an iteration whose producer was skipped; the
+# loop's aggregate output filters it out.
+SKIPPED = '__kfp_skipped_iteration__'
+
+
 def _key(channel):
     return (channel.task_name or '', channel.name)
 
@@ -231,11 +261,13 @@ class _Scope:
                         'Collected artifact payloads need list-aware input staging.'
                     )
                 prefix = prefix or 'kfp-meta-'
-                if (
-                    value.output.task_name not in self.owners
-                    and self.parent is not None
-                ):
-                    return self.input(value, field, prefix, suffix)
+            if (
+                value.output.task_name not in self.owners
+                and self.parent is not None
+            ):
+                # The loop is outside this group: the group takes the
+                # collection as one input and the owner scope aggregates it.
+                return self.input(value, field, prefix, suffix)
             return self.resolve(
                 value.output, field, prefix, suffix, collected=True
             )
@@ -261,6 +293,12 @@ class _Scope:
                 if (
                     isinstance(owner.group, tasks_group._ConditionBase)
                     and not allow_conditional
+                    # A collection may pass through a condition below its
+                    # loop (skipped iterations are filtered), not above it.
+                    and not (
+                        collected
+                        and not _nested_in_a_loop_below(value, owner.group)
+                    )
                 ):
                     raise ValueError(
                         'Conditional output escapes its branch; move its consumer inside the branch. Conditional output merges are not yet supported by this prototype.'
@@ -273,6 +311,10 @@ class _Scope:
                         or isinstance(
                             value, pipeline_channel.PipelineArtifactChannel
                         )
+                        # A deeper loop aggregates first; this loop
+                        # aggregates those lists (one nesting level each).
+                        or _nested_in_a_loop_below(value, owner.group)
+                        or _skippable_within(value, owner.group)
                     )
                     else value
                 )
@@ -1053,19 +1095,25 @@ class _Scope:
                         }
                     )
             else:
-                parameters.append(
-                    {
-                        'name': name,
-                        'valueFrom': {
-                            **_parameter_source(reference(channel)),
-                            **(
-                                {'default': '[]'}
-                                if self.loop and template is self.wrapper
-                                else {}
-                            ),
-                        },
-                    }
+                source = _parameter_source(reference(channel))
+                skippable = (
+                    self.loop
+                    and isinstance(channel, for_loop.Collected)
+                    and _skippable_within(channel.output, self.group)
                 )
+                if self.loop and template is self.wrapper:
+                    if skippable:
+                        source = {
+                            'expression': 'toJson(filter(fromJSON('
+                            + _expression_reference(reference(channel))
+                            + '), {# != '
+                            + _json(SKIPPED)
+                            + '}))'
+                        }
+                    source['default'] = '[]'
+                elif skippable:
+                    source['default'] = SKIPPED
+                parameters.append({'name': name, 'valueFrom': source})
         if parameters or artifacts:
             template['outputs'] = {
                 key: value

@@ -594,13 +594,10 @@ class TestCrossTasksGroupFanInCollection:
         with pytest.raises(ValueError, match=LOOP_ESCAPE):
             compile_manifest(math_pipeline, tmp_path)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='L03: dsl.Collected from a producer nested in a condition '
-        'inside the loop, consumed in a sibling condition, is valid in '
-        'stock but rejected natively ("must be wrapped in dsl.Collected").',
-    )
     def test_producer_condition_legal2(self, tmp_path):
+        """L03: dsl.Collected from a producer under a condition inside the
+        loop; skipped iterations are filtered out of the collection."""
+
         @dsl.pipeline
         def my_pipeline(a: str):
             with dsl.ParallelFor([1, 2, 3]) as v:
@@ -609,14 +606,29 @@ class TestCrossTasksGroupFanInCollection:
             with dsl.Condition(a == 'a'):
                 add(nums=dsl.Collected(t.output))
 
-        compile_manifest(my_pipeline, tmp_path)
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        named = templates(manifest)
+        iteration = next(
+            t for n, t in named.items() if n.endswith('for-loop-2')
+        )
+        (exported,) = iteration['outputs']['parameters']
+        assert exported['valueFrom']['default'] == '__kfp_skipped_iteration__'
+        assert exported['valueFrom']['parameter'].startswith(
+            '{{tasks.condition-3.outputs.parameters.'
+        )
+        wrapper = next(
+            t for n, t in named.items() if n.endswith('for-loop-2-fanout')
+        )
+        (aggregate,) = wrapper['outputs']['parameters']
+        assert aggregate['valueFrom']['default'] == '[]'
+        assert aggregate['valueFrom']['expression'].startswith(
+            'toJson(filter(fromJSON(tasks["iteration"].outputs.parameters['
+        )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='L03: dsl.Collected consumed inside a condition from a loop '
-        'at the pipeline root is valid in stock but rejected natively.',
-    )
     def test_collected_consumed_inside_condition(self, tmp_path):
+        """L03: dsl.Collected consumed inside a condition from a loop at the
+        pipeline root; the condition receives the collection as an input."""
+
         @dsl.pipeline
         def my_pipeline(a: str):
             with dsl.ParallelFor([1, 2, 3]) as v:
@@ -624,7 +636,13 @@ class TestCrossTasksGroupFanInCollection:
             with dsl.Condition(a == 'a'):
                 add(nums=dsl.Collected(t.output))
 
-        compile_manifest(my_pipeline, tmp_path)
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        root = root_template(manifest)
+        condition = dag_tasks(root)['condition-3']
+        (argument,) = condition['arguments']['parameters']
+        assert argument['value'].startswith(
+            '{{tasks.for-loop-2.outputs.parameters.'
+        )
 
     def test_producer_condition_illegal1(self, tmp_path):
         @dsl.pipeline
@@ -669,13 +687,10 @@ class TestCrossTasksGroupFanInCollection:
         value = parameters(consumer['arguments'])['nums']
         assert value.startswith('{{tasks.exit-handler-1.outputs.parameters.')
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='L03: dsl.Collected across two loop levels consumed at the '
-        'pipeline root (List[List[int]]) is valid in stock but rejected '
-        'natively ("must be wrapped in dsl.Collected").',
-    )
     def test_parallelfor_nested_legal_params1(self, tmp_path):
+        """L03: dsl.Collected across two loop levels consumed at the root
+        arrives as a two-deep collection (List[List[int]])."""
+
         @dsl.component
         def add_two_ints(num1: int, num2: int) -> int:
             return num1 + num2
@@ -693,7 +708,15 @@ class TestCrossTasksGroupFanInCollection:
                     t = add_two_ints(num1=v1, num2=v2)
             add_nested(nums=dsl.Collected(t.output))
 
-        compile_manifest(my_pipeline, tmp_path)
+        manifest = compile_manifest(my_pipeline, tmp_path)
+        consumer = next(
+            t
+            for t in manifest['spec']['templates']
+            if t.get('container') and 'add_nested' in str(t['container'])
+        )
+        args = consumer['container']['args']
+        contract = json.loads(args[args.index('--argo_input') + 1])
+        assert contract['inputs']['nums']['collectionDepth'] == 2
 
     def test_parallel_for_custom_name_with_collected(self, tmp_path):
         @dsl.component
