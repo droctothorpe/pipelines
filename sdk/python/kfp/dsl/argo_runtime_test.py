@@ -557,3 +557,43 @@ def test_omitted_optional_artifact_input_is_none(tmp_path, monkeypatch):
     )
     assert seen == {'model': None}
     assert (tmp_path / 'Output').read_text() == 'absent'
+
+
+def test_returned_artifact_without_uri_merges_into_the_assigned_one(
+    tmp_path, monkeypatch
+):
+    """U50: a component may return its own ``dsl.Artifact``; on the KFP
+    backend ``dsl.get_uri()`` yields '' for its URI, and stock's launcher
+    then keeps the assigned location and merges the returned metadata."""
+    from kfp import dsl
+
+    for key in ('KFP_ARGO_RUN_UID', 'KFP_ARGO_NODE_ID', 'KFP_ARGO_NAMESPACE'):
+        monkeypatch.setenv(key, 'test')
+    path = tmp_path / 'Output'
+    metadata_path = tmp_path / 'Output-meta.json'
+
+    def make() -> dsl.Artifact:
+        path.write_text('payload')
+        return dsl.Artifact(uri='', metadata={'data': 123})
+
+    summary = argo_runtime.execute(
+        make,
+        {
+            'schema': argo_runtime.SCHEMA,
+            'outputDirectory': str(tmp_path),
+            'inputs': {},
+            'outputs': {
+                'Output': {
+                    'type': 'system.Artifact@0.0.1',
+                    'path': str(path),
+                    'metadataPath': str(metadata_path),
+                    'uri': 's3://bucket/{run}/{task}/Output',
+                }
+            },
+        },
+        [],
+    )
+    (recorded,) = summary['artifacts']
+    assert recorded['uri'] == 's3://bucket/test/test/Output'
+    assert recorded['metadata'] == {'data': 123}
+    assert json.loads(metadata_path.read_text())['uri'] == recorded['uri']

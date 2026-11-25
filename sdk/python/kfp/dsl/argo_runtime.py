@@ -440,6 +440,7 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
     executor = _StagedExecutor(
         {'inputs': inputs, 'outputs': outputs}, function, **options
     )
+    assigned = dict(executor.output_artifacts)
     for name, port in contract.get('inputs', {}).items():
         if (
             port.get('artifactList')
@@ -462,6 +463,15 @@ def execute(function: Callable, contract: dict, parameters: list[dict]) -> dict:
                 raise
             # sys.exit(0) is successful completion, not permission to omit metadata.
             output = executor.write_executor_output()
+        for name, artifact in list(executor.output_artifacts.items()):
+            if artifact.uri or name not in assigned:
+                continue
+            # A component may return its own dsl.Artifact; dsl.get_uri() gives
+            # it no URI on the KFP backend. Stock's launcher then keeps the
+            # assigned location and merges the returned metadata into it.
+            merged = assigned[name]
+            merged.metadata.update(artifact.metadata)
+            executor.output_artifacts[name] = merged
         if output is not None and previews is not None:
             previews.generate()
     if output is None:

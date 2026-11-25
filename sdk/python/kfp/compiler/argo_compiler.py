@@ -734,7 +734,7 @@ class _Compiler:
         contract = {
             'schema': SCHEMA,
             'artifactPreviews': self.artifact_previews,
-            'outputDirectory': '/tmp/kfp/outputs',
+            'outputDirectory': '/tmp/kfp_outputs',
             'inputs': {},
             'outputs': {},
         }
@@ -867,7 +867,7 @@ class _Compiler:
                 )
             contract['inputs'][name] = declaration
         for name, port in (spec.outputs or {}).items():
-            path = '/tmp/kfp/outputs/' + name
+            path = '/tmp/kfp_outputs/' + name
             declaration = {'type': _kind(port), 'path': path}
             if structures.spec_type_is_parameter(port.type):
                 outputs['parameters'].append(
@@ -961,7 +961,7 @@ class _Compiler:
             outputs['artifacts'].append(
                 {
                     'name': 'kfp-metadata',
-                    'path': '/tmp/kfp/outputs/metadata.json',
+                    'path': '/tmp/kfp_outputs/metadata.json',
                     'archive': {'none': {}},
                     's3': {
                         'key': self.prefix

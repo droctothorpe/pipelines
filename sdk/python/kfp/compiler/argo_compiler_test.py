@@ -1614,3 +1614,26 @@ def test_executor_output_path_placeholder_is_refused_with_guidance(tmp_path):
 
     with pytest.raises(ValueError, match='A30'):
         compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+
+
+def test_task_outputs_live_under_the_stock_executor_root(tmp_path):
+    """U50: ``dsl.get_uri`` learns whether the backend supplies a task root
+    from the directory of the executor output file. Stock's launcher writes
+    it under ``/tmp/kfp_outputs``, the path the SDK treats as "no root here",
+    so native pods use the same root and the helper answers as on stock."""
+
+    @dsl.pipeline(name='native-test')
+    def pipeline(value: int = 3):
+        identity(value=value).set_caching_options(False)
+
+    compiler.Compiler().compile(pipeline, str(tmp_path / 'pipeline.yaml'))
+    manifest = yaml.safe_load((tmp_path / 'pipeline.yaml').read_text())
+    task = next(t for t in manifest['spec']['templates'] if 'container' in t)
+    args = task['container']['args']
+    contract = json.loads(args[args.index('--argo_input') + 1])
+    assert contract['outputDirectory'] == '/tmp/kfp_outputs'
+    assert contract['outputs']['Output']['path'] == '/tmp/kfp_outputs/Output'
+    metadata = next(
+        a for a in task['outputs']['artifacts'] if a['name'] == 'kfp-metadata'
+    )
+    assert metadata['path'] == '/tmp/kfp_outputs/metadata.json'
